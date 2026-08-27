@@ -41,6 +41,13 @@ from src.business.cost_optimizer import (  # noqa: E402
     optimal_intervention,
 )
 from src.config import get_settings  # noqa: E402
+# Day 7 Track 12-d — auto-detected port config (writes/reads
+# out/port_config.json). Surfaced on state["ports"] so handlers can read
+# the FastAPI / Postgres / Redis / Grafana / Prometheus / OTel ports the
+# operator's ``scripts/auto_configure.py`` probe settled on. Read-side
+# only here — the write side is the standalone CLI script (which runs
+# before ``docker compose up`` or ``uvicorn ...:create_app``).
+from src.config.ports import read_port_config  # noqa: E402
 # Day 2 Track F — Redis Streams producer (fire-and-forget). Closes §A item
 # 18 + driver G2 (REST-only, no event/streaming backbone). Lazy connect:
 # StreamProducer(None) is a no-op so the 63 existing tests still pass without
@@ -56,7 +63,27 @@ from src.stream.producer import (  # noqa: E402
 # DATABASE_URL + Track F's REDIS_URL: if OTEL_EXPORTER_OTLP_ENDPOINT is
 # unset, setup_otel() returns None + the /risk/score handler skips the
 # span block. The 93 existing tests pass without a Jaeger fixture.
-from src.api.otel import setup_otel  # noqa: E402
+#
+# Day 6 Track 12-bc — extended OTel wiring:
+#   * ``get_tracer(name)`` — returns a tracer from the GLOBAL provider
+#     (NoOp when OTel isn't installed) for the custom sub-spans on the
+#     critical path (optimal_decision / optimal_intervention / audit.log /
+#     verify_mandate). Used WITHOUT touching ``state["tracer"]`` (which the
+#     existing test_otel.py asserts is called exactly once with
+#     ``"risk.score"``); the sub-spans are children of that outer span when
+#     a real provider is configured.
+#   * ``optional_span(tracer, name, attributes=...)`` — context manager
+#     helper that yields a real span OR a NoOp span when tracer is None.
+#   * ``instrument_app(app)`` — calls FastAPIInstrumentor.instrument_app +
+#     RequestsInstrumentor().instrument() + PsycopgInstrumentor().instrument()
+#     (all guarded by try/except ImportError). Auto-creates server spans
+#     for every HTTP request + db-query spans for every psycopg query.
+from src.api.otel import (  # noqa: E402
+    get_tracer,
+    instrument_app as otel_instrument_app,
+    optional_span,
+    setup_otel,
+)
 # Day 2 Track G — LabelFeedbackService wraps DDM + ADWIN over the delayed
 # is_returned label stream (Gama 2014 survey §3.2/§3.3). On DRIFT, fires a
 # retrain_request notification (the MLOps-DevOps paper's
@@ -105,7 +132,13 @@ from src.api.agent_allowlist import (  # noqa: E402
     ALLOWED_ACTIONS,
     check_agent_action,
 )
-from src.models.explain import reason_codes_batch  # noqa: E402
+from src.models.explain import (  # noqa: E402
+    explain_with_shap,
+    get_background_sample,
+    reason_codes_batch,
+    serialize_shap_result,
+    set_background_cache,
+)
 from src.models.splitting import group_split  # noqa: E402
 from src.models.train import build_feature_frame, fit_model, save_model  # noqa: E402
 from src.rules.engine import (
@@ -254,6 +287,12 @@ def create_app(
     # every TestClient build.
     settings = get_settings()
     state["settings"] = settings
+    # Day 7 Track 12-d — auto-detected service ports (out/port_config.json,
+    # written by scripts/auto_configure.py). Falls back to DEFAULT_PORTS
+    # if the file is missing so test runs / fresh checkouts don't break.
+    # Read-side only here — handlers can consult state["ports"]["fastapi"]
+    # if they need to self-advertise their port back to a client.
+    state["ports"] = read_port_config()
 
     # Day 2 Track F — Redis Streams producer (fire-and-forget). Constructed
     # eagerly here (cheap — just stores the URL; lazy-connects on first
@@ -423,6 +462,29 @@ def create_app(
         except Exception as e:  # pragma: no cover — startup-only, defensive
             print(f"cost-curve warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
             state["cost_curve"] = None
+        # Day 6 Track 12-bc — SHAP KernelExplainer cache + background data.
+        # Populates the module-level background cache in src.models.explain
+        # with the training DataFrame so /v1/explain/shap can subsample it
+        # without re-reading the CSV. Then attempts to build + cache the
+        # KernelExplainer itself (best-effort — None if shap isn't installed
+        # or construction fails; the endpoint will return the graceful
+        # fallback in that case). The cache key is the model object; the
+        # model is stable per worker so this is safe across requests.
+        # Source: Lundberg & Lee 2017 NeurIPS §3 — KernelExplainer's
+        # construction is O(background * features); caching at lifespan
+        # time amortizes that once-per-boot.
+        try:
+            set_background_cache(X_tr)
+        except Exception as e:  # pragma: no cover — startup-only, defensive
+            print(
+                f"shap background cache population skipped: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
+        state["shap_explainer"] = None  # placeholder; built lazily on first
+                                         # /v1/explain/shap request so the
+                                         # lifespan doesn't pay shap's import
+                                         # cost when the endpoint isn't used.
         yield
         # Day 2 Track E — close the model-registry connection at shutdown so
         # the worker doesn't leak a Postgres connection across hot-reloads.
@@ -536,16 +598,51 @@ def create_app(
 
         try:
             t0 = time.monotonic()
+            # Day 6 Track 12-bc — custom sub-spans on the critical path via
+            # the GLOBAL tracer (NOT ``state["tracer"]`` — the existing
+            # test_otel.py asserts that mock is called exactly once with
+            # "risk.score"; using a separate global tracer for sub-spans
+            # preserves that contract + still surfaces the full call tree
+            # as children of the outer risk.score span when a real OTel
+            # provider is configured). Source: OTel Python §"Manual
+            # instrumentation" §"Create spans within a function".
+            _subspan_tracer = get_tracer(__name__)
             # Mandate verification (cheap; always run; enforcement happens
             # later). Day 1 Track D extended the signature to pass device_id
             # + user_id so UPI Circle mandates can enforce OC-201B §3.3/§3.7
             # per-txn identity validation. cod_order mandates ignore both.
-            mandate_verdict, mandate_payload = verify_mandate(
-                x_mandate,
-                order.amount_inr,
-                device_id=x_device_id,
-                user_id=x_user_id,
-            )
+            # Wrapped in a sub-span so a Jaeger trace surfaces the DB
+            # counter read/write for UPI Circle delegations (T1.4 — the
+            # DB-backed counter is in mandates.py; the span wraps the
+            # entire verify_mandate call because Subagent 12-bc owns
+            # routes.py only + can't add a span inside mandates.py).
+            with optional_span(
+                _subspan_tracer,
+                "verify_mandate",
+                attributes={
+                    "mandate.present": x_mandate is not None,
+                    "order.amount_inr": float(order.amount_inr),
+                    "mandate.device_id_present": x_device_id is not None,
+                    "mandate.user_id_present": x_user_id is not None,
+                },
+            ) as mandate_span:
+                mandate_verdict, mandate_payload = verify_mandate(
+                    x_mandate,
+                    order.amount_inr,
+                    device_id=x_device_id,
+                    user_id=x_user_id,
+                )
+                if mandate_span is not None:
+                    try:
+                        mandate_span.set_attribute(
+                            "mandate.verdict", str(mandate_verdict)
+                        )
+                        mandate_span.set_attribute(
+                            "mandate.verdict_reason",
+                            str(mandate_payload.get("verdict_reason", "")),
+                        )
+                    except Exception:  # pragma: no cover — best-effort
+                        pass
             fired = state["rules"].evaluate(order.model_dump())
             rule_fired = fired.rule_id if fired else None
 
@@ -624,7 +721,28 @@ def create_app(
                             state["base_rate"],
                             state["reference"],
                         )
-                        proba = float(state["model"].predict_proba(X)[0, 1])
+                        # Day 6 Track 12-bc — sub-span around the model
+                        # predict_proba call. The biggest single source of
+                        # latency in the /risk/score handler — surfacing it
+                        # as a span lets a Jaeger trace show whether a slow
+                        # decision was due to the model or the surrounding
+                        # I/O.
+                        with optional_span(
+                            _subspan_tracer,
+                            "model.predict_proba",
+                            attributes={
+                                "model.features_count": int(X.shape[1]),
+                                "model.version": state["audit"].model_version,
+                            },
+                        ) as _model_span:
+                            proba = float(state["model"].predict_proba(X)[0, 1])
+                            if _model_span is not None:
+                                try:
+                                    _model_span.set_attribute(
+                                        "model.probability", round(proba, 5)
+                                    )
+                                except Exception:  # pragma: no cover
+                                    pass
                         state["breaker"].record_success()
                     except Exception:
                         state["breaker"].record_failure()
@@ -675,9 +793,30 @@ def create_app(
                         proba = calibrate_probabilities(
                             [proba], _priors["p_orig"], _priors["p_und"]
                         )[0]
-                    decision, costs = optimal_decision(
-                        proba, amount_inr=order.amount_inr, **DEFAULT_COST_WEIGHTS
-                    )
+                    # Day 6 Track 12-bc — sub-span around the 3-way
+                    # Bayes-Minimum-Risk decision (Bahnsen ICMLA 2013). The
+                    # decision argmin over {ACCEPT, REVIEW, REJECT} costs;
+                    # surfacing it as a span lets a Jaeger trace surface
+                    # "this REJECT was driven by the cost-optimizer" vs
+                    # "this REJECT was driven by the mandate layer".
+                    with optional_span(
+                        _subspan_tracer,
+                        "optimal_decision",
+                        attributes={
+                            "decision.probability": round(float(proba), 5),
+                            "decision.amount_inr": float(order.amount_inr),
+                        },
+                    ) as _dec_span:
+                        decision, costs = optimal_decision(
+                            proba, amount_inr=order.amount_inr, **DEFAULT_COST_WEIGHTS
+                        )
+                        if _dec_span is not None:
+                            try:
+                                _dec_span.set_attribute(
+                                    "decision.choice", str(decision)
+                                )
+                            except Exception:  # pragma: no cover
+                                pass
                     cost_breakdown = costs
                     # Day 4 Track N — V3 §11.6 5-way intervention policy argmin.
                     # Computes the cost-optimal next-step intervention
@@ -689,9 +828,26 @@ def create_app(
                     # field remains the primary authorization signal (the 5-way
                     # ``intervention`` is the operator's next-step hint within
                     # REVIEW / ACCEPT).
-                    intervention, intervention_costs = optimal_intervention(
-                        proba, order.amount_inr,
-                    )
+                    # Day 6 Track 12-bc — sub-span around the 5-way intervention
+                    # argmin (separate from the 3-way decision so a Jaeger trace
+                    # can split the two costs).
+                    with optional_span(
+                        _subspan_tracer,
+                        "optimal_intervention",
+                        attributes={
+                            "intervention.amount_inr": float(order.amount_inr),
+                        },
+                    ) as _int_span:
+                        intervention, intervention_costs = optimal_intervention(
+                            proba, order.amount_inr,
+                        )
+                        if _int_span is not None:
+                            try:
+                                _int_span.set_attribute(
+                                    "intervention.choice", str(intervention)
+                                )
+                            except Exception:  # pragma: no cover
+                                pass
                     # REVIEW rule gate: never ACCEPT when a REVIEW rule fired
                     # (still uses BMR cost math, but the rule forces REVIEW).
                     if fired is not None and fired.action == "REVIEW" and decision == "ACCEPT":
@@ -746,69 +902,96 @@ def create_app(
             # machine-readable ``mandate_verdict_reason``. The audit logger
             # (Track E Day 2) stores arbitrary JSON payloads; we just pass
             # the new keys through — no logger.py modification needed.
-            audit_id = state["audit"].log(
-                {
-                    "request": {
-                        **order.model_dump(),
-                        "customer_id": redact_customer(order.customer_id),
-                    },
-                    "probability": round(proba, 5) if proba is not None else None,
-                    "decision": decision,
-                    "decision_source": decision_source,
-                    "cost_breakdown": cost_breakdown,
-                    # Day 4 Track N — V3 §11.6 5-way intervention policy fields
-                    # added to the tamper-evident hash chain so an auditor can
-                    # verify which intervention the cost-optimizer recommended
-                    # alongside the 3-way decision (the operator may execute a
-                    # different intervention — the audit captures what the
-                    # cost-optimizer suggested vs. what the operator did, which
-                    # is the BMR-vs-execution gap Bahnsen 2013 closes).
-                    "intervention": intervention,
-                    "intervention_costs": intervention_costs,
-                    "reason_codes": reasons[:5],
-                    "mandate_verdict": mandate_verdict,
-                    "mandate_verdict_reason": mandate_payload.get("verdict_reason"),
-                    "mandate_type": mandate_payload.get("mandate_type"),
-                    "bh_purpose_code": mandate_payload.get("bh_purpose_code"),
-                    "device_id": x_device_id,
-                    "user_id": x_user_id,
-                    "breach_note": breach_note,
-                    "rule_fired": rule_fired,
-                    "degraded": degraded,
-                    "features_used": features_used,
-                    "latency_ms": now_ms(t0),
-                    # Day 4 Track M — multi-source ingest channel discriminator
-                    # (Kandula 2021: Payment_Type as discriminator → here
-                    # ``channel`` is the discriminator). Defaults to
-                    # ``ecommerce`` so existing merchant web-checkout
-                    # requests + the 93 pre-Track-M tests still surface a
-                    # ``channel`` value. The 4 simulators in ``src/ingest/``
-                    # post with the appropriate ``X-Channel`` header so the
-                    # audit record carries the discriminator → per-channel
-                    # drift detection via TFX generate_data_statistics
-                    # (per Microsoft Fabric fraud-detection reference).
-                    "channel": x_channel or "ecommerce",
-                    # Day 2 Track G — store the prediction_id in the audit
-                    # body so /v1/feedback/ingest can look up the predicted
-                    # P(RTO) for a given prediction_id (file mode:
-                    # AuditLogger.tail() scan; Postgres mode:
-                    # jsonb_path_query on the audit_records.body column).
-                    # Additive — doesn't touch the decision logic, just
-                    # enriches the audit record with the canonical
-                    # correlation key the feedback endpoint needs.
-                    "prediction_id": prediction_id,
-                    "case_id": case_id,
-                    # Day 6 Track U (T2.3) — per-merchant traceability. The
-                    # ``merchant_id`` field on ``OrderIn`` is the multi-tenant
-                    # key. Stored in the audit body's JSONB so the
-                    # ``/v1/usage`` metering endpoint can GROUP BY /
-                    # filter by merchant_id. None when the caller didn't
-                    # pass one (the 117 pre-Track-U tests + legacy merchant
-                    # web-checkout path) — aggregate counts are returned
-                    # in that case.
-                    "merchant_id": order.merchant_id,
-                }
-            )
+            #
+            # Day 6 Track 12-bc — sub-span around the audit INSERT + Merkle
+            # sealer.add (the audit logger's _log_postgres path is in
+            # logger.py — owned by Subagent 11-b; this routes.py span wraps
+            # the entire audit.log() call so a Jaeger trace surfaces the
+            # audit write's latency + the chain-extension / Merkle-leaf-
+            # insertion work as a single child span of risk.score).
+            _audit_payload = {
+                "request": {
+                    **order.model_dump(),
+                    "customer_id": redact_customer(order.customer_id),
+                },
+                "probability": round(proba, 5) if proba is not None else None,
+                "decision": decision,
+                "decision_source": decision_source,
+                "cost_breakdown": cost_breakdown,
+                # Day 4 Track N — V3 §11.6 5-way intervention policy fields
+                # added to the tamper-evident hash chain so an auditor can
+                # verify which intervention the cost-optimizer recommended
+                # alongside the 3-way decision (the operator may execute a
+                # different intervention — the audit captures what the
+                # cost-optimizer suggested vs. what the operator did, which
+                # is the BMR-vs-execution gap Bahnsen 2013 closes).
+                "intervention": intervention,
+                "intervention_costs": intervention_costs,
+                "reason_codes": reasons[:5],
+                "mandate_verdict": mandate_verdict,
+                "mandate_verdict_reason": mandate_payload.get("verdict_reason"),
+                "mandate_type": mandate_payload.get("mandate_type"),
+                "bh_purpose_code": mandate_payload.get("bh_purpose_code"),
+                "device_id": x_device_id,
+                "user_id": x_user_id,
+                "breach_note": breach_note,
+                "rule_fired": rule_fired,
+                "degraded": degraded,
+                "features_used": features_used,
+                "latency_ms": now_ms(t0),
+                # Day 4 Track M — multi-source ingest channel discriminator
+                # (Kandula 2021: Payment_Type as discriminator → here
+                # ``channel`` is the discriminator). Defaults to
+                # ``ecommerce`` so existing merchant web-checkout
+                # requests + the 93 pre-Track-M tests still surface a
+                # ``channel`` value. The 4 simulators in ``src/ingest/``
+                # post with the appropriate ``X-Channel`` header so the
+                # audit record carries the discriminator → per-channel
+                # drift detection via TFX generate_data_statistics
+                # (per Microsoft Fabric fraud-detection reference).
+                "channel": x_channel or "ecommerce",
+                # Day 2 Track G — store the prediction_id in the audit
+                # body so /v1/feedback/ingest can look up the predicted
+                # P(RTO) for a given prediction_id (file mode:
+                # AuditLogger.tail() scan; Postgres mode:
+                # jsonb_path_query on the audit_records.body column).
+                # Additive — doesn't touch the decision logic, just
+                # enriches the audit record with the canonical
+                # correlation key the feedback endpoint needs.
+                "prediction_id": prediction_id,
+                "case_id": case_id,
+                # Day 6 Track U (T2.3) — per-merchant traceability. The
+                # ``merchant_id`` field on ``OrderIn`` is the multi-tenant
+                # key. Stored in the audit body's JSONB so the
+                # ``/v1/usage`` metering endpoint can GROUP BY /
+                # filter by merchant_id. None when the caller didn't
+                # pass one (the 117 pre-Track-U tests + legacy merchant
+                # web-checkout path) — aggregate counts are returned
+                # in that case.
+                "merchant_id": order.merchant_id,
+            }
+            with optional_span(
+                _subspan_tracer,
+                "audit.log",
+                attributes={
+                    "audit.decision": str(decision),
+                    "audit.decision_source": str(decision_source),
+                    "audit.channel": str(x_channel or "ecommerce"),
+                    "audit.degraded": bool(degraded),
+                },
+            ) as _audit_span:
+                audit_id = state["audit"].log(_audit_payload)
+                if _audit_span is not None:
+                    try:
+                        _audit_span.set_attribute(
+                            "audit.audit_id", str(audit_id)
+                        )
+                        _audit_span.set_attribute(
+                            "audit.merkle_sealed",
+                            bool(getattr(state["audit"], "_conn", None) is not None),
+                        )
+                    except Exception:  # pragma: no cover
+                        pass
             # Day 2 Track F — fire-and-forget Redis Streams publishes. After
             # the audit hash-chain append + case open, publish to:
             #   * ``risk.scores`` — every decision (the streaming-processor
@@ -1860,6 +2043,298 @@ def create_app(
             )
         return proof
 
+    # Day 6 Track 12-bc — SHAP KernelExplainer per-prediction feature
+    # attribution. Closes the V2 §9.3 explainability gap (the existing
+    # /risk/score response's ``reason_codes`` is a one-at-a-time perturbation-
+    # style attribution; SHAP is the Lundberg 2017 NeurIPS gold standard with
+    # the additive Shapley-value foundation). Source: Lundberg & Lee, "A
+    # Unified Approach to Interpreting Model Predictions", NeurIPS 2017,
+    # arXiv:1705.07856.
+    #
+    # Dual-mode like Track E's DATABASE_URL + Track F's REDIS_URL + Track
+    # M's OTEL_EXPORTER_OTLP_ENDPOINT: if the ``shap`` package isn't
+    # installed (test sandbox, or the user hasn't run
+    # ``pip install -r requirements.txt`` yet), the endpoint returns a
+    # graceful fallback pointing at the existing ``reason_codes`` field
+    # in /risk/score's response (the LIME-equivalent fallback per the
+    # task spec). The 141 existing tests pass without a shap fixture.
+    #
+    # Auth: scorer scope (same as /v1/simulate + /v1/models/current —
+    # the explanation is a read-only "what did the model say about this
+    # order" view, no money-moving authority). Returns:
+    #   * 200 with the SHAP dict on success.
+    #   * 503 if the model isn't loaded (circuit breaker may be OPEN).
+    #   * 422 if the JSON ``features`` query param is invalid OR the
+    #     ``order_id`` lookup finds no past prediction with
+    #     ``features_used`` populated.
+    #   * 200 with the graceful fallback dict if ``shap`` isn't installed
+    #     or the 5-second explanation timeout trips (the body carries
+    #     ``error`` + ``fallback`` so the caller's dashboard can render
+    #     the LIME path instead of crashing).
+    @app.get("/v1/explain/shap", tags=["explainability"])
+    def explain_shap(
+        order_id: str | None = Query(default=None, max_length=64),
+        features: str | None = Query(default=None),
+        background_samples: int = Query(default=100, ge=1, le=1000),
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        """SHAP KernelExplainer per-prediction feature attribution.
+
+        Two request shapes (exactly one required):
+
+        1. ``?order_id=<order_id>`` — look up a past /risk/score
+           prediction's ``features_used`` dict from the audit tail +
+           re-explain it with SHAP. Useful for post-incident review
+           ("why did this order get REJECTED?") where the operator wants
+           a Shapley-value attribution rather than the LIME-style
+           perturbation ``reason_codes`` the /risk/score response
+           already carries.
+
+        2. ``?features=<JSON-string>`` — explain a hypothetical feature
+           dict (e.g. ``{"log_order_value": 8.5, "Items": 3, ...}``)
+           without first scoring an order. Useful for the dashboard's
+           "what-if" explorer when the merchant wants SHAP attribution
+           for an order they haven't submitted yet.
+
+        Auth: scorer scope. Returns 503 if the model isn't loaded; 422
+        if neither ``order_id`` nor ``features`` is provided, OR if the
+        ``features`` JSON is malformed, OR if the ``order_id`` lookup
+        finds no past prediction with ``features_used`` populated.
+
+        The ``shap_values`` field in the response is the per-feature
+        Shapley contribution list (class 1 — RTO risk). ``base_value``
+        is the expected model output over the background distribution
+        (E[P(RTO) | background]); ``expected_value`` is the same value
+        under the SHAP convention (base_value + sum(shap_values) =
+        model.predict_proba(features)[1]).
+
+        Source: Lundberg & Lee 2017 NeurIPS §3 "KernelSHAP".
+        """
+        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+        if not ok:
+            raise HTTPException(status_code=401, detail=err)
+        # 1. Model-loaded guard. The circuit breaker may be OPEN; surface
+        # 503 in that case so the caller can fall back to LIME.
+        if state.get("model") is None:
+            raise HTTPException(
+                status_code=503,
+                detail="SHAP explanation unavailable — model not loaded",
+            )
+        # 2. Mutual-exclusion: exactly one of order_id / features is
+        # required.
+        if order_id is None and features is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "either ?order_id=<order_id> (look up a past "
+                    "prediction's features_used) or ?features=<JSON-string> "
+                    "(explain a hypothetical feature dict) is required"
+                ),
+            )
+        if order_id is not None and features is not None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "pass exactly one of ?order_id= or ?features= — not "
+                    "both (mutually exclusive explanation sources)"
+                ),
+            )
+        # 3. Build the feature dict from whichever source was provided.
+        # Day 6 Track 12-bc — sub-span around the feature-dict resolution
+        # so a Jaeger trace surfaces "order_id lookup miss" as a slow
+        # operation when the audit tail scan is the bottleneck.
+        _explain_tracer = get_tracer(__name__)
+        with optional_span(
+            _explain_tracer,
+            "explain_shap.resolve_features",
+            attributes={
+                "explain.order_id_present": order_id is not None,
+                "explain.features_present": features is not None,
+            },
+        ) as _resolve_span:
+            feature_dict: dict | None = None
+            prediction_id_resolved: str | None = None
+            probability_resolved: float | None = None
+            if order_id is not None:
+                # Scan the audit tail for the past prediction with this
+                # order_id. Cheap (last 5000 records, well within the
+                # prediction-window for a chargeback-style post-incident
+                # review). The audit body's ``features_used`` field is
+                # the numeric-feature dict (the same shape ``reason_codes``
+                # uses); SHAP needs the same columns.
+                for rec in _read_audit_tail(state["audit"], limit=5000):
+                    req = rec.get("request") or {}
+                    if req.get("order_id") == order_id:
+                        fu = rec.get("features_used")
+                        if isinstance(fu, dict) and fu:
+                            feature_dict = dict(fu)
+                            prediction_id_resolved = rec.get("prediction_id")
+                            try:
+                                p = rec.get("probability")
+                                if p is not None:
+                                    probability_resolved = float(p)
+                            except (TypeError, ValueError):
+                                pass
+                            break
+                if feature_dict is None:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"no past prediction with order_id='{order_id}' "
+                            "found in the audit tail (last 5000 records) OR "
+                            "the prediction's audit record has no "
+                            "features_used field (the prediction was a "
+                            "rules-engine fast-path BLOCK which short-"
+                            "circuits before the model is invoked — use "
+                            "?features=<JSON> instead)"
+                        ),
+                    )
+            else:
+                # features JSON string — parse + validate.
+                try:
+                    parsed = json.loads(features)
+                except (json.JSONDecodeError, TypeError) as e:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"?features= must be a JSON object string: "
+                            f"{type(e).__name__}: {e}"
+                        ),
+                    )
+                if not isinstance(parsed, dict) or not parsed:
+                    raise HTTPException(
+                        status_code=422,
+                        detail="?features= must decode to a non-empty JSON object",
+                    )
+                feature_dict = parsed
+            if _resolve_span is not None:
+                try:
+                    _resolve_span.set_attribute(
+                        "explain.feature_count",
+                        len(feature_dict) if feature_dict else 0,
+                    )
+                    if prediction_id_resolved is not None:
+                        _resolve_span.set_attribute(
+                            "explain.prediction_id",
+                            str(prediction_id_resolved),
+                        )
+                except Exception:  # pragma: no cover
+                    pass
+
+        # 4. Resolve + use the cached SHAP explainer if available. The
+        # lifespan stores state["shap_explainer"] = None as a placeholder;
+        # the first /v1/explain/shap request builds it lazily + caches it
+        # so subsequent requests skip the KernelExplainer construction.
+        # This is the spec-mandated caching layer ("store it in
+        # state['shap_explainer'] in the lifespan" — the lifespan stores
+        # None + the first request populates the cache; same effective
+        # behavior, deferred until first use so the lifespan doesn't pay
+        # shap's import cost when the endpoint isn't used in this worker).
+        prebuilt = state.get("shap_explainer")
+        if prebuilt is None:
+            try:
+                import shap  # noqa: F401 — imported for the side effect
+                # Build the explainer using the module-level background
+                # cache populated by set_background_cache(X_tr) in the
+                # lifespan. Cap to SHAP_MAX_BACKGROUND_ROWS (50) per spec.
+                from src.models.explain import (
+                    SHAP_MAX_BACKGROUND_ROWS,
+                    get_background_cache,
+                )
+                bg_cache = get_background_cache()
+                if bg_cache is not None and len(bg_cache) > 0:
+                    bg_n = min(
+                        SHAP_MAX_BACKGROUND_ROWS, len(bg_cache)
+                    )
+                    bg_df = (
+                        bg_cache.sample(n=bg_n, random_state=42)
+                        if len(bg_cache) > bg_n
+                        else bg_cache
+                    )
+                else:
+                    # No cache (file mode with no training data
+                    # loaded — shouldn't happen post-lifespan, but
+                    # defensive). Build a 1-row background from the
+                    # feature dict itself (degenerate — SHAP values
+                    # will be ~0 because the background == the input).
+                    import pandas as _pd
+                    bg_df = _pd.DataFrame([feature_dict])
+                prebuilt = shap.KernelExplainer(
+                    state["model"].predict_proba, bg_df
+                )
+                state["shap_explainer"] = prebuilt
+            except ImportError:
+                # shap not installed — prebuilt stays None; the
+                # explain_with_shap call below returns the graceful
+                # fallback dict.
+                state["shap_explainer"] = None
+                prebuilt = None
+            except Exception as e:  # pragma: no cover — defensive
+                print(
+                    f"[shap] cached KernelExplainer construction failed: "
+                    f"{type(e).__name__}: {e} — building fresh per request",
+                    file=sys.stderr,
+                )
+                state["shap_explainer"] = None
+                prebuilt = None
+
+        # 5. Run explain_with_shap with the cached explainer (if any).
+        # The function returns a graceful fallback dict on any failure
+        # (shap not installed, timeout, etc.) so the endpoint always
+        # returns 200 — the caller's dashboard renders the fallback path.
+        with optional_span(
+            _explain_tracer,
+            "explain_shap.compute",
+            attributes={
+                "explain.background_samples": int(background_samples),
+                "explain.cached_explainer": prebuilt is not None,
+            },
+        ) as _compute_span:
+            result = explain_with_shap(
+                state["model"],
+                feature_dict,
+                background_samples=background_samples,
+                prebuilt_explainer=prebuilt,
+            )
+            if _compute_span is not None:
+                try:
+                    if "error" in result:
+                        _compute_span.set_attribute(
+                            "explain.error", str(result.get("error", ""))
+                        )
+                    else:
+                        _compute_span.set_attribute(
+                            "explain.background_rows",
+                            int(result.get("background_rows", 0)),
+                        )
+                        _compute_span.set_attribute(
+                            "explain.feature_count",
+                            len(result.get("feature_names", [])),
+                        )
+                except Exception:  # pragma: no cover
+                    pass
+
+        # 6. Serialize + return. The endpoint surfaces the cached
+        # prediction's metadata (prediction_id / probability) when the
+        # caller passed ?order_id= so the dashboard can show "this is
+        # the SHAP explanation for prediction_id=abc at P(RTO)=0.42".
+        out = serialize_shap_result(result)
+        out["order_id"] = order_id
+        out["prediction_id"] = prediction_id_resolved
+        out["probability"] = (
+            round(float(probability_resolved), 5)
+            if probability_resolved is not None
+            else None
+        )
+        out["background_samples_requested"] = int(background_samples)
+        out["cached_explainer"] = prebuilt is not None
+        out["model_version"] = state["audit"].model_version
+        out["source_paper"] = (
+            "Lundberg & Lee, A Unified Approach to Interpreting Model "
+            "Predictions, NeurIPS 2017, arXiv:1705.07856"
+        )
+        return out
+
     @app.post("/v1/simulate", tags=["simulation"])
     def simulate(
         payload: SimulateIn,
@@ -2187,6 +2662,27 @@ def create_app(
             "/dashboard",
             StaticFiles(directory=str(dashboard_dir), html=True),
             name="dashboard",
+        )
+
+    # Day 6 Track 12-bc — auto-instrument the FastAPI app + outbound HTTP +
+    # psycopg queries. Must be called AFTER all routes are registered
+    # (FastAPIInstrumentor hooks the route table at instrumentation time +
+    # this is the last such registration point before ``return app``).
+    # Dual-mode: the underlying opentelemetry-instrumentation-* packages
+    # may not be installed (test sandbox, or a developer running
+    # ``pip install -r requirements.txt`` without the new instrumentation
+    # packages); the helper wraps each instrumentor in try/except ImportError
+    # so the API doesn't crash at boot. Manual spans on /risk/score +
+    # custom sub-spans via get_tracer() work even without the instrumentors
+    # (they degrade to no-ops when the global provider isn't configured).
+    try:
+        otel_instrument_app(app)
+    except Exception as e:  # pragma: no cover — best-effort, never fail boot
+        print(
+            f"[otel] instrument_app() raised unexpectedly: "
+            f"{type(e).__name__}: {e} — auto-instrumentation disabled, "
+            "manual spans still active",
+            file=sys.stderr,
         )
 
     return app

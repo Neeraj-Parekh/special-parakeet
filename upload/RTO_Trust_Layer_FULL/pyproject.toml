@@ -15,14 +15,25 @@ version = "0.4.0"
 description = "Merchant-facing RTO risk command center"
 readme = "README.md"
 requires-python = ">=3.12"
-# Runtime deps — pinned to the same floors as requirements.txt, minus `shap`
-# (dead dep — never imported; removed in this same fix-batch). pytest and ruff
-# are dev-only and live in [project.optional-dependencies] below.
+# Runtime deps — pinned to the same floors as requirements.txt.
+# Day 6 Track 12-bc — re-added `shap>=0.42` (was removed earlier as a
+# "dead dep — never imported"; now actually wired into
+# `src/models/explain.py::explain_with_shap()` for the
+# `/v1/explain/shap` endpoint). Dual-mode via try/except ImportError so the
+# API boots without shap installed.
 # Day 2 Track E additions: psycopg v3 (raw, NO ORM per 04-TECH-STACK-DECISIONS),
 # alembic, pydantic-settings, cachetools (TTLCache for the file-mode idempotency
 # cache — closes the §A item 2 memory leak even without DATABASE_URL set).
 # Day 2 Track F additions: redis>=5.0 (Redis Streams producer/consumer + HLL).
 # Closes §A item 18 + driver G2 (REST-only, no event/streaming backbone).
+# Day 4 Track M additions: opentelemetry-api/sdk/exporter-otlp — core OTel
+# packages for the manual span on /risk/score. The instrumentation-* packages
+# below add auto-spans for FastAPI/requests/psycopg.
+# Day 6 Track 12-bc additions:
+#   - shap>=0.42 — SHAP KernelExplainer (Lundberg 2017 NeurIPS §3 "KernelSHAP").
+#   - opentelemetry-distro + instrumentation-fastapi/requests/psycopg —
+#     auto-creates server/client/db spans. Dual-mode (try/except ImportError
+#     inside src/api/otel.py::instrument_app) so the API boots without these.
 dependencies = [
     "pandas>=2.2",
     "numpy>=1.26",
@@ -35,13 +46,23 @@ dependencies = [
     "pydantic-settings>=2.0",
     "cachetools>=5.3",
     "redis>=5.0",
-    # Day 4 Track M — OpenTelemetry instrumentation for the /risk/score
-    # decision pipeline (Jaeger UI + OTLP gRPC exporter). Dual-mode: if
-    # OTEL_EXPORTER_OTLP_ENDPOINT is unset the tracer is None + spans
-    # become no-ops (the 93 existing tests pass without a Jaeger fixture).
+    # Day 6 Track 12-bc — SHAP KernelExplainer for /v1/explain/shap
+    # (Lundberg & Lee 2017 NeurIPS §3 "KernelSHAP"). Dual-mode via
+    # try/except ImportError in src/models/explain.py.
+    "shap>=0.42",
+    # Day 4 Track M — OpenTelemetry core (API + SDK + OTLP exporter). The
+    # 3 packages below are the minimum for the manual span on /risk/score.
     "opentelemetry-api>=1.20",
     "opentelemetry-sdk>=1.20",
     "opentelemetry-exporter-otlp>=1.20",
+    # Day 6 Track 12-bc — OTel instrumentation layer. Auto-creates spans
+    # for FastAPI server requests + outbound HTTP + psycopg queries.
+    # Dual-mode (try/except ImportError inside src/api/otel.py::
+    # instrument_app) so the API boots without these.
+    "opentelemetry-distro>=0.50",
+    "opentelemetry-instrumentation-fastapi>=0.50",
+    "opentelemetry-instrumentation-requests>=0.50",
+    "opentelemetry-instrumentation-psycopg>=0.50",
 ]
 
 # Dev / lint / test extras — `uv sync --extra dev` or `pip install -e .[dev]`.

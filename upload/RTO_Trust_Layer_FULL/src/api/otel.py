@@ -1,10 +1,6 @@
 """OpenTelemetry tracer setup for the RTO Trust Layer.
 
-Day 4 Track M — closes the V2 §9.2 observability gap by wiring OTel into
-the FastAPI /risk/score handler so the decision pipeline shows up as a
-distributed trace in Jaeger (UI on :16686, OTLP gRPC ingestion on :4317).
-
-Dual-mode (mirrors Track E's DATABASE_URL + Track F's REDIS_URL pattern):
+Day 2 Track E — Dual-mode (mirrors Track E's DATABASE_URL + Track F's REDIS_URL pattern):
   * If ``OTEL_EXPORTER_OTLP_ENDPOINT`` env var is set → real TracerProvider
     with a BatchSpanProcessor + OTLPSpanExporter pushes spans to Jaeger.
   * If unset → return ``None`` so the handler can short-circuit
@@ -31,11 +27,27 @@ expansion surfaces the mandate verdict_reason on the same span).
 
 Source: OpenTelemetry Python SDK docs §"Manual instrumentation" (2024)
 + Jaeger all-in-one image 1.55 (OTLP gRPC on :4317, UI on :16686).
+
+Day 6 Track 12-bc — extended with two new helpers:
+  * ``get_tracer(name)`` — returns a tracer from the global provider
+    (NoOpTracer when OTel isn't installed). Used by routes.py to create
+    custom sub-spans on the critical path (optimal_decision, audit.log,
+    verify_mandate) WITHOUT polluting the outer ``state["tracer"]`` that
+    the existing test_otel.py asserts is called exactly once with
+    ``"risk.score"``. The sub-spans go through the global provider so a
+    Jaeger trace surfaces the full call-tree.
+  * ``instrument_app(app)`` — calls FastAPIInstrumentor.instrument_app +
+    RequestsInstrumentor().instrument() + PsycopgInstrumentor().instrument()
+    (all guarded by try/except ImportError so the API doesn't crash if
+    the opentelemetry-instrumentation-* packages aren't installed). Auto-
+    creates server spans for every HTTP request + db-query spans for every
+    psycopg query.
 """
 from __future__ import annotations
 
 import os
-from typing import Any
+from contextlib import contextmanager
+from typing import Any, Iterator
 
 
 def setup_otel(
@@ -138,3 +150,298 @@ def setup_otel(
 # dual-mode like Track E so we keep None + the gate. The tests in
 # tests/test_otel.py exercise both paths.
 # ---------------------------------------------------------------------------
+
+
+class _NoOpSpan:
+    """Minimal stand-in for ``opentelemetry.trace.Span``.
+
+    Used when the ``opentelemetry-api`` package isn't installed — provides
+    the same surface (``set_attribute`` / ``record_exception`` / ``end`` /
+    ``__enter__`` / ``__exit__``) so the caller can write
+    ``with tracer.start_as_current_span("...") as span: ...`` without
+    branching on whether OTel is installed. All methods are no-ops.
+    """
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        pass
+
+    def set_attributes(self, attributes: dict) -> None:
+        pass
+
+    def add_event(self, name: str, attributes: dict | None = None) -> None:
+        pass
+
+    def record_exception(self, exception: BaseException) -> None:
+        pass
+
+    def set_status(self, status: Any, description: str | None = None) -> None:
+        pass
+
+    def update_name(self, name: str) -> None:
+        pass
+
+    def end(self, end_time: float | None = None) -> None:
+        pass
+
+    def is_recording(self) -> bool:
+        return False
+
+    def __enter__(self) -> "_NoOpSpan":
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        return False
+
+
+class _NoOpTracer:
+    """Minimal stand-in for ``opentelemetry.trace.Tracer``.
+
+    Matches the surface used by routes.py: ``start_as_current_span(name)``
+    returns a context manager that yields a ``_NoOpSpan``. The CM is the
+    span itself (per the OTel SDK's pattern where the span IS the CM).
+    """
+
+    def start_as_current_span(self, name: str, **kwargs: Any) -> "_NoOpSpan":
+        return _NoOpSpan()
+
+    def start_span(self, name: str, **kwargs: Any) -> "_NoOpSpan":
+        return _NoOpSpan()
+
+
+# Module-level NoOp tracer singleton — every call to get_tracer() when OTel
+# isn't installed returns the same instance (avoids allocating a new one
+# per request).
+_NOOP_TRACER = _NoOpTracer()
+
+
+def get_tracer(name: str) -> Any:
+    """Return a tracer from the global OpenTelemetry provider.
+
+    Used by routes.py to create custom sub-spans on the critical path
+    (around ``optimal_decision`` / ``optimal_intervention`` /
+    ``audit.log`` / ``verify_mandate``) WITHOUT touching the outer
+    ``state["tracer"]`` that the existing test_otel.py asserts is called
+    exactly once with ``"risk.score"``. The sub-spans go through the
+    GLOBAL provider so a Jaeger trace surfaces the full call-tree under
+    the parent ``risk.score`` span.
+
+    Dual-mode (mirrors ``setup_otel()``):
+      * If ``opentelemetry-api`` is installed → returns
+        ``opentelemetry.trace.get_tracer(name)`` (the real tracer when
+        ``setup_otel()`` has configured a provider; the NoOpTracer built
+        into the OTel API when no provider is configured — test mode).
+      * If ``opentelemetry-api`` is NOT installed → returns the local
+        ``_NoOpTracer()`` singleton so the caller's
+        ``with tracer.start_as_current_span("...") as span: ...`` is a
+        no-op (no exception, no trace exported).
+
+    Args:
+        name: The instrumentation scope name. Per OTel convention, this
+            is typically ``__name__`` of the module creating the spans
+            (e.g. ``"src.api.routes"``). Surfaces in Jaeger's "Instrumentation
+            Scope" filter.
+
+    Returns:
+        A tracer instance (real, OTel-API-noop, or local _NoOpTracer).
+    """
+    try:
+        from opentelemetry import trace
+    except ImportError:
+        return _NOOP_TRACER
+    try:
+        return trace.get_tracer(name)
+    except Exception:  # pragma: no cover — defensive
+        return _NOOP_TRACER
+
+
+@contextmanager
+def optional_span(
+    tracer: Any,
+    name: str,
+    attributes: dict | None = None,
+) -> Iterator[Any]:
+    """Context manager that creates a span if tracer is non-None, else no-op.
+
+    Convenience wrapper for the ``with tracer.start_as_current_span(...) as
+    span: span.set_attribute(...)`` pattern that appears in routes.py's
+    critical-path span annotations. Using this helper keeps the call-site
+    concise:
+
+        tracer = get_tracer(__name__)
+        with optional_span(tracer, "optimal_decision",
+                           attributes={"amount_inr": order.amount_inr}) as span:
+            decision, costs = optimal_decision(...)
+
+    Yields the span (real or NoOp) so the caller can call ``set_attribute``
+    / ``record_exception`` on it conditionally.
+
+    IMPORTANT: exceptions raised inside the ``with`` body ARE propagated —
+    they're passed to the underlying span's ``__exit__`` so the OTel SDK
+    can ``record_exception`` + set ``status=ERROR`` on the span, then
+    re-raised to the caller. The helper never swallows application
+    exceptions.
+
+    Args:
+        tracer: A tracer instance (real, OTel-API-noop, or local _NoOpTracer).
+            None is also accepted (the function degrades to a no-op).
+        name: The span name (e.g. ``"optimal_decision"``).
+        attributes: Optional dict of initial span attributes set inside the
+            ``with`` block (after ``__enter__``). Defensive — wrapped in
+            try/except so a single bad attribute doesn't crash the request.
+    """
+    # Tracer-None fast path — yield a local NoOp + return. No CM machinery.
+    if tracer is None:
+        yield _NoOpSpan()
+        return
+
+    # Build the span CM. The OTel SDK's ``start_as_current_span`` returns a
+    # context manager; the local _NoOpTracer returns a _NoOpSpan instance
+    # which is itself a CM (via __enter__/__exit__).
+    try:
+        span_cm = tracer.start_as_current_span(name)
+    except Exception:
+        # Failed to even construct the CM (defensive — should never happen
+        # with the NoOp path, but if the OTel SDK hits an internal error
+        # we degrade gracefully). Yield a NoOp + return.
+        yield _NoOpSpan()
+        return
+
+    # Enter the CM. If this raises, fall back to NoOp so the body runs.
+    try:
+        span_obj = span_cm.__enter__()
+    except Exception:
+        yield _NoOpSpan()
+        return
+
+    # Set initial attributes (defensive — best-effort).
+    if attributes:
+        for k, v in attributes.items():
+            try:
+                span_obj.set_attribute(k, v)
+            except Exception:  # pragma: no cover — best-effort
+                pass
+
+    # Yield control to the body. If the body raises, capture the exc_info
+    # + pass it to ``__exit__`` so the OTel SDK records the exception on
+    # the span (via ``record_exception`` + ``set_status(ERROR)``). Then
+    # re-raise so the application code's exception handler runs.
+    exc_info: tuple = (None, None, None)
+    try:
+        yield span_obj
+    except BaseException as e:
+        exc_info = (type(e), e, e.__traceback__)
+        raise
+    finally:
+        try:
+            span_cm.__exit__(*exc_info)
+        except Exception:  # pragma: no cover — best-effort
+            pass
+
+
+def instrument_app(app: Any) -> bool:
+    """Auto-instrument a FastAPI app + outbound HTTP + psycopg.
+
+    Calls (each guarded by try/except ImportError so the API doesn't crash
+    if the corresponding instrumentation package isn't installed):
+      * ``FastAPIInstrumentor.instrument_app(app)`` — auto-creates server
+        spans for every HTTP request, with the route + method + status as
+        span attributes. Replaces the manual ``state["tracer"]`` span for
+        the OUTER request scope (but NOT the inner ``risk.score`` span —
+        the manual one is preserved because test_otel.py asserts on it).
+      * ``RequestsInstrumentor().instrument()`` — auto-creates client spans
+        for every outbound ``requests.*`` call. The RTO Trust Layer makes
+        outbound HTTP calls in src/stream/producer.py's lazy connect + the
+        ingest simulators, so this wires their latency into the trace.
+      * ``PsycopgInstrumentor().instrument()`` — auto-creates db spans for
+        every psycopg query (the audit logger's INSERT, the idempotency
+        cache's SELECT/INSERT, the mandate counter's read/write, the
+        model-registry's INSERT/SELECT). These auto-spans show up as
+        children of the manual ``audit.log`` / ``verify_mandate`` spans
+        when those are present.
+
+    Must be called AFTER all routes are registered on the app (i.e. at
+    the end of ``create_app`` before ``return app``) — FastAPIInstrumentor
+    hooks the route registry at instrumentation time.
+
+    Returns ``True`` if all 3 instrumentations succeeded; ``False`` if any
+    failed (ImportError or runtime error). The caller (routes.py) ignores
+    the return value — instrumentation is best-effort; the manual spans
+    + the OTel SDK's noop tracer cover the gap when instrumentation
+    isn't installed.
+    """
+    success = True
+
+    # FastAPIInstrumentor — auto-creates server spans for each HTTP request.
+    try:
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+        FastAPIInstrumentor.instrument_app(app)
+    except ImportError:
+        # opentelemetry-instrumentation-fastapi not installed. The manual
+        # ``state["tracer"]`` span on /risk/score + the custom sub-spans
+        # via get_tracer() still work; we just lose the outer request-
+        # scope auto-span + the per-route span attributes.
+        success = False
+    except Exception as e:  # pragma: no cover — defensive
+        # FastAPIInstrumentor can raise if a tracer provider isn't set OR
+        # if the app's route table has unexpected shapes. Best-effort:
+        # log + continue.
+        import sys
+
+        print(
+            f"[otel] FastAPIInstrumentor.instrument_app failed: "
+            f"{type(e).__name__}: {e} — request-level auto-spans disabled",
+            file=sys.stderr,
+        )
+        success = False
+
+    # RequestsInstrumentor — auto-creates client spans for outbound HTTP.
+    # The RTO Trust Layer makes outbound HTTP calls in src/stream/producer.py
+    # (lazy Redis connect is HTTP-ish in some configs) + the ingest
+    # simulators post to the API.
+    try:
+        from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
+        RequestsInstrumentor().instrument()
+    except ImportError:
+        # opentelemetry-instrumentation-requests not installed.
+        success = False
+    except Exception as e:  # pragma: no cover — defensive
+        import sys
+
+        print(
+            f"[otel] RequestsInstrumentor.instrument failed: "
+            f"{type(e).__name__}: {e} — outbound HTTP auto-spans disabled",
+            file=sys.stderr,
+        )
+        success = False
+
+    # PsycopgInstrumentor — auto-creates db spans for every psycopg query.
+    # The audit logger + idempotency cache + mandate counters + model
+    # registry all use psycopg directly (no SQLAlchemy ORM per the
+    # 04-TECH-STACK-DECISIONS spec).
+    try:
+        from opentelemetry.instrumentation.psycopg import PsycopgInstrumentor
+
+        PsycopgInstrumentor().instrument(enable_commenter=True, commenter_options={})
+    except ImportError:
+        # Try the older psycopg2 instrumentation as a fallback (the spec
+        # pins psycopg3, but a developer may have an older install).
+        try:
+            from opentelemetry.instrumentation.psycopg2 import Psycopg2Instrumentor
+
+            Psycopg2Instrumentor().instrument(enable_commenter=True, commenter_options={})
+        except ImportError:
+            # Neither psycopg nor psycopg2 instrumentation installed.
+            success = False
+    except Exception as e:  # pragma: no cover — defensive
+        import sys
+
+        print(
+            f"[otel] PsycopgInstrumentor.instrument failed: "
+            f"{type(e).__name__}: {e} — DB-query auto-spans disabled",
+            file=sys.stderr,
+        )
+        success = False
+
+    return success

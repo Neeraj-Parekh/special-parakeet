@@ -185,10 +185,19 @@ services:
   grafana:
     image: grafana/grafana
     profiles: ["full"]
-    ports:
-      - "3000:3000"
+    # Day 7 Track 12-d — Grafana port is now env-driven (default 3001, NOT
+    # 3000). The historical "3000:3000" mapping collided with the Next.js
+    # dev server which is MANDATORY on 3000 per the project's system rules.
+    # ``scripts/auto_configure.py`` probes for a free port in [3001, 3010]
+    # and writes ``out/port_config.json``; the operator can then export
+    # GRAFANA_PORT before ``docker compose --profile full up`` to pick it
+    # up here. The env default (3001) keeps the bare ``docker compose``
+    # invocation working out-of-the-box on a clean host.
     environment:
+      - GF_SERVER_HTTP_PORT=${GRAFANA_PORT:-3001}
       - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
+    ports:
+      - "${GRAFANA_PORT:-3001}:${GRAFANA_PORT:-3001}"
     volumes:
       # Dashboard provider config + dashboard JSONs.
       # NOTE: target is `dashboards` (the conventional Grafana provisioning

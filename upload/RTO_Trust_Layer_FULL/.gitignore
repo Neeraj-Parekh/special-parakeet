@@ -10,3 +10,15 @@ nohup.out
 
 paper_ref/
 paper studied/
+
+# Additional exclusions for clean repo
+data/
+*.egg-info/
+htmlcov/
+.coverage
+.env
+*.db
+venv/
+.venv/
+*.log
+nohup.out

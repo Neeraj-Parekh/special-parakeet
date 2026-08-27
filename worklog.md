@@ -712,3 +712,23 @@ Stage Summary:
   4. `python scripts/retrain_real.py` → trains HistGB on the leakage-safe split, evaluates, registers champion if PR-AUC > incumbent's, regenerates docs/cost_table.md + docs/feature_importance.md, exits 1 if PR-AUC < 0.60 (CI gate).
   5. If PR-AUC ≥ 0.72 (Kandula 2021 benchmark): update README.md "Results" table's PR-AUC cell from 0.5495 (synthetic) to the real-data number. The dashboard's Model Health page (`/api/v1/models/current`) reflects the new champion immediately — no API restart needed (the registry is queried live on each request).
   6. If PR-AUC < 0.60 (CI gate fails): investigate per the troubleshooting table in `data/raw/README.md` (most likely cause: column-name divergence from the expected Amazon schema; second most likely: the `state_norm` + `city_tier` heuristic needs tuning).
+
+---
+Task ID: 9-snapshot
+Agent: Z.ai Code orchestrator (main session)
+Task: User asked: (a) write down everything done in this session + todo + thought process in an MD file, (b) zip everything in sandbox (exclude node_modules etc), (c) sanity check tools to diagnose whether broken-session errors are an infrastructure fault.
+
+Work Log:
+- Ran parallel tool sanity check: Bash (date/uname/df/whoami/pwd), LS /home/z/my-project, Glob (path required — schema quirk, not fault), Grep worklog.md, Read 7 command MDs + worklog + page.tsx + package.json, TodoRead (returned 8 completed items from prior session Kaggle pipeline work).
+- Verified dev server: ps aux shows bun (PID 1153) + next-server v16.1.3 (PID 1174, 1.79GB) + postcss watcher (PID 1204) running since 04:04. dev.log tail (30KB, last 60 lines) all 200s + expected 405s on POST-only endpoints being GETted by Agent Browser. No errors.
+- Disk inventory: 1.6G total. node_modules 1.2G (EXCLUDE), .next 279M (EXCLUDE), upload 46M (INCLUDE), upload/RTO_Trust_Layer_FULL 38M (INCLUDE).
+- Read all 7 existing command folder MDs (00-MASTER-PLAN through 07-EXECUTION-LOG) + agent-ctx/5-a-track-i-dashboard.md context to build accurate snapshot.
+- Wrote /home/z/my-project/command/08-SESSION-SNAPSHOT.md (9 sections: infra sanity check, project identity, what's DONE final scorecard, what's PENDING todo, orchestrator thought process, zip contents, resume protocol, resolved tech stack, 6 demo moments current state, final priority list). ~600 lines.
+- Appending this worklog record.
+- Next: zip everything (exclude node_modules/.next/.git/tool-results/.zscripts) → /home/z/my-project/rto-sandbox-snapshot.zip.
+
+Stage Summary:
+- INFRASTRUCTURE VERDICT: NO FAULT. All 9 basic tools work. Dev server healthy. The "broken session" the user worried about was context window exhaustion, not infra failure.
+- Snapshot MD (08-SESSION-SNAPSHOT.md) is the context-loss-recovery document. Includes the orchestrator's full thought process (4-question gate, 5 Missions, 3-act pitch, paper-skills → code-gaps map, parallel subagent tracks, triage rules, agent-browser self-verification mandate).
+- Final scorecard from prior session: 13/14 tracks done (M partial — acceptable cut), 105 tests + 8 skipped passing, 11/14 paper-skills gaps closed, 3/3 perceived-gap drivers closed, 22/24 broken items fixed, agent-browser verified all 4 pages + 13 API routes work.
+- User homework (8 items) is the ONLY remaining blocker to Razorpay submission: refresh_lockfile, alembic upgrade, docker compose up, Kaggle download, retrain (PR-AUC > 0.70 target), bun run dev, 5-min video, git tag.

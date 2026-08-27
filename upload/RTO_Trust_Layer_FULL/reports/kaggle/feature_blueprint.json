@@ -1,0 +1,49 @@
+{
+  "categorical (to be target/rate-encoded or frequency-filtered OHE, NOT naive OHE on city/sku)": [
+    "Category",
+    "_sku_prefix",
+    "ship-state",
+    "ship-city (via rto_rate, not OHE)",
+    "_pincode_prefix",
+    "Fulfilment",
+    "Sales Channel ",
+    "ship-service-level",
+    "fulfilled-by",
+    "_amount_bucket",
+    "Size"
+  ],
+  "numerical": [
+    "Amount",
+    "_amount_log",
+    "_is_high_value",
+    "_is_very_high_value",
+    "_amount_zscore_by_category (train-stats only)",
+    "Amount / category_median",
+    "Amount / Qty",
+    "Qty",
+    "_pincode_str length",
+    "_is_weekend",
+    "_is_month_start",
+    "_is_month_end",
+    "_dow",
+    "_month",
+    "_is_b2b",
+    "_has_promotion",
+    "category_rto_rate (expanding, shift1)",
+    "state_rto_rate",
+    "city_rto_rate",
+    "pincode_prefix_rto_rate",
+    "sku_prefix_rto_rate",
+    "fulfilment_rto_rate",
+    "category_order_count (cumcount)"
+  ],
+  "explicitly_excluded_leakage": [
+    "Courier Status (post-shipment)",
+    "promotion-ids raw (proxy for courier)",
+    "Unnamed: 22 (junk)",
+    "Amount NaN flag is OK but not Amount itself imputed blindly"
+  ],
+  "label": "rto (substring RTO only; is_cancelled is separate, optionally excluded)",
+  "split": "time-based TimeSeriesSplit on _date (NOT random KFold) \u2014 respects Apr-Jun bulk season",
+  "sampling_note": "If undersampling negatives, store p_orig/p_und and apply Bahnsen calibration at inference"
+}

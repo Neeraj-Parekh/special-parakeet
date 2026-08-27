@@ -597,3 +597,595 @@ def test_drift_consumer_skipped_without_redis(monkeypatch):
     finally:
         # Restore the cache so other tests don't see the env mutation.
         get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 (Subagent 15-c) — REAL DDM-STATE ASSERTIONS
+# ---------------------------------------------------------------------------
+# DO BADLY #6: the existing ``test_feedback_metrics_endpoint_exposes_drift_
+# gauges`` is a SHAPE-only test — it ingests 1 label + asserts the 5
+# Prometheus gauge TYPE comments are present + the STABLE state values
+# (0/0/1) appear in /metrics. It does NOT fire real DRIFT + assert the
+# gauge value actually transitions to 2 (DRIFT) at detection time.
+#
+# The 2 tests below close that gap by feeding REAL drift data through the
+# DDM detector + asserting the INTERNAL state actually mutated (not just
+# the public ``state`` attribute that a mock could fake). They prove the
+# detector PROCESSED the stream (running p / sigma / n / p_min / sigma_min
+# all mutated to expected values), so a regression where DDM.update()
+# returned a hardcoded "DRIFT" without computing anything would fail
+# these tests.
+#
+# These tests do NOT mock the DDM detector — they construct real DDM
+# instances (the production class in src/ml/drift.py) + feed them real
+# Bernoulli error streams + assert the actual post-update state. The
+# existing DDM tests (test_ddm_drift_on_error_burst etc.) verify the
+# public state field; the tests below verify the internal state
+# machine's plumbing (p, n, p_min, sigma_min) so a regression that
+# bypassed the statistical computation but kept the state field correct
+# would still fail.
+# ---------------------------------------------------------------------------
+
+
+def test_ddm_internal_state_mutates_on_real_drift_stream():
+    """Feed a real Bernoulli error stream + assert the DDM's INTERNAL
+    state machine plumbing mutated to expected values (not just the
+    public ``state`` attribute).
+
+    This closes the "DO BADLY #6" gap by verifying the detector
+    PROCESSED the stream — the running ``p``, sample count ``n``, the
+    in-control baseline ``p_min`` + ``sigma_min`` ALL mutated from
+    their constructor defaults to values consistent with the stream's
+    statistics. A regression where ``DDM.update()`` returned a
+    hardcoded "DRIFT" without computing the running mean would fail
+    this test (the ``p`` assertion would not match).
+
+    Sequence:
+      1. Seed 30 cold-start samples (all error=0) — the ``min_n=10``
+         gate doesn't fire + ``sigma_min`` stays at 0 (the DDM
+         degeneracy guard: ``sigma > 0`` required to adopt a baseline).
+      2. Feed 1 wrong (error=1) — ``sigma_min`` should now be > 0
+         (the model has made at least one error → Bernoulli std is
+         computable) + ``p_min`` should be the minimum (p + sigma)
+         point so far.
+      3. Feed enough additional errors to breach the 3σ threshold +
+         fire DRIFT — assert ``state == "DRIFT"`` AND the running
+         ``p`` climbed to > 0.5 (the error rate is > 50% after the
+         sustained error burst).
+    """
+    d = DDM(min_n=10)
+
+    # 1. Cold-start seed — 30 correct predictions.
+    for _ in range(30):
+        d.update(0)
+    # Post-seed state: still STABLE (sigma_min=0 → degeneracy guard
+    # blocks WARNING/DRIFT), n=30, p=0 (no errors yet).
+    assert d.state == "STABLE", "cold-start seed should be STABLE"
+    assert d.n == 30, f"n should be 30 after 30 updates; got {d.n}"
+    assert d.p == 0.0, (
+        f"running p should be 0.0 after 30 correct predictions; got {d.p}"
+    )
+    # The degeneracy guard blocked baseline adoption (sigma=0 because
+    # p=0 → p*(1-p)/n = 0 → sigma=0 → the ``sigma > 0`` check fails).
+    assert d.sigma_min == 0.0, (
+        f"sigma_min should still be 0 after perfect-prediction seed "
+        f"(the degeneracy guard blocks baseline adoption); got "
+        f"{d.sigma_min}"
+    )
+    assert d.p_min == 1.0, (
+        f"p_min should still be the constructor default 1.0 (no baseline "
+        f"adopted yet because sigma_min=0); got {d.p_min}"
+    )
+
+    # 2. Feed 1 wrong label to break the degeneracy — p climbs above 0,
+    # sigma becomes non-zero, baseline gets adopted.
+    d.update(1)
+    assert d.n == 31
+    assert d.p > 0.0, (
+        f"after 1 error in 31 samples, running p should be > 0; got {d.p}"
+    )
+    # The baseline is now adopted (sigma > 0 → the ``sigma > 0`` guard
+    # passes → p_min/sigma_min get set to the running values).
+    assert d.sigma_min > 0.0, (
+        f"after 1 error, sigma_min should be > 0 (the degeneracy guard "
+        f"unblocks + baseline gets adopted); got {d.sigma_min}"
+    )
+    assert d.p_min < 1.0, (
+        f"after 1 error, p_min should be < 1.0 (the constructor default) "
+        f"because the baseline adoption path set it; got {d.p_min}"
+    )
+    # Verify the baseline was adopted correctly: p_min = p at the
+    # minimum (p+sigma) point, sigma_min = sigma at that point. After
+    # 1 error in 31 samples, p ≈ 1/31 ≈ 0.032 + sigma ≈ √(0.032*0.968/31)
+    # ≈ 0.032. So p_min + sigma_min ≈ 0.064. The check: the (p+sigma)
+    # at the time of baseline adoption = (d.p at that update) + sigma.
+    # We use pytest.approx because of floating-point representation.
+    expected_p_at_adoption = 1.0 / 31.0  # 1 error in 31 samples
+    expected_sigma_at_adoption = (
+        (expected_p_at_adoption * (1.0 - expected_p_at_adoption) / 31.0) ** 0.5
+    )
+    assert d.p_min == pytest.approx(expected_p_at_adoption, abs=1e-9), (
+        f"p_min should equal the p value at baseline adoption (≈1/31 "
+        f"after 1 error in 31 samples); got {d.p_min}, expected "
+        f"{expected_p_at_adoption}"
+    )
+    assert d.sigma_min == pytest.approx(expected_sigma_at_adoption, abs=1e-9), (
+        f"sigma_min should equal the sigma value at baseline adoption "
+        f"(≈√(p*(1-p)/n) at the minimum point); got {d.sigma_min}, "
+        f"expected {expected_sigma_at_adoption}"
+    )
+
+    # 3. Feed enough additional errors to breach the 3σ control limit
+    # + fire DRIFT. After ~30-40 more errors (a sustained 100% error
+    # burst), p+sigma will breach p_min + 3*sigma_min → DRIFT.
+    states = [d.update(1) for _ in range(40)]
+    assert "DRIFT" in states, (
+        f"expected DRIFT to fire after a sustained 100% error burst; "
+        f"states={states}"
+    )
+    assert d.state == "DRIFT", (
+        f"DDM's public state should be DRIFT after the burst; got "
+        f"{d.state}"
+    )
+    # The running p should reflect the drift — after 1/31 + 40 errors in
+    # 71 total samples, p ≈ 41/71 ≈ 0.577 (well above the 1/31 baseline).
+    assert d.p > 0.5, (
+        f"running p should be > 0.5 after a sustained error burst (more "
+        f"than half the samples were errors); got {d.p}"
+    )
+    assert d.n == 71, (
+        f"n should be 71 (30 cold-start + 1 baseline-breaker + 40 burst); "
+        f"got {d.n}"
+    )
+
+
+def test_label_feedback_service_drift_resets_baseline_to_stable_after_retrain():
+    """End-to-end test of the DDM auto-reset behavior post-DRIFT.
+
+    Verifies that after the DDM fires DRIFT on a real error burst, the
+    LabelFeedbackService:
+      1. Surfaces the DRIFT in the response body's ``drift_detected``
+         + ``ddm_state`` fields (captured BEFORE the auto-reset, so the
+         caller knows a drift happened).
+      2. Auto-resets the DDM + ADWIN detectors (per Gama 2014 §4 —
+         "after adaptation, re-establish the baseline from the new
+         concept"). The reset brings ``ddm.n`` back to 0 + state back
+         to STABLE.
+      3. The /metrics gauge ``rto_drift_ddm_state`` would have read 2
+         (DRIFT) at detection time, then 0 (STABLE) after the reset —
+         we verify the reset by reading ``service.current_state()``
+         + asserting ``ddm_state_numeric == 0`` + ``ddm_n == 0``.
+      4. After the reset, the detector is alive + processes new
+         samples (1 more label → ``ddm_n == 1``).
+
+    This is a real-state assertion (no DDM mock — the service's real
+    DDM/ADWIN instances are exercised with a real error stream). It
+    closes the "DO BADLY #6" gap by verifying the gauge value
+    transition behavior, not just the gauge EXISTENCE (the existing
+    ``test_feedback_metrics_endpoint_exposes_drift_gauges`` only
+    checks shape).
+    """
+    # Construct the service in pure-file mode (no Redis, no DB).
+    service = LabelFeedbackService(redis_url=None, database_url=None)
+    try:
+        # Pre-DRIFT: current_state shows STABLE + n=0 (fresh service).
+        pre_state = service.current_state()
+        assert pre_state["ddm_state"] == "STABLE", (
+            f"fresh service's DDM should be STABLE; got {pre_state['ddm_state']}"
+        )
+        assert pre_state["ddm_state_numeric"] == 0, (
+            "the rto_drift_ddm_state gauge should read 0 (STABLE) on a "
+            "fresh service"
+        )
+        assert pre_state["ddm_n"] == 0, "fresh service should have n=0"
+
+        # Seed 30 baseline labels (error=0) — call ingest_label with
+        # is_returned=True + predicted_p=0.5 (model says RTO since
+        # 0.5 >= return_threshold 0.15). When the customer DID return
+        # the order, the prediction was correct → error=0.
+        # The 30-sample cold-start seed establishes a non-degenerate
+        # in-control baseline (p_min, sigma_min).
+        for _ in range(30):
+            r = service.ingest_label(
+                prediction_id="pred-seed",
+                is_returned=True,
+                predicted_p=0.5,  # >= 0.15 → model says RTO
+            )
+            assert r["error"] == 0, (
+                f"baseline seed label should produce error=0; got "
+                f"{r['error']}"
+            )
+            assert r["ddm_state"] == "STABLE", (
+                f"baseline seed should keep DDM in STABLE; got "
+                f"{r['ddm_state']}"
+            )
+            assert r["drift_detected"] is False, (
+                "no drift should fire during the baseline seed"
+            )
+
+        # Verify the baseline was adopted (n=30, sigma_min > 0).
+        seeded_state = service.current_state()
+        assert seeded_state["ddm_n"] == 30, (
+            f"after 30 seed labels, ddm_n should be 30; got "
+            f"{seeded_state['ddm_n']}"
+        )
+
+        # Now feed wrong labels (error=1) — predicted_p=0.5 (model says
+        # RTO) but is_returned=False (customer didn't return) → XOR
+        # mismatch → error=1. The sustained error burst should breach
+        # the 3σ threshold + fire DRIFT.
+        drift_response = None
+        for _ in range(50):
+            r = service.ingest_label(
+                prediction_id="pred-burst",
+                is_returned=False,
+                predicted_p=0.5,  # >= 0.15 → model says RTO
+            )
+            assert r["error"] == 1, (
+                f"burst label should produce error=1; got {r['error']}"
+            )
+            if r["drift_detected"]:
+                drift_response = r
+                break
+        assert drift_response is not None, (
+            "DRIFT should have fired after ≤50 wrong labels (DDM 3σ "
+            "control limit breached)"
+        )
+
+        # 1. The response body carries the DRIFT (captured BEFORE the
+        # auto-reset — this is the gauge value 2 = DRIFT that would have
+        # been scraped by Prometheus at this exact instant).
+        assert drift_response["drift_detected"] is True, (
+            "the drift_detected flag in the response body should be True "
+            "at the moment of detection"
+        )
+        assert drift_response["ddm_state"] == "DRIFT", (
+            f"the response body's ddm_state should be DRIFT (the captured "
+            f"pre-reset state — the gauge would have read 2 here); got "
+            f"{drift_response['ddm_state']}"
+        )
+
+        # 2. After DRIFT, the service auto-resets the DDM + ADWIN (per
+        # Gama 2014 §4 — "after adaptation, re-establish the baseline
+        # from the new concept"). current_state() reads the POST-reset
+        # state, so ddm_n should be 0 + state should be STABLE.
+        post_reset_state = service.current_state()
+        assert post_reset_state["ddm_state"] == "STABLE", (
+            f"after DRIFT auto-reset, DDM state should be STABLE (the "
+            f"baseline was re-established per Gama §4); got "
+            f"{post_reset_state['ddm_state']}"
+        )
+        assert post_reset_state["ddm_state_numeric"] == 0, (
+            "after DRIFT auto-reset, the rto_drift_ddm_state gauge should "
+            "read 0 (STABLE) — the reset reverted the gauge to baseline"
+        )
+        assert post_reset_state["ddm_n"] == 0, (
+            f"after DRIFT auto-reset, ddm_n should be 0 (fresh baseline); "
+            f"got {post_reset_state['ddm_n']}"
+        )
+        assert post_reset_state["adwin_state"] == "STABLE", (
+            f"after DRIFT auto-reset, ADWIN state should also be STABLE "
+            f"(both detectors reset together); got "
+            f"{post_reset_state['adwin_state']}"
+        )
+
+        # 4. The post-reset detector is alive + processes new samples.
+        # Feed 1 more label + assert ddm_n becomes 1 (the new sample
+        # was processed, not silently dropped).
+        post_reset_one_more = service.ingest_label(
+            prediction_id="pred-post-reset",
+            is_returned=True,
+            predicted_p=0.5,  # correct prediction → error=0
+        )
+        assert post_reset_one_more["error"] == 0, (
+            f"post-reset label should produce error=0 (correct "
+            f"prediction); got {post_reset_one_more['error']}"
+        )
+        live_state = service.current_state()
+        assert live_state["ddm_n"] == 1, (
+            f"after 1 post-reset label, ddm_n should be 1 (the reset "
+            f"detector is processing new samples); got {live_state['ddm_n']}"
+        )
+        assert live_state["ddm_state"] == "STABLE", (
+            f"1 sample post-reset should still be STABLE (the min_n=30 "
+            f"gate blocks DRIFT detection during cold-start); got "
+            f"{live_state['ddm_state']}"
+        )
+    finally:
+        service.close()
+
+
+def test_ddm_prometheus_gauge_numeric_value_fires_at_drift_moment():
+    """Assert the Prometheus gauge NUMERIC value (STATE_NUMERIC) is 2
+    at the exact moment of DRIFT detection (not just the public ``state``
+    string field).
+
+    DO BADLY #6 — the prior 15-c run added 2 real-DDM-state tests but
+    neither asserted the ``STATE_NUMERIC`` mapping (the gauge numeric
+    value the Prometheus scraper would read) is 2 (DRIFT) at the moment
+    of detection. They asserted the public ``state`` string field
+    transitioned to "DRIFT" + the post-reset state reverted to "STABLE" —
+    but if a regression broke the ``STATE_NUMERIC`` mapping (e.g.
+    hardcoded to 0), the gauge would scrape 0 even when the state
+    string said "DRIFT" + the prior tests would still pass.
+
+    This test closes that gap by:
+      1. Constructing a real DDM(min_n=10) instance.
+      2. Seeding a 30-sample baseline (all correct → p_min=1.0 default).
+      3. Feeding 1 wrong label to break the degeneracy guard (sigma_min
+         becomes > 0 → baseline gets adopted).
+      4. Feeding a sustained error burst until DRIFT fires.
+      5. Asserting that AT THE MOMENT of detection:
+           * ``d.state == "DRIFT"`` (the public string field)
+           * ``STATE_NUMERIC[d.state] == 2`` (the gauge numeric value)
+         So a regression where the mapping was broken (e.g. accidentally
+         set to ``{"DRIFT": 0}``) would fail this test, not silently
+         scrape 0 on the gauge during a real drift event.
+
+    This is a real-state assertion (no DDM mock — the production DDM
+    class in src/ml/drift.py is exercised with a real Bernoulli error
+    stream). It complements the existing 2 real-DDM-state tests by
+    covering the gauge-numeric-value invariant they don't directly
+    assert.
+    """
+    d = DDM(min_n=10)
+
+    # 1. Cold-start baseline — 30 correct predictions.
+    for _ in range(30):
+        d.update(0)
+    assert d.state == "STABLE"
+    assert STATE_NUMERIC[d.state] == 0, (
+        f"the gauge numeric value for STABLE should be 0 (the Prometheus "
+        f"scraper would read 0 in the in-control state); got "
+        f"{STATE_NUMERIC[d.state]}"
+    )
+
+    # 2. Break the degeneracy guard — 1 wrong label.
+    d.update(1)
+    assert d.sigma_min > 0.0, (
+        "after 1 error, sigma_min should be > 0 (the degeneracy guard "
+        "unblocks + baseline gets adopted)"
+    )
+    # State should still be STABLE (1 error in 31 samples — well below
+    # the 3σ control limit; the p+sigma at this point is ≈0.032+0.032
+    # = 0.064, while the threshold is p_min + 3*sigma_min ≈ 0.032 +
+    # 3*0.032 = 0.128; 0.064 < 0.128 → no DRIFT).
+    assert d.state == "STABLE", (
+        f"1 error in 31 samples is below the 3σ threshold (should still "
+        f"be STABLE); got {d.state}"
+    )
+    assert STATE_NUMERIC[d.state] == 0
+
+    # 3. Sustained error burst — feed errors until DRIFT fires.
+    states_at_detection = []
+    numeric_at_detection = []
+    for _ in range(50):
+        s = d.update(1)
+        if s == "DRIFT":
+            states_at_detection.append(s)
+            numeric_at_detection.append(STATE_NUMERIC[s])
+            # Don't break — keep feeding to verify the state stays at
+            # DRIFT (it doesn't auto-reset until the LabelFeedbackService
+            # triggers a reset; the DDM.update() itself just sets state).
+            break
+
+    assert len(states_at_detection) == 1, (
+        f"DRIFT should have fired exactly once during the burst; got "
+        f"{len(states_at_detection)} firings"
+    )
+    assert states_at_detection[0] == "DRIFT"
+    assert numeric_at_detection[0] == 2, (
+        f"AT THE MOMENT of DRIFT detection, the STATE_NUMERIC mapping "
+        f"(the Prometheus gauge numeric value) MUST be 2 — this is "
+        f"what the scraper would read at the exact instant of drift "
+        f"detection. A regression that broke the mapping (e.g. "
+        f"hardcoded STATE_NUMERIC to {{'DRIFT': 0}}) would fail this "
+        f"test; without this assertion, the regression would silently "
+        f"scrape 0 on the gauge during a real drift event. Got "
+        f"{numeric_at_detection[0]}."
+    )
+
+    # 4. The gauge numeric value should stay at 2 for subsequent DRIFT
+    # updates (the state stays DRIFT until a reset is called — the DDM
+    # doesn't auto-recover). This is the contract the
+    # LabelFeedbackService's auto-reset relies on.
+    second_drift = d.update(1)
+    assert second_drift == "DRIFT", (
+        f"DDM state should STAY at DRIFT after the burst (the state "
+        f"doesn't auto-recover until reset() is called); got "
+        f"{second_drift}"
+    )
+    assert STATE_NUMERIC[second_drift] == 2
+
+    # 5. After explicit reset(), the state + gauge value revert to 0.
+    d.reset()
+    assert d.state == "STABLE", (
+        f"after reset(), DDM state should revert to STABLE; got "
+        f"{d.state}"
+    )
+    assert STATE_NUMERIC[d.state] == 0, (
+        f"after reset(), the gauge numeric value should revert to 0 "
+        f"(STABLE) — this is what the scraper would read post-retrain. "
+        f"Got {STATE_NUMERIC[d.state]}."
+    )
+    # The reset wipes the running stats too — proves the reset was real
+    # (not just a state-field flip).
+    assert d.n == 0, (
+        f"after reset(), d.n should be 0 (fresh baseline); got {d.n}"
+    )
+    assert d.p == 0.0, (
+        f"after reset(), d.p should be 0.0 (fresh baseline); got {d.p}"
+    )
+    assert d.p_min == 1.0, (
+        f"after reset(), d.p_min should revert to the constructor "
+        f"default 1.0 (the in-control baseline is forgotten — the next "
+        f"DRIFT detection establishes a new one); got {d.p_min}"
+    )
+    assert d.sigma_min == 0.0, (
+        f"after reset(), d.sigma_min should revert to 0.0 (the "
+        f"degeneracy guard is re-engaged — no DRIFT can fire until the "
+        f"model makes at least 1 error); got {d.sigma_min}"
+    )
+
+
+def test_ddm_drift_fires_on_long_stream_with_mean_shift_at_event_500():
+    """4th real-DDM-state test — verify DDM fires DRIFT on a LONGER stream
+    with the mean shift happening at event 500 (the production-realistic
+    scenario where drift is a sustained shift after a long stable period,
+    not the short 30-sample burst the prior 15-c tests use).
+
+    This is the canonical "stream where the mean shifts by 3σ at event
+    500" pattern from the DO BADLY #6 spec. The prior 3 real-DDM-state
+    tests use short 30-71 sample bursts which fire DRIFT quickly; this
+    test verifies the DDM correctly handles a 500-sample stable
+    baseline + then a sudden 100% error-rate shift.
+
+    Sequence:
+      1. Feed 500 cold-start events with a deterministic 1% error rate
+         (1 error every 100 events → 5 errors in 500 samples). The DDM
+         establishes a low baseline: p_min ≈ 0.01, sigma_min ≈ 0.0045.
+         The (p+sigma) value monotonically decreases as n grows at a
+         constant error rate → the minimum (p+sigma) point is at the
+         END of the cold-start, so p_min = 0.01 (the cold-start p).
+      2. At event 500+, the error rate shifts to 100% (a >3σ mean
+         shift — the new running p climbs from 0.01 toward 1.0, far
+         above the 3σ threshold of p_min + 3*sigma_min ≈ 0.024).
+      3. Assert the DDM fires DRIFT within ~10 events of the shift
+         (NOT before — the cold-start shouldn't fire DRIFT).
+      4. After 50 burst events, assert the running p climbed from
+         ≈0.01 to >= 0.05 (a 5x shift, well above the 3σ threshold;
+         at n=550, sum of errors = 5 cold + 50 burst = 55, so
+         p = 55/550 = 0.1).
+
+    This test closes the production-realistic scenario where drift is
+    GRADUAL — the existing tests use short 30-71 sample bursts which
+    fire DRIFT quickly; this test verifies the DDM correctly handles
+    a 500-sample stable baseline + then a sudden shift. The 500-event
+    cold-start is long enough that:
+      - The DDM's running baseline (p_min/sigma_min) is well-established
+        (not just barely past the min_n=30 gate).
+      - The (p+sigma) value at the end of cold-start is small (sigma
+        shrinks as 1/sqrt(n)), so the 3σ threshold is tight — the
+        sudden shift breaches it quickly (within ~4 events).
+    """
+    d = DDM(min_n=30)
+
+    # 1. Cold-start — 500 events with a deterministic 1% error rate
+    # (1 error every 100 events → 5 errors in 500 samples). This
+    # determinism (vs random.Random(42)) makes the test reproducible
+    # AND makes the exact p value at the end of cold-start known
+    # (5/500 = 0.01 exactly).
+    cold_start_errors = [1 if i % 100 == 99 else 0 for i in range(500)]
+    states_during_cold_start = [d.update(e) for e in cold_start_errors]
+
+    # The cold-start shouldn't fire DRIFT (the error rate is stable
+    # at 1% — no shift). It also shouldn't fire WARNING (the (p+sigma)
+    # value monotonically decreases during the cold-start → the new
+    # baseline is adopted at every event past min_n, no threshold
+    # breach).
+    assert "DRIFT" not in states_during_cold_start, (
+        f"cold-start with consistent 1% error rate shouldn't fire DRIFT; "
+        f"states={set(states_during_cold_start)}"
+    )
+    assert d.state == "STABLE", (
+        f"after cold-start, DDM should be STABLE; got {d.state}"
+    )
+    # Baseline established (sigma_min > 0 because we have 5 errors
+    # in 500 samples → degeneracy guard unblocked).
+    assert d.sigma_min > 0.0, (
+        f"sigma_min should be > 0 after cold-start with 1% error rate "
+        f"(the degeneracy guard should be unblocked — 5 errors in 500 "
+        f"samples → sigma is computable); got {d.sigma_min}"
+    )
+    # Running p should be exactly 0.01 (5 errors in 500 samples).
+    assert d.p == pytest.approx(0.01, abs=1e-9), (
+        f"after cold-start with 1% error rate, running p should be 0.01 "
+        f"(5 errors in 500 samples); got {d.p}"
+    )
+    assert d.n == 500, (
+        f"after 500 cold-start events, n should be 500; got {d.n}"
+    )
+    # p_min should be < 0.01 (the running p at the end of cold-start).
+    # The minimum (p+sigma) point during cold-start occurs BETWEEN
+    # errors — when no new errors arrive but n keeps growing → p
+    # slowly drops (p_i = (sum of errors so far) / i = 1/i between
+    # the 1st error at event 99 and the 2nd at event 199). The
+    # minimum is at event 198 (right before the 2nd error jumps p
+    # back up), where p ≈ 1/199 ≈ 0.005025. The baseline adoption
+    # at that point sets p_min ≈ 0.005025. After event 199, no re-
+    # adoption happens (the (p+sigma) value at events 200-499 is
+    # always larger than 0.005025 + 0.005012 = 0.010037).
+    assert 0.0 < d.p_min < 0.01, (
+        f"p_min should be in (0, 0.01) — the minimum (p+sigma) point "
+        f"occurs between errors (when p slowly drops due to no new "
+        f"errors). With 1 error every 100 events, the minimum is "
+        f"≈1/199≈0.005025 (at event 198, just before the 2nd error "
+        f"jumps p back up to 0.01). The constructor default 1.0 was "
+        f"replaced during cold-start; got p_min={d.p_min}"
+    )
+    # sigma_min should be > 0 + < 0.01 (same reasoning — sigma at
+    # the minimum (p+sigma) point is ≈0.005012, well below the
+    # constructor default 0.0).
+    assert 0.0 < d.sigma_min < 0.01, (
+        f"sigma_min should be in (0, 0.01) — the binomial std at the "
+        f"minimum (p+sigma) point. With p≈0.005025 + n=199, sigma "
+        f"≈ √(0.005025*0.995/199) ≈ 0.005012. Got sigma_min="
+        f"{d.sigma_min}"
+    )
+
+    # 2. At event 500+, shift the error rate to 100% (a >3σ mean
+    # shift). DRIFT should fire within ~4 events of the shift (the
+    # running p climbs from 0.01 to >0.024 within ~4 events). Feed 50
+    # burst events to verify both the DRIFT detection AND the post-
+    # drift state (running p climbing to >= 0.05).
+    drift_event_index: int | None = None
+    burst_states: list[str] = []
+    for i in range(50):
+        s = d.update(1)  # ALL errors after event 500
+        burst_states.append(s)
+        if s == "DRIFT" and drift_event_index is None:
+            drift_event_index = i
+            # Don't break — keep feeding to verify the post-drift p
+            # climbs (the DDM doesn't auto-recover; once in DRIFT,
+            # it stays in DRIFT until reset() is called).
+    assert drift_event_index is not None, (
+        "DRIFT should fire after the mean shift at event 500 (the new "
+        "100% error rate is far above the 1% baseline → 3σ threshold "
+        f"breached within ~4 events); burst_states={burst_states}"
+    )
+    # DRIFT should fire within 10 events of the shift (DDM's 3σ
+    # threshold is breached quickly when p jumps from 0.01 to 1.0).
+    # Math: at event 504 (4 burst events), p ≈ 9/504 ≈ 0.0179,
+    # sigma ≈ 0.0059, p+sigma ≈ 0.0238 > threshold ≈ 0.0235 → DRIFT.
+    assert drift_event_index < 10, (
+        f"DRIFT should fire within 10 events of the mean shift; "
+        f"got drift_event_index={drift_event_index} "
+        f"(states[:10]={burst_states[:10]})"
+    )
+
+    # 3. After the 50-event burst, the running p should be >= 0.05
+    # (5x the cold-start baseline). At n=550, sum of errors = 5 cold
+    # + 50 burst = 55, so p = 55/550 = 0.1. The new errors dominate
+    # the running mean because they're 100% error rate vs the 1%
+    # cold-start rate.
+    assert d.p >= 0.05, (
+        f"after the 50-event post-shift burst, running p should be >= "
+        f"0.05 (the new 100% error rate dominates the running mean — "
+        f"at n=550 with 5 cold + 50 burst = 55 errors, p = 55/550 = "
+        f"0.1, well above the 0.01 baseline); got {d.p}"
+    )
+    assert d.state == "DRIFT", (
+        f"DDM's public state should be DRIFT after the burst (the state "
+        f"doesn't auto-recover until reset() is called); got {d.state}"
+    )
+    assert d.n == 550, (
+        f"after 500 cold-start + 50 burst events, n should be 550; "
+        f"got {d.n}"
+    )
+    # The DDM doesn't auto-reset — verify by feeding 1 more error
+    # and asserting the state stays DRIFT.
+    post_state = d.update(1)
+    assert post_state == "DRIFT", (
+        f"DDM state should STAY at DRIFT for subsequent updates (no "
+        f"auto-recovery until reset()); got {post_state}"
+    )

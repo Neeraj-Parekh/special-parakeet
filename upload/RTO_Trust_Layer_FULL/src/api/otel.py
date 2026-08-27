@@ -254,6 +254,32 @@ def get_tracer(name: str) -> Any:
         return _NOOP_TRACER
 
 
+# Wave 3 (Subagent 15-e — DO BADLY #7) — module-level lazy resolver for
+# OpenTelemetry's ``StatusCode`` enum (used by ``optional_span`` below
+# to mark spans as ERROR when an exception propagates through the body).
+# Lazily imported (in the try/except ImportError gate) so the 93 tests
+# that don't have the OTel SDK installed don't pay the import cost +
+# don't crash. Returns a sentinel ``_UNSET`` object when unavailable
+# so the caller can skip the ``set_status`` call gracefully (the
+# NoOp span's ``set_status`` is already a no-op so this is belt-and-
+# suspenders defense).
+_UNSET = object()
+
+
+def _resolve_status_code() -> Any:
+    """Lazily resolve the OTel ``StatusCode`` enum.
+
+    Returns ``opentelemetry.trace.status.StatusCode`` when the OTel API
+    is installed; ``_UNSET`` sentinel otherwise (the caller skips the
+    ``set_status`` call when the sentinel is returned).
+    """
+    try:
+        from opentelemetry.trace.status import StatusCode
+        return StatusCode
+    except ImportError:
+        return _UNSET
+
+
 @contextmanager
 def optional_span(
     tracer: Any,
@@ -321,15 +347,53 @@ def optional_span(
             except Exception:  # pragma: no cover — best-effort
                 pass
 
-    # Yield control to the body. If the body raises, capture the exc_info
-    # + pass it to ``__exit__`` so the OTel SDK records the exception on
-    # the span (via ``record_exception`` + ``set_status(ERROR)``). Then
-    # re-raise so the application code's exception handler runs.
+    # Yield control to the body. If the body raises, capture the
+    # exc_info + pass it to ``__exit__`` so the OTel SDK records the
+    # exception on the span (via ``record_exception`` +
+    # ``set_status(ERROR)``). Then re-raise so the application code's
+    # exception handler runs.
+    #
+    # Wave 3 (Subagent 15-e — DO BADLY #7) — EXPLICITLY call
+    # ``span.record_exception(exc_val)`` + ``span.set_status(
+    # StatusCode.ERROR)`` on the span BEFORE delegating to the OTel
+    # SDK's CM ``__exit__``. The OTel SDK's ``use_span`` CM __exit__
+    # ALSO records the exception (so technically this is redundant when
+    # the real SDK is wired), but the spec asks for explicit recording
+    # so a Jaeger trace surfaces the exception as a span event even
+    # when the SDK's auto-recording path is bypassed (e.g. when the
+    # tracer is a ProxyTracer from opentelemetry-api with no provider
+    # configured — the test-mode path; the ProxyTracer's span CM
+    # doesn't auto-record, so the explicit call below is the ONLY
+    # recording path in that case). The NoOp span's
+    # ``record_exception`` + ``set_status`` are no-ops so this is safe
+    # when the global tracer is NoOp too.
     exc_info: tuple = (None, None, None)
+    _status_code = _resolve_status_code()
     try:
         yield span_obj
     except BaseException as e:
         exc_info = (type(e), e, e.__traceback__)
+        # Explicit exception recording on the span (best-effort —
+        # never let the recording itself raise + mask the original
+        # exception).
+        try:
+            span_obj.record_exception(e)
+        except Exception:  # pragma: no cover — best-effort
+            pass
+        # Mark the span as ERROR per the OTel status convention
+        # (https://opentelemetry.io/docs/specs/otel/trace/api/
+        # #set-status-code). ``StatusCode.ERROR`` is the only value
+        # set here; ``StatusCode.OK`` is NOT set on the success path
+        # because the OTel spec says marking a span OK is optional +
+        # the absence of an explicit status defaults to UNSET (which
+        # Jaeger renders as "unset" — the operator can filter
+        # ``status=ERROR`` to find failed operations; the success path
+        # doesn't need a positive mark).
+        if _status_code is not _UNSET:
+            try:
+                span_obj.set_status(_status_code.ERROR)
+            except Exception:  # pragma: no cover — best-effort
+                pass
         raise
     finally:
         try:

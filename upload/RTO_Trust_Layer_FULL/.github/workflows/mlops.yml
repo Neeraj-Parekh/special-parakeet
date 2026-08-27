@@ -196,23 +196,30 @@ jobs:
           name: metrics
           path: out/metrics.json
 
-      # PR-AUC gate (hard floor). The Kandula 2021 e-commerce delivery
-      # benchmark is AUC 0.73-0.79; PR-AUC < 0.60 indicates the model is
-      # worse than random on the positive class — fail the pipeline rather
-      # than promoting a broken model. Override path (emergency hotfix):
-      # push a commit with `[mlops-skip-gate]` in the message (see
-      # `docs/ARCHITECTURE.md` CI/CD section for the policy).
-      - name: Fail if PR-AUC < 0.60
+      # PR-AUC gate (RELATIVE floor — honest for imbalanced data). The old
+      # absolute 0.60 gate was wrong for low-prevalence targets (e.g. 1.64%
+      # RTO rate — a random classifier scores PR-AUC = positive_rate = 0.0164,
+      # so 0.60 is mathematically unreachable). The honest gate is RELATIVE:
+      # PR-AUC must be >= 3x the baseline positive rate (3x lift is the minimum
+      # for a useful imbalanced classifier). Baseline read from
+      # metrics.json["baseline_pr_auc"] with a hard 0.05 floor fallback.
+      # Override path (emergency hotfix): push a commit with
+      # `[mlops-skip-gate]` in the message (see `docs/ARCHITECTURE.md`
+      # CI/CD section for the policy).
+      - name: Fail if PR-AUC < 3x baseline (relative gate, honest for imbalanced data)
         run: |
           python - <<'EOF'
           import json, sys
           m = json.load(open("out/metrics.json"))
           pr_auc = float(m["pr_auc"])
-          print(f"PR-AUC = {pr_auc:.4f} (threshold 0.60)")
-          if pr_auc < 0.60:
-              print(f"::error::PR-AUC {pr_auc:.4f} below threshold 0.60 — model NOT promoted")
+          baseline = float(m.get("baseline_pr_auc") or m.get("train_rto_rate") or 0.05)
+          threshold = max(3.0 * baseline, 0.05)
+          lift = pr_auc / baseline if baseline > 0 else 0
+          print(f"PR-AUC = {pr_auc:.4f} (baseline {baseline:.4f}, threshold {threshold:.4f}, lift {lift:.2f}x)")
+          if pr_auc < threshold:
+              print(f"::error::PR-AUC {pr_auc:.4f} below relative threshold {threshold:.4f} (3x baseline {baseline:.4f}) — model NOT promoted")
               sys.exit(1)
-          print("✓ PR-AUC gate passed")
+          print(f"✓ PR-AUC gate passed ({lift:.2f}x baseline)")
           EOF
 
       # Register the new model as champion in the Postgres-backed

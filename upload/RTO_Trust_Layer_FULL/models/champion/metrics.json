@@ -1,0 +1,60 @@
+{
+  "created_at": "2026-08-27T17:35:01.562699+00:00",
+  "best": "QtyZero_Region_histgb",
+  "best_pr": 0.10265840593283064,
+  "vs_init_0.0962": 0.0064584059328306465,
+  "ranking": [
+    {
+      "name": "QtyZero_Region_histgb",
+      "pr": 0.10265840593283064
+    },
+    {
+      "name": "MLP_size_smooth",
+      "pr": 0.1015509780545314
+    },
+    {
+      "name": "QtyZero_Region_histgb_neighbor_l2_0.05",
+      "pr": 0.09534879484077918
+    },
+    {
+      "name": "catboost_size_smooth",
+      "pr": 0.09261839015497857
+    },
+    {
+      "name": "ADASYN_logreg",
+      "pr": 0.09253791346644574
+    },
+    {
+      "name": "Borderline_histgb",
+      "pr": 0.08884313275774763
+    },
+    {
+      "name": "ExtraTrees",
+      "pr": 0.0875762871183812
+    },
+    {
+      "name": "SMOTE_histgb",
+      "pr": 0.08752045045861687
+    },
+    {
+      "name": "lgb_size_smooth",
+      "pr": 0.08139401659393393
+    },
+    {
+      "name": "RF_balanced",
+      "pr": 0.0805619669107556
+    }
+  ],
+  "all": {
+    "SMOTE_histgb": 0.08752045045861687,
+    "Borderline_histgb": 0.08884313275774763,
+    "ADASYN_logreg": 0.09253791346644574,
+    "QtyZero_Region_histgb": 0.10265840593283064,
+    "QtyZero_Region_histgb_neighbor_l2_0.05": 0.09534879484077918,
+    "MLP_size_smooth": 0.1015509780545314,
+    "RF_balanced": 0.0805619669107556,
+    "ExtraTrees": 0.0875762871183812,
+    "lgb_size_smooth": 0.08139401659393393,
+    "catboost_size_smooth": 0.09261839015497857
+  }
+}

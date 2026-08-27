@@ -1,0 +1,37 @@
+[
+  {
+    "gate": "Label: substring RTO correctly isolates true RTO (not Cancel)",
+    "pass": true,
+    "detail": "correct true-RTO=2109 wrong exact-match (Cancel-conflated)=18332"
+  },
+  {
+    "gate": "Cancel != RTO (separate problem)",
+    "pass": true,
+    "detail": "overlap=0"
+  },
+  {
+    "gate": "Time column usable for TimeSeriesSplit",
+    "pass": true,
+    "detail": "na rate 0.00%"
+  },
+  {
+    "gate": "Courier Status is LEAKY (post-shipment) \u2014 exclude from features",
+    "pass": true,
+    "detail": "must be excluded / only UNKNOWN at inference"
+  },
+  {
+    "gate": "High cardinality flagged (city/sku/pincode need rate-encoding)",
+    "pass": true,
+    "detail": "city nunique 8955 sku 7195"
+  },
+  {
+    "gate": "Imbalance documented (use PR-AUC)",
+    "pass": true,
+    "detail": "rto rate 0.0164"
+  },
+  {
+    "gate": "Amount NaN is informative (Cancelled/unpaid) \u2014 don't mean-impute blindly",
+    "pass": true,
+    "detail": "na 7795 almost all Cancelled"
+  }
+]

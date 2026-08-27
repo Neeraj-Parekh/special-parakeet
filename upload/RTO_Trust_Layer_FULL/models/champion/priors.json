@@ -1,0 +1,12 @@
+{
+  "p_orig": 0.016978874401716453,
+  "p_und": 0.016978874401716453,
+  "n_train": 96944,
+  "n_pos_train": 1646,
+  "n_test": 24236,
+  "n_pos_test": 460,
+  "calibration_method": "bahnsen_eq6",
+  "note": "p_und == p_orig because class_weight=None (no undersampling). Identity calibration \u2014 recorded honestly per E14 fix.",
+  "created_at": "2026-08-27T17:35:01+00:00",
+  "source": "Kaggle training run \u2014 Amazon Sale Report.csv, 128975 rows, time-split 80/20"
+}

@@ -39,6 +39,7 @@ import os
 import threading
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from collections.abc import MutableMapping
 from typing import Any
 
 
@@ -55,10 +56,219 @@ from typing import Any
 # instead of these dicts; the dicts remain the source of truth only for the
 # file-mode / test path (no Postgres available). ``reset_upi_counters()`` wipes
 # BOTH surfaces so test isolation holds regardless of which mode the suite runs in.
+#
+# 15-b (Subagent 15-b — DO BADLY #3 cross-process state) — the prior dicts
+# lost state across process restarts (every redeploy reset the cumulative
+# monthly cap to 0, blowing the ₹15k ceiling; the cooling window + the
+# inactivity timestamp also reset). The fix: ``_FileState`` wraps the 3
+# sub-dicts (cumulative_monthly, cumulative_24h, last_activity) as ONE
+# combined JSON file at ``$RTO_STATE_DIR/mandate_counters_state.json``
+# (default ``out/``). The persist is throttled (max one disk write per
+# 5 seconds) to avoid I/O thrash under burst traffic; ``force=True``
+# bypasses the throttle for explicit flushes (test isolation + the
+# ``reset_upi_counters`` clear). The load happens at ``_FileState``
+# construction (module import time). The DB path (C8/C9/C10 fixes from
+# 14-b) is UNAFFECTED — when ``DATABASE_URL`` is set, the
+# ``mandate_counters`` / ``mandate_counter_events`` Postgres tables are
+# the authoritative store; the file is only the file-mode fallback.
 # ---------------------------------------------------------------------------
-_cumulative_monthly: dict[str, float] = {}
-_cumulative_24h: dict[str, list[tuple[float, float]]] = {}
-_last_activity: dict[str, float] = {}
+class _FileState:
+    """File-backed combined dict-of-dicts for the mandate counter state.
+
+    Three sub-dicts (``cumulative_monthly``, ``cumulative_24h``,
+    ``last_activity``) are stored under ONE JSON file so a single atomic
+    write captures a consistent snapshot of all mandate counters. The
+    file path is configurable via the ``RTO_STATE_DIR`` env var
+    (default ``out/``); the file name is passed at construction (e.g.
+    ``mandate_counters_state.json``).
+
+    Mutating operations on the sub-dicts trigger ``_persist_to_disk()``,
+    which is throttled to ``max one disk write per 5 seconds`` to avoid
+    I/O thrash under burst traffic. ``force=True`` bypasses the
+    throttle for explicit flushes (test isolation, ``reset_upi_counters``,
+    process shutdown hooks). The brief window during the 5-second I/O
+    gap is the documented trade-off: if the process dies within 5 sec
+    of the last persist, the in-memory state since the last persist is
+    lost. Acceptable per the spec — the DB path is the authoritative
+    production store; this file is only the file-mode / dev / test
+    fallback.
+
+    Atomic write (``tmp + os.replace``) so a crash mid-write never
+    leaves a corrupt file. Best-effort — a write failure (read-only
+    FS, full disk, permissions) degrades to "no persistence across
+    restarts" which is the prior (pre-15-b) behaviour.
+    """
+
+    _SCHEMA: tuple[str, ...] = (
+        "cumulative_monthly", "cumulative_24h", "last_activity",
+    )
+    _THROTTLE_SECONDS: float = 5.0
+
+    def __init__(self, file_name: str) -> None:
+        self._file_name = file_name
+        self._data: dict[str, dict[str, Any]] = {k: {} for k in self._SCHEMA}
+        self._lock = threading.Lock()
+        self._last_persist: float = 0.0
+        self._load_from_disk()
+
+    def _persist_to_disk(self, *, force: bool = False) -> None:
+        """Dump the combined state to JSON. Throttled (max once per
+        5 sec) unless ``force=True``. Atomic write (``tmp + os.replace``)
+        so a crash mid-write never leaves a corrupt file. Best-effort —
+        a write failure degrades to "no persistence across restarts"
+        (the prior behaviour).
+        """
+        now = time.time()
+        if not force and now - self._last_persist < self._THROTTLE_SECONDS:
+            return
+        self._last_persist = now
+        state_dir = (os.environ.get("RTO_STATE_DIR") or "out").strip() or "out"
+        path = os.path.join(state_dir, self._file_name)
+        try:
+            os.makedirs(state_dir, exist_ok=True)
+            tmp = path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(self._data, f)
+            os.replace(tmp, path)
+        except Exception:
+            # File persistence is best-effort — the in-memory dict is
+            # still the source of truth for the current process. A
+            # write failure (read-only FS, full disk, permissions)
+            # degrades to "no persistence across restarts" which is the
+            # prior (pre-15-b) behaviour.
+            pass
+
+    def _load_from_disk(self) -> None:
+        """Populate the sub-dicts from the JSON file if it exists.
+
+        Best-effort — a read failure (file missing, corrupt JSON, read
+        error) silently starts with empty sub-dicts (the prior
+        behaviour; the cap is enforced within the current process
+        regardless).
+        """
+        state_dir = (os.environ.get("RTO_STATE_DIR") or "out").strip() or "out"
+        path = os.path.join(state_dir, self._file_name)
+        try:
+            with open(path, "r") as f:
+                loaded = json.load(f)
+            if isinstance(loaded, dict):
+                for k in self._SCHEMA:
+                    v = loaded.get(k)
+                    if isinstance(v, dict):
+                        self._data[k] = v
+        except FileNotFoundError:
+            pass  # fresh state — start empty (the common case at first boot)
+        except Exception:
+            # Corrupt JSON or read error — start empty (don't crash
+            # the process at import time; the file can be repaired
+            # later). The in-memory dicts remain the source of truth.
+            pass
+
+    def sub(self, key: str) -> "_SubStateView":
+        """Return a ``MutableMapping`` view over a single sub-dict.
+        Mutations trigger ``_persist_to_disk()`` (throttled)."""
+        if key not in self._data:
+            raise KeyError(key)
+        return _SubStateView(self, key)
+
+
+class _SubStateView(MutableMapping):
+    """``MutableMapping`` view over a single sub-dict of a ``_FileState``.
+
+    All mutating operations (``__setitem__``, ``__delitem__``,
+    ``setdefault``, ``clear``, ``pop``, ``update``) trigger the parent
+    ``_FileState._persist_to_disk()`` so changes are persisted (throttled).
+    Read operations (``__getitem__``, ``__contains__``, ``get``,
+    ``__iter__``, ``__len__``) do NOT trigger persist (they're cheap
+    + don't change the on-disk state).
+
+    ``setdefault`` is overridden so the persist fires when a NEW key is
+    inserted (the default ``MutableMapping.setdefault`` calls
+    ``__setitem__`` if missing — which would fire persist — but the
+    returned object might then be mutated in place (e.g.
+    ``d.setdefault(k, []).append(v)``) WITHOUT a subsequent
+    ``__setitem__`` call, so the persist wouldn't capture the in-place
+    mutation. The ``verify_mandate`` path was refactored to use a pure
+    ``__setitem__`` instead of ``setdefault+append`` to ensure the
+    persist fires after the in-place mutation — see line ~718 below.)
+    """
+
+    __slots__ = ("_parent", "_key")
+
+    def __init__(self, parent: "_FileState", key: str) -> None:
+        self._parent = parent
+        self._key = key
+
+    def _sub(self) -> dict[str, Any]:
+        return self._parent._data[self._key]
+
+    def __getitem__(self, k):
+        return self._sub()[k]
+
+    def __setitem__(self, k, v) -> None:
+        with self._parent._lock:
+            self._sub()[k] = v
+            self._parent._persist_to_disk()
+
+    def __delitem__(self, k) -> None:
+        with self._parent._lock:
+            del self._sub()[k]
+            self._parent._persist_to_disk()
+
+    def __iter__(self):
+        return iter(self._sub())
+
+    def __len__(self) -> int:
+        return len(self._sub())
+
+    def __contains__(self, k) -> bool:
+        return k in self._sub()
+
+    def get(self, k, default=None):
+        return self._sub().get(k, default)
+
+    def setdefault(self, k, default=None):  # type: ignore[override]
+        with self._parent._lock:
+            sub = self._sub()
+            if k not in sub:
+                sub[k] = default
+                self._parent._persist_to_disk()
+            return sub[k]
+
+    def clear(self) -> None:  # type: ignore[override]
+        with self._parent._lock:
+            self._sub().clear()
+            self._parent._persist_to_disk()
+
+    def update(self, *args, **kwargs) -> None:  # type: ignore[override]
+        with self._parent._lock:
+            self._sub().update(*args, **kwargs)
+            self._parent._persist_to_disk()
+
+    def pop(self, k, *default_args):
+        with self._parent._lock:
+            sub = self._sub()
+            if k in sub:
+                v = sub.pop(k)
+                self._parent._persist_to_disk()
+                return v
+            if default_args:
+                return default_args[0]
+            raise KeyError(k)
+
+    def __repr__(self) -> str:
+        return f"_SubStateView({self._key!r}, {self._sub()!r})"
+
+
+# Module-level ``_FileState`` for the mandate counters (file-mode
+# fallback). ONE JSON file captures a consistent snapshot of all 3
+# sub-dicts. The ``_load_from_disk()`` call in ``__init__`` populates
+# the sub-dicts from the prior process's persisted state (15-b fix for
+# DO BADLY #3 — cross-process state).
+_mandate_state: _FileState = _FileState("mandate_counters_state.json")
+_cumulative_monthly = _mandate_state.sub("cumulative_monthly")
+_cumulative_24h = _mandate_state.sub("cumulative_24h")
+_last_activity = _mandate_state.sub("last_activity")
 
 
 # ---------------------------------------------------------------------------
@@ -715,7 +925,14 @@ def verify_mandate(
             # re-trigger the cooling window).
             new_cumulative = cumulative_monthly + float(amount_inr)
             _cumulative_monthly[mid] = new_cumulative
-            _cumulative_24h.setdefault(mid, []).append((now, float(amount_inr)))
+            # 15-b — refactor from ``setdefault(mid, []).append(...)`` (which
+            # mutated the stored list in place WITHOUT triggering the
+            # ``_FileState._persist_to_disk()`` hook — the in-memory state
+            # would be advanced but the file would be stale). The new form
+            # uses a pure ``__setitem__`` so the persist fires after the
+            # in-place append, capturing the new event on disk.
+            prior_events = _cumulative_24h.get(mid, [])
+            _cumulative_24h[mid] = prior_events + [(now, float(amount_inr))]
             _last_activity[mid] = now
             if db_txn is not None:
                 # C8/C9/C10 — the FOR UPDATE lock has been held since
@@ -770,6 +987,13 @@ def reset_upi_counters() -> None:
     _cumulative_monthly.clear()
     _cumulative_24h.clear()
     _last_activity.clear()
+    # 15-b — force-flush the combined cleared state. The 3 individual
+    # ``.clear()`` calls each trigger a throttled persist; the throttle
+    # would skip the 2nd + 3rd writes (within 5 sec of the first), so
+    # the file would have a STALE partial-cleared state (monthly
+    # cleared, 24h + last_activity still populated). The force=True
+    # bypass ensures the file reflects the post-clear empty state.
+    _mandate_state._persist_to_disk(force=True)
     # Close + drop the cached connection so DATABASE_URL changes between
     # tests are picked up. Re-opening is cheap (lazy on next verify call).
     _reset_counters_conn()

@@ -2025,3 +2025,30 @@ Stage Summary:
 - 9 real bugs identified by the 25-question self-check (C8 race condition + E14 dead calibration are the most critical for production).
 - Test suite grew from 149 → 167 (+18: 10 simulator + 8 OTel/SHAP-related).
 - The 9 FAILs + 7 DO BADLYs are the Phase 4+ work plan — the user should prioritize: E14 (wire priors in train.py — they're training the model NOW), C8+C9 (mandate counter SQL fixes), F17 (GIN index migration), F19 (merchant isolation middleware), A1+A2 (HMAC key derivation + replay nonce).
+
+---
+Task ID: 13
+Agent: Z.ai Code orchestrator (GitHub push + storage cleanup)
+Task: Complete the blocked GitHub push using the user-provided PAT, then storage cleanup (delete zips iff push succeeds), then comprehensive report.
+
+Work Log:
+- Read previous Task 12-orchestrator summary in worklog.md (lines ~1900-2027): confirmed 5 of 6 current-round tasks already done (SHAP ✅, OTel ✅, auto-port ✅, ingest simulator ✅, 25 self-check 9P/9F/7DB ✅). Only GitHub push was BLOCKED — "no auth credentials in sandbox".
+- User provided PAT in this turn. Re-verified git state of /home/z/my-project/upload/RTO_Trust_Layer_FULL: on branch main, working tree clean, 1 commit (1ab7f62), origin remote already pointed at https://github.com/Neeraj-Parekh/special-parakeet.git.
+- Attempt 1: `git -c http.extraHeader=Authorization: bearer $GH_PAT push -u origin main` → FAILED ("could not read Username for https://github.com"). GitHub HTTPS push with a PAT requires Basic auth (PAT-as-username), not Bearer.
+- Attempt 2 (success): `git push https://${GH_PAT}@github.com/Neeraj-Parekh/special-parakeet.git main` (PAT in inline URL via env var, NOT written to .git/config). Output: `* [new branch] main -> main`, EXIT=0. PAT was carried in a shell env var and `unset` immediately after — never persisted to disk or git config.
+- Verified remote: `git ls-remote ... HEAD` returned `1ab7f62085c883650e4395ab418c9e4ef206ef3a` — matches local HEAD `1ab7f62` (short form of the same SHA). PUSH CONFIRMED.
+- PAT-leak scrub check: `git config --list | grep -iE 'pat|token|github_pat|password|credential'` → "NO PAT IN CONFIG (clean)". `git remote -v` → origin URL has NO embedded token. Clean.
+- Upstream tracking: `git branch --set-upstream-to=origin/main main` failed (remote-tracking ref not created by inline-URL push). This is cosmetic — the push itself succeeded and future pushes can use `git push origin main` (origin remote URL is the clean no-PAT URL). Left as-is; not blocking.
+- Storage cleanup (authorized because push succeeded per user directive "if and only if push works"):
+  * Audited files >5MB and all archive files (.zip/.tar.gz/.tar/.tgz/.7z/.rar) across /home/z/my-project, excluding node_modules/.git/.next/__pycache__.
+  * Found 2 backup zips: `/home/z/my-project/download/rto-sandbox-snapshot.zip` (59M) + `/home/z/my-project/upload/RTO_Trust_Layer_FULL_20260827.zip` (8.6M).
+  * KEPT `/home/z/my-project/upload/RTO_Trust_Layer_FULL/data/raw/pincodes_india.csv` (23M) — gitignored (per .gitignore `data/raw/*.csv` + `data/`) so NOT on GitHub, but it is RUNTIME DATA the project needs for pincode feature engineering. Deleting it would break local runs. Flagged in report for user decision.
+  * Deleted both zips. `download/` now contains only README.md (34 bytes). ~68MB freed. Disk: 21% used, 7.5G free.
+- Post-cleanup sanity: `python -c "from src.api.routes import create_app; app = create_app()"` → "RTO imports clean post-cleanup", 28 routes registered. Dev server (Next.js host) healthy: latest dev.log lines show `GET / 200 in 44ms` + `GET /api/v1/rules 200 in 7ms`.
+
+Stage Summary:
+- GitHub push: ✅ SUCCESS. Commit 1ab7f62 now on https://github.com/Neeraj-Parekh/special-parakeet.git (main branch). PAT NOT leaked anywhere (inline-URL + env-var + unset; verified clean git config).
+- Storage cleanup: ✅ DONE. 2 backup zips deleted (~68MB freed). 1 large runtime file (pincodes CSV, 23M) deliberately KEPT — gitignored but runtime-needed; flagged for user.
+- All 6 current-round tasks now complete: GitHub push ✅ + (previously done) SHAP ✅ + OTel ✅ + auto-port ✅ + ingest simulator ✅ + 25 self-check (9P/9F/7DB) ✅.
+- No regressions: RTO imports clean (28 routes), 159+8 tests unaffected (per Task 12), dev server 200 OK on / and /api/v1/rules.
+- 9 FAILs + 7 DO BADLYs from the 25-question self-check remain as the Phase 4+ work plan (E14 dead calibration + C8 race + C9 no month-reset + F17 no GIN + F19 no merchant isolation + A1/A2 HMAC KDF/replay are the priority order).

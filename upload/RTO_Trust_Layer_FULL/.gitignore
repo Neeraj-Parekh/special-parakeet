@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+out/
+data/raw/*.csv
+.autoresearch/
+nohup.out
+.DS_Store
+
+paper_ref/
+paper studied/

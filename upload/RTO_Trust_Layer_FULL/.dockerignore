@@ -1,0 +1,14 @@
+.git
+.gitignore
+.pytest_cache
+.ruff_cache
+.autoresearch
+autoresearch-results.tsv
+out/audit.jsonl
+out/e1_order.json
+out/e2_addr.json
+out/e3_full.json
+data/raw/pincodes_india.csv
+docs
+notebooks
+*.md

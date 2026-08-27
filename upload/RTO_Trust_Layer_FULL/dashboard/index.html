@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>RTO Trust Layer — Merchant Console</title>
+<style>
+:root{--bg:#0d1117;--card:#161b22;--edge:#30363d;--fg:#e6edf3;--mut:#8b949e;--ok:#3fb950;--warn:#d29922;--bad:#f85149;--acc:#58a6ff}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.5 ui-sans-serif,system-ui,sans-serif;padding:24px}
+h1{font-size:20px} h2{font-size:15px;color:var(--mut);margin-bottom:8px;text-transform:uppercase;letter-spacing:.06em}
+.grid{display:grid;grid-template-columns:380px 1fr;gap:16px;max-width:1200px;margin-top:16px}
+.card{background:var(--card);border:1px solid var(--edge);border-radius:10px;padding:16px}
+label{display:block;font-size:12px;color:var(--mut);margin:10px 0 4px}
+input,select{width:100%;background:#0d1117;border:1px solid var(--edge);border-radius:6px;color:var(--fg);padding:7px 10px;font-size:13px}
+button{background:var(--acc);border:none;border-radius:6px;color:#04121f;font-weight:600;padding:9px 16px;margin-top:12px;cursor:pointer;width:100%}
+button.sec{background:#21262d;color:var(--fg)}
+.gauge{height:10px;background:#21262d;border-radius:5px;margin:14px 0 6px;position:relative}
+.gauge i{position:absolute;top:-4px;width:2px;height:18px;background:var(--fg)}
+.zone{flex:1;height:100%}.zones{display:flex;height:10px;border-radius:5px;overflow:hidden}
+.z-a{background:#123b23}.z-r{background:#4d3800}.z-x{background:#47201f}
+.decision{font-size:22px;font-weight:700;margin-top:6px}
+.d-ACCEPT{color:var(--ok)}.d-REVIEW{color:var(--warn)}.d-REJECT{color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+th{color:var(--mut);text-align:left;font-weight:500;border-bottom:1px solid var(--edge);padding:6px 8px}
+td{padding:6px 8px;border-bottom:1px solid #21262d}
+.pill{padding:1px 9px;border-radius:99px;font-size:11px;font-weight:700}
+.p-ACCEPT{background:#123b23;color:var(--ok)}.p-REVIEW{background:#3d2e00;color:var(--warn)}.p-REJECT{background:#3d1211;color:var(--bad)}
+.reasons li{margin:4px 0 0 0;list-style:none;font-size:13px}
+.up{color:var(--bad)}.down{color:var(--ok)}
+.mut{color:var(--mut);font-size:12px}
+pre{background:#0d1117;border:1px solid var(--edge);border-radius:6px;padding:10px;font-size:12px;overflow:auto;max-height:280px}
+.bars{display:flex;align-items:flex-end;gap:6px;height:120px;margin-top:10px}
+.bar{flex:1;background:var(--acc);opacity:.85;border-radius:3px 3px 0 0;position:relative}
+.bar span{position:absolute;bottom:-18px;left:0;right:0;text-align:center;font-size:10px;color:var(--mut)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+</style>
+</head>
+<body>
+<h1>RTO Trust Layer <span class="mut">— merchant console v2</span></h1>
+<div class="row2" style="max-width:1200px">
+  <div><label>Scorer API key</label><input id="kScore" value="score-demo-key"/></div>
+  <div><label>Admin API key (audit)</label><input id="kAdmin" value="admin-demo-key"/></div>
+</div>
+
+<div class="grid">
+  <div>
+    <div class="card">
+      <h2>Score an order</h2>
+      <label>Order ID</label><input id="oid" value="ORD-WEB-001"/>
+      <label>Amount (INR)</label><input id="amt" type="number" value="12499"/>
+      <div class="row2">
+        <div><label>Category</label><select id="cat"><option>Electronics</option><option>Fashion</option><option>Health</option><option>Accessories</option></select></div>
+        <div><label>Payment</label><select id="pay"><option>COD</option><option>Prepaid</option></select></div>
+      </div>
+      <div class="row2">
+        <div><label>Address quality</label><select id="aq"><option>complete</option><option selected>vague</option><option>partial</option></select></div>
+        <div><label>City tier</label><select id="tier"><option>tier_1</option><option>tier_2</option><option selected>tier_3</option></select></div>
+      </div>
+      <div class="row2">
+        <div><label>Prior orders</label><input id="po" type="number" value="0"/></div>
+        <div><label>Prior returns</label><input id="pr" type="number" value="0"/></div>
+      </div>
+      <button onclick="score()">Score order</button>
+      <div id="result"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Audit trail lookup</h2>
+      <label>Audit ID</label><input id="aid" placeholder="paste audit id"/>
+      <button class="sec" onclick="audit()">Fetch record</button>
+      <pre id="auditOut" style="display:none"></pre>
+    </div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2>Decision gates</h2>
+      <div class="zones"><i class="zone z-a"></i><i class="zone z-r"></i><i class="zone z-x"></i></div>
+      <div class="gauge"><i id="pin" style="left:0"></i></div>
+      <div class="mut">ACCEPT &lt; 0.15 &nbsp;·&nbsp; REVIEW 0.15–0.60 &nbsp;·&nbsp; REJECT &gt; 0.60 &nbsp;(cost-optimal operating point from E4)</div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Scored orders this session</h2>
+      <table><thead><tr><th>Order</th><th>Amount</th><th>Flags</th><th>p(RTO)</th><th>Decision</th><th>Action</th></tr></thead>
+      <tbody id="rows"></tbody></table>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Threshold × cost explorer <span class="mut">(FN = 12× FP)</span></h2>
+      <div class="bars" id="bars"></div>
+      <div class="mut" style="margin-top:22px">total cost units by threshold — lower is better; optimum at 0.15 (recall 79%)</div>
+    </div>
+  </div>
+</div>
+
+<script>
+const COSTS=[[0.15,1258],[0.20,1374],[0.25,1542],[0.30,1718],[0.35,1898],[0.40,2090],[0.50,2592],[0.60,3003]];
+function hdr(){return {Authorization:"Bearer "+document.getElementById("kScore").value}}
+async function score(){
+  const body={order_id:v("oid"),amount_inr:+v("amt"),category:v("cat"),customer_id:"CUST-WEB",
+    address_quality:v("aq"),city_tier:v("tier"),payment_method:v("pay"),
+    prior_orders:+v("po"),prior_returns:+v("pr")};
+  const r=await fetch("/risk/score",{method:"POST",headers:{...hdr(),"Content-Type":"application/json","Idempotency-Key":body.order_id+":"+body.amount_inr},body:JSON.stringify(body)});
+  const j=await r.json();
+  if(r.status!==200){document.getElementById("result").innerHTML=`<p class="decision d-REJECT" style="font-size:14px">HTTP ${r.status}: ${esc(JSON.stringify(j.detail))}</p>`;return}
+  renderResult(j);addRow(body,j);
+}
+function renderResult(j){
+  document.getElementById("pin").style.left=Math.min(j.probability*100,99)+"%";
+  document.getElementById("result").innerHTML=
+   `<div class="gauge"><i style="left:${Math.min(j.probability*100,99)}%"></i></div>
+    <div class="decision d-${j.decision}">${j.decision} · risk ${j.risk_score}/100</div>
+    <ul class="reasons">${j.explanation.slice(0,4).map(e=>`<li>${esc(e.feature)} <b class="${e.delta_prob>=0?"up":"down"}">${e.delta_prob>=0?"+":""}${e.delta_prob.toFixed(3)}</b> <span class="mut">(${esc(String(e.value))})</span></li>`).join("")}</ul>
+    <p class="mut" style="margin-top:6px">audit: ${j.audit_trail_url}</p>`;
+}
+function addRow(o,j){
+  const action={ACCEPT:"ship normal",REVIEW:"selective OTP / partial-COD",REJECT:"manual review"}[j.decision];
+  document.getElementById("rows").insertAdjacentHTML("afterbegin",
+   `<tr><td>${esc(o.order_id)}</td><td>₹${o.amount_inr.toLocaleString("en-IN")}</td>
+    <td class="mut">${o.payment_method}·${o.address_quality}·${o.city_tier}</td>
+    <td>${j.probability.toFixed(3)}</td>
+    <td><span class="pill p-${j.decision}">${j.decision}</span></td><td class="mut">${action}</td></tr>`);
+}
+async function audit(){
+  const id=document.getElementById("aid").value.trim();if(!id)return;
+  const r=await fetch("/audit/"+id,{headers:{Authorization:"Bearer "+document.getElementById("kAdmin").value}});
+  const el=document.getElementById("auditOut");el.style.display="block";
+  el.textContent=r.status===200?JSON.stringify(await r.json(),null,2):`HTTP ${r.status} — admin key required`;
+}
+(function bars(){
+  const max=Math.max(...COSTS.map(c=>c[1])),el=document.getElementById("bars");
+  COSTS.forEach(([t,c])=>{const b=document.createElement("div");b.className="bar";b.style.height=(c/max*100)+"%";
+    b.title=`thr ${t}: ${c} units`;b.innerHTML=`<span>${t}</span>`;el.appendChild(b)});
+})();
+const v=id=>document.getElementById(id).value;
+const esc=s=>String(s).replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
+</script>
+</body>
+</html>

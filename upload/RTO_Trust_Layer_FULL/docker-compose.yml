@@ -1,0 +1,57 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - RTO_SCORER_KEYS=${RTO_SCORER_KEYS:-score-demo-key}
+      - RTO_ADMIN_KEYS=${RTO_ADMIN_KEYS:-admin-demo-key}
+      - RTO_MANDATE_SECRET=${RTO_MANDATE_SECRET:-dev-only-secret}
+      - RTO_AUDIT_SALT=${RTO_AUDIT_SALT:-local-demo-salt}
+    volumes:
+      - audit-data:/app/out
+    restart: unless-stopped
+
+  # --- full stack: docker compose --profile full up ---
+  nginx:
+    image: nginx:alpine
+    profiles: ["full"]
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["full"]
+
+  postgres:
+    image: postgres:15-alpine
+    profiles: ["full"]
+    environment:
+      POSTGRES_USER: risk
+      POSTGRES_PASSWORD: risk
+      POSTGRES_DB: riskdb
+
+  prometheus:
+    image: prom/prometheus
+    profiles: ["full"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana
+    profiles: ["full"]
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./monitoring/grafana:/etc/grafana/provisioning/dashboards-src:ro
+
+volumes:
+  audit-data:

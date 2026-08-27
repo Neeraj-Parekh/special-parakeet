@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r requirements.txt
+      - name: Lint (ruff)
+        run: python -m ruff check src scripts tests
+      - name: Tests (pytest)
+        run: python -m pytest tests -q --ignore=tests/load
+
+  data-model-gate:
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pandas scikit-learn numpy joblib
+      - name: Train + evaluate with leakage gate
+        run: |
+          curl -sL --create-dirs -o data/raw/cod_orders.csv \
+            https://raw.githubusercontent.com/mxnvendra1/CODScore/HEAD/cod_orders.csv
+          python scripts/evaluate.py --feature-set order+addr --out out/metrics.json
+      - name: Assert no group leakage + metric floor
+        run: |
+          python - <<'EOF'
+          import json, sys
+          m = json.load(open("out/metrics.json"))
+          assert m["customer_group_leakage"] == 0, "leakage detected"
+          assert m["pr_auc"] >= 0.50, f"PR-AUC floor breached: {m['pr_auc']}"
+          print("gates ok:", m["pr_auc"], "leakage", m["customer_group_leakage"])
+          EOF
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t rto-trust-layer:${{ github.sha }} .

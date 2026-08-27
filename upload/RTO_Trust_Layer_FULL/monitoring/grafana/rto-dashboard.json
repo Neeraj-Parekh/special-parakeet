@@ -1,0 +1,43 @@
+{
+  "title": "RTO Trust Layer — Risk Ops",
+  "uid": "rto-risk-ops",
+  "schemaVersion": 39,
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Decisions / min by outcome",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "targets": [
+        {"expr": "sum(rate(risk_decisions_total[5m])) by (decision)", "legendFormat": "{{decision}}"}
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Circuit breaker (0=CLOSED)",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "targets": [{"expr": "rto_circuit_state"}],
+      "fieldConfig": {"defaults": {"thresholds": {"steps": [
+        {"color": "green", "value": null},
+        {"color": "yellow", "value": 1},
+        {"color": "red", "value": 2}
+      ]}}}
+    },
+    {
+      "type": "gauge",
+      "title": "Degraded share of decisions",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "targets": [{
+        "expr": "sum(rate(risk_decisions_total{degraded=\"True\"}[5m])) / clamp_min(sum(rate(risk_decisions_total[5m])), 0.001)"
+      }]
+    },
+    {
+      "type": "timeseries",
+      "title": "Scoring latency (p50 approx via avg)",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+      "targets": [
+        {"expr": "rate(rto_score_latency_seconds_sum[5m]) / clamp_min(rate(rto_score_latency_seconds_count[5m]), 0.0001)", "legendFormat": "avg s"}
+      ]
+    }
+  ]
+}

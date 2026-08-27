@@ -8,9 +8,38 @@ services:
       - RTO_ADMIN_KEYS=${RTO_ADMIN_KEYS:-admin-demo-key}
       - RTO_MANDATE_SECRET=${RTO_MANDATE_SECRET:-dev-only-secret}
       - RTO_AUDIT_SALT=${RTO_AUDIT_SALT:-local-demo-salt}
+      # Day 2 Track E — Postgres dual-mode switch. When DATABASE_URL points
+      # at the Postgres service below, AuditLogger / CaseService /
+      # model_registry / idempotency_keys all switch from JSONL/JSON files
+      # to the typed tables created by `alembic upgrade head`. Without it,
+      # the API falls back to file mode (the 63 existing tests run this way).
+      # Run migrations once Postgres is healthy:
+      #   docker compose --profile full up -d postgres
+      #   docker compose run --rm api alembic upgrade head
+      - DATABASE_URL=postgresql://risk:risk@postgres:5432/riskdb
+      # Day 2 Track F — Redis Streams producer URL (fire-and-forget). When
+      # set, the API publishes every /risk/score decision to risk.scores +
+      # audit.records + (on REVIEW) cases.created. If Redis is down the
+      # publishes fail silently — the API response is unaffected. The two
+      # workers below (stream-worker + stream-processor) drain the streams
+      # via XREADGROUP consumer groups.
+      - REDIS_URL=redis://redis:6379
+      # Day 4 Track M — OpenTelemetry exporter endpoint. When set, the
+      # /risk/score handler wraps the decision pipeline in an OTel span
+      # + the BatchSpanProcessor pushes to Jaeger via OTLP gRPC :4317.
+      # Jaeger UI is on :16686 (host). When unset, setup_otel() returns
+      # None + the handler skips the span block — the 93 existing tests
+      # pass this way.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+      - OTEL_SERVICE_NAME=rto-trust-layer
     volumes:
       - audit-data:/app/out
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   # --- full stack: docker compose --profile full up ---
   nginx:
@@ -25,15 +54,125 @@ services:
 
   redis:
     image: redis:7-alpine
-    profiles: ["full"]
+    # Day 2 Track F — moved OUT of the ["full"] profile (Track E moved
+    # postgres out for the same reason). A bare `docker compose up` now
+    # brings up api + postgres + redis (the core stack). The API's
+    # REDIS_URL above references this service, so it must be up at boot
+    # (publishes fail silently if not, but the stream-worker +
+    # stream-processor services below need it). The `--profile full` flag
+    # is reserved for the optional observability / dashboard stack
+    # (nginx + prometheus + grafana). Closes §A item 7 fully — both
+    # postgres AND redis are now actually used by the API.
+    # NOTE: no healthcheck added — Redis Streams don't need readiness
+    # gating on the consumer side (XADD/XREADGROUP retry internally); the
+    # api's `condition: service_started` is enough.
 
+  # Day 2 Track F — stream-worker drains the API-publishable streams
+  # (risk.scores + audit.records + cases.created) via XREADGROUP. This is
+  # the consumer side of the Redis Streams backbone (closes §A item 18 +
+  # driver G2). The default handler just logs to stderr so
+  # `docker compose logs stream-worker` shows the event flow end-to-end
+  # (POST /risk/score → audit.records → cases.created). Real handlers
+  # (Track G feedback loop, Track I dashboard, Track H notifications)
+  # install their own callback via `StreamConsumer.consume(streams, fn)`.
+  stream-worker:
+    build: .
+    command: python -m src.stream.consumer
+    environment:
+      - REDIS_URL=redis://redis:6379
+      # Day 2 Track E — DATABASE_URL is wired so the consumer's handler can
+      # read the audit_records / cases tables when the handler enriches
+      # stream messages with DB-side state (e.g. resolve case_id →
+      # merchant_id for the notifications stream). The default handler
+      # doesn't query Postgres, but Track G / H / I will.
+      - DATABASE_URL=postgresql://risk:risk@postgres:5432/riskdb
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Day 2 Track F — stream-processor runs the Microsoft Eventhouse
+  # equivalent (TFX `generate_data_statistics` pattern: HyperLogLog for
+  # cardinality, sliding-window counts for velocity). Consumes the
+  # risk.scores stream via its OWN consumer group (rto-processors) so the
+  # stream-worker above doesn't compete for the same messages. On anomaly,
+  # publishes to model.drift — Track G's DDM/ADWIN detector will consume
+  # that stream for the formal drift decision + retrain-PR trigger. Closes
+  # §D item P7 (streaming transformations absent).
+  stream-processor:
+    build: .
+    command: python -m src.stream.processor
+    environment:
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_started
+    restart: unless-stopped
+
+  # Day 2 Track G — drift-consumer drains the model.drift stream produced
+  # by stream-processor above. This is the 3rd consumer group on the Redis
+  # Streams backbone (rto-workers + rto-processors + rto-drift-detectors).
+  # The consumer wraps LabelFeedbackService's anomaly-side run-length
+  # heuristic: 3+ consecutive same-reason anomalies fires a retrain_request
+  # notification to the notifications stream (the fast-reactive path; the
+  # formal DDM 99% confirmation follows days later via the label-side
+  # path POST /v1/feedback/ingest). Source: Gama 2014 ACM CSUR 46(4) §3.
+  drift-consumer:
+    build: .
+    command: python -m src.feedback.drift_consumer
+    environment:
+      - REDIS_URL=redis://redis:6379
+      # DATABASE_URL is wired so the consumer can hydrate the predicted P(RTO)
+      # from the audit_records table when enriching model.drift messages with
+      # the prediction's score (for the streaming-PSI equivalent). The
+      # default handler doesn't query Postgres, but Track H will.
+      - DATABASE_URL=postgresql://risk:risk@postgres:5432/riskdb
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Day 2 Track E — Postgres 15. The DB is now ACTUALLY used by the API
+  # (closes §A item 7: "--profile full starts postgres+redis the API never
+  # connects to"). Postgres is moved OUT of the `["full"]` profile so a bare
+  # `docker compose up` brings it up alongside the api — Track E wired
+  # `DATABASE_URL` into the api environment above, so the api expects
+  # Postgres to be reachable at boot. If you want to skip Postgres (e.g.
+  # quick file-mode sanity check), export `DATABASE_URL=` (empty) before
+  # `docker compose up` and remove the `depends_on` below — but the
+  # recommended path is to run the full stack:
+  #   docker compose --profile full up     # + nginx + prom + grafana
+  #   docker compose up                    # api + postgres + redis + workers
+  # (Day 2 Track F moved redis out of the ["full"] profile too so the
+  # streaming backbone — stream-worker + stream-processor — starts with
+  # a bare `docker compose up`.)
+  # The healthcheck ensures the api waits for Postgres to be ready before
+  # booting (pg_isready -U risk gates on actual readiness, not just TCP open).
   postgres:
     image: postgres:15-alpine
-    profiles: ["full"]
     environment:
       POSTGRES_USER: risk
       POSTGRES_PASSWORD: risk
       POSTGRES_DB: riskdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U risk"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      # Persist across `docker compose down` so migrations + audit trail
+      # survive restarts (V3 §10.3 tamper-evidence: the chain MUST survive
+      # process restarts to be meaningful).
+      - postgres-data:/var/lib/postgresql/data
+    # NOTE: postgres is intentionally NOT profile-gated. The api service
+    # unconditionally references DATABASE_URL above, so a bare
+    # `docker compose up` needs postgres running. To run only the api in
+    # file mode (skip Postgres), comment out the DATABASE_URL line in the
+    # api service `environment` and the `depends_on` block below.
 
   prometheus:
     image: prom/prometheus
@@ -49,9 +188,62 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
     volumes:
-      - ./monitoring/grafana:/etc/grafana/provisioning/dashboards-src:ro
+      # Dashboard provider config + dashboard JSONs.
+      # NOTE: target is `dashboards` (the conventional Grafana provisioning
+      # path); the previous `dashboards-src` target caused Grafana to silently
+      # skip every YAML/JSON in this folder, so the RTO dashboard never loaded.
+      - ./monitoring/grafana:/etc/grafana/provisioning/dashboards:ro
+      # Datasource provisioning — auto-loads the Prometheus datasource so
+      # dashboards don't show "datasource not found" on first boot.
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      - prometheus
+
+  # Day 4 Track M — Jaeger all-in-one image 1.55. Jaeger UI on :16686
+  # (host). OTLP gRPC ingestion on :4317 (host) — the API service pushes
+  # traces here via the opentelemetry-exporter-otlp BatchSpanProcessor
+  # (configured by setup_otel() in src/api/otel.py when
+  # OTEL_EXPORTER_OTLP_ENDPOINT is set on the api service above).
+  # The all-in-one image is the dev/demo artifact (in-memory storage);
+  # for prod swap to jaeger-collector + jaeger-query + Cassandra/ES backend.
+  # Profile-gated under ["full"] so a bare `docker compose up` (api +
+  # postgres + redis + workers) doesn't pay the Jaeger image-pull cost.
+  jaeger:
+    image: jaegertracing/all-in-one:1.55
+    profiles: ["full"]
+    ports:
+      - "16686:16686"  # UI
+      - "4317:4317"    # OTLP gRPC
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    restart: unless-stopped
+
+  # Day 4 Track M — Alertmanager v0.27.0. Prometheus (the `prometheus`
+  # service above) reads `alert_rules.yml` + routes firing alerts here.
+  # Alertmanager groups + dedups + dispatches per the routing config in
+  # `monitoring/alertmanager.yml`. The default receiver is a placeholder
+  # Slack webhook; the user configures the real Slack/PagerDuty webhook
+  # in production. Profile-gated under ["full"] alongside prometheus +
+  # grafana so the bare `docker compose up` doesn't pull the image.
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: ["full"]
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/alertmanager/alert_rules.yml:ro
+    restart: unless-stopped
+    depends_on:
+      - prometheus
 
 volumes:
   audit-data:
+  # Day 2 Track E — Postgres data volume. Named so `docker compose down -v`
+  # is the explicit destroy step (vs. anonymous volumes which would be GC'd
+  # more eagerly). The audit hash chain + cases + model_registry + idempotency
+  # cache all live here; back this up with `docker run --rm -v
+  # rto-trust-layer_postgres-data:/data busybox tar czf - /data > backup.tgz`.
+  postgres-data:

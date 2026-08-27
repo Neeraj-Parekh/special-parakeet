@@ -39,8 +39,8 @@ pre{background:#0d1117;border:1px solid var(--edge);border-radius:6px;padding:10
 <body>
 <h1>RTO Trust Layer <span class="mut">— merchant console v2</span></h1>
 <div class="row2" style="max-width:1200px">
-  <div><label>Scorer API key</label><input id="kScore" value="score-demo-key"/></div>
-  <div><label>Admin API key (audit)</label><input id="kAdmin" value="admin-demo-key"/></div>
+  <div><label>Scorer API key</label><input id="kScore" type="password" placeholder="Enter scorer key" autocomplete="off"/></div>
+  <div><label>Admin API key (audit)</label><input id="kAdmin" type="password" placeholder="Enter admin key" autocomplete="off"/></div>
 </div>
 
 <div class="grid">
@@ -77,7 +77,7 @@ pre{background:#0d1117;border:1px solid var(--edge);border-radius:6px;padding:10
       <h2>Decision gates</h2>
       <div class="zones"><i class="zone z-a"></i><i class="zone z-r"></i><i class="zone z-x"></i></div>
       <div class="gauge"><i id="pin" style="left:0"></i></div>
-      <div class="mut">ACCEPT &lt; 0.15 &nbsp;·&nbsp; REVIEW 0.15–0.60 &nbsp;·&nbsp; REJECT &gt; 0.60 &nbsp;(cost-optimal operating point from E4)</div>
+      <div class="mut">Decisions come from <b>Bahnsen Bayes Minimum Risk</b> (ICMLA 2013) per-order cost argmin over {ACCEPT, REVIEW (selective-OTP), REJECT}. Legacy static 0.15 / 0.60 thresholds kept for visualization only.</div>
     </div>
     <div class="card" style="margin-top:16px">
       <h2>Scored orders this session</h2>
@@ -85,16 +85,77 @@ pre{background:#0d1117;border:1px solid var(--edge);border-radius:6px;padding:10
       <tbody id="rows"></tbody></table>
     </div>
     <div class="card" style="margin-top:16px">
-      <h2>Threshold × cost explorer <span class="mut">(FN = 12× FP)</span></h2>
-      <div class="bars" id="bars"></div>
-      <div class="mut" style="margin-top:22px">total cost units by threshold — lower is better; optimum at 0.15 (recall 79%)</div>
+      <h2>Threshold × cost explorer <span class="mut">(FN = 12× FP, Drummond-Holte 2006)</span></h2>
+      <div class="bars" id="bars"><div class="mut" id="bars-state" style="height:100%;display:flex;align-items:center;justify-content:center">loading cost curves…</div></div>
+      <div class="mut" id="bars-note" style="margin-top:22px">fetching <code>/v1/policy/cost-curves</code>…</div>
     </div>
   </div>
 </div>
 
 <script>
-const COSTS=[[0.15,1258],[0.20,1374],[0.25,1542],[0.30,1718],[0.35,1898],[0.40,2090],[0.50,2592],[0.60,3003]];
+// Cost-curve data is now fetched live from /v1/policy/cost-curves (Day 1
+// Track C). The previous hardcoded COSTS array was decorative — it never
+// reflected the actual model's threshold sweep. ``loadCostCurves`` populates
+// the bar chart from the Drummond-Holte cost-curve endpoint, with loading +
+// error states so the dashboard never silently shows stale numbers.
+let COSTS=[];            // [{threshold, cost, ...}, ...] after fetch
+let OPTIMAL_THRESHOLD=null;
 function hdr(){return {Authorization:"Bearer "+document.getElementById("kScore").value}}
+function setBarsState(msg){document.getElementById("bars-state").textContent=msg;document.getElementById("bars-state").style.display="flex"}
+function clearBarsState(){document.getElementById("bars-state").style.display="none"}
+async function loadCostCurves(){
+  setBarsState("loading cost curves…");
+  document.getElementById("bars-note").textContent="fetching /v1/policy/cost-curves…";
+  let r;
+  try{
+    r=await fetch("/v1/policy/cost-curves?n_resamples=100",{headers:hdr()});
+  }catch(err){
+    setBarsState("Cost curves unavailable — cannot reach server");
+    document.getElementById("bars-note").textContent="network error: "+err;
+    return;
+  }
+  if(r.status===401){
+    setBarsState("Cost curves unavailable — invalid scorer key");
+    document.getElementById("bars-note").textContent="enter a valid scorer API key above and reload";
+    return;
+  }
+  if(r.status===503){
+    setBarsState("Cost curves unavailable — model not loaded");
+    let detail="endpoint returned "+r.status;
+    try{const e=await r.json();if(e&&e.detail)detail=e.detail;}catch(_){/* ignore JSON parse errors */}
+    document.getElementById("bars-note").textContent=detail;
+    return;
+  }
+  if(r.status!==200){
+    setBarsState(`Cost curves unavailable — HTTP ${r.status}`);
+    document.getElementById("bars-note").textContent="endpoint returned "+r.status;
+    return;
+  }
+  const j=await r.json();
+  COSTS=j.curves.map(c=>[c.threshold,c.cost]);
+  OPTIMAL_THRESHOLD=j.optimal_threshold;
+  clearBarsState();
+  renderBars(j);
+}
+function renderBars(j){
+  const el=document.getElementById("bars");
+  // remove old bars (keep the .mut state node which we've already hidden)
+  Array.from(el.querySelectorAll(".bar")).forEach(b=>b.remove());
+  const max=Math.max(...COSTS.map(c=>c[1]));
+  COSTS.forEach(([t,c])=>{const b=document.createElement("div");b.className="bar";
+    const isOpt=Math.abs(t-OPTIMAL_THRESHOLD)<1e-9;
+    if(isOpt)b.style.background="var(--ok)";
+    b.style.height=(c/max*100)+"%";
+    b.title=`thr ${t}: ${c} cost units${isOpt?" (cost-optimal)":""}`;
+    b.innerHTML=`<span>${t}</span>`;el.appendChild(b)});
+  const opt=j.optimal_threshold;
+  const optRow=j.curves.find(c=>Math.abs(c.threshold-opt)<1e-9)||{};
+  document.getElementById("bars-note").innerHTML=
+    `total cost units by threshold — lower is better. `+
+    `cost-optimal threshold: <b style="color:var(--ok)">${opt}</b> `+
+    `(precision ${optRow.precision??"—"}, recall ${optRow.recall??"—"}) — `+
+    `n=${j.n_samples} (${j.n_pos} RTO / ${j.n_neg} delivered), source: ${j.data_source}`;
+}
 async function score(){
   const body={order_id:v("oid"),amount_inr:+v("amt"),category:v("cat"),customer_id:"CUST-WEB",
     address_quality:v("aq"),city_tier:v("tier"),payment_method:v("pay"),
@@ -103,6 +164,9 @@ async function score(){
   const j=await r.json();
   if(r.status!==200){document.getElementById("result").innerHTML=`<p class="decision d-REJECT" style="font-size:14px">HTTP ${r.status}: ${esc(JSON.stringify(j.detail))}</p>`;return}
   renderResult(j);addRow(body,j);
+  // If the cost-curve explorer hasn't loaded yet (no scorer key on first page
+  // load), this successful score proves the key works — try the fetch now.
+  if(COSTS.length===0)loadCostCurves();
 }
 function renderResult(j){
   document.getElementById("pin").style.left=Math.min(j.probability*100,99)+"%";
@@ -126,11 +190,13 @@ async function audit(){
   const el=document.getElementById("auditOut");el.style.display="block";
   el.textContent=r.status===200?JSON.stringify(await r.json(),null,2):`HTTP ${r.status} — admin key required`;
 }
-(function bars(){
-  const max=Math.max(...COSTS.map(c=>c[1])),el=document.getElementById("bars");
-  COSTS.forEach(([t,c])=>{const b=document.createElement("div");b.className="bar";b.style.height=(c/max*100)+"%";
-    b.title=`thr ${t}: ${c} units`;b.innerHTML=`<span>${t}</span>`;el.appendChild(b)});
-})();
+// On page load: cost-curve explorer waits for a valid scorer key (no defaults).
+// User types the key, clicks Score order (or any admin-action button) → the
+// successful auth triggers ``loadCostCurves`` via the score() success branch.
+// If the user only wants to browse the cost explorer without scoring, they
+// can press Enter in the scorer-key field to trigger the load.
+document.getElementById("kScore").addEventListener("change",()=>{if(COSTS.length===0)loadCostCurves()});
+document.getElementById("kScore").addEventListener("keydown",e=>{if(e.key==="Enter")loadCostCurves()});
 const v=id=>document.getElementById(id).value;
 const esc=s=>String(s).replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
 </script>

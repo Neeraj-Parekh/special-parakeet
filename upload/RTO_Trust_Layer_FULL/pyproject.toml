@@ -1,3 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Build system — declares how `uv build` / `pip wheel` produces the sdist+wheel.
+# Hatchling is the standard PEP 517 backend for pure-Python projects.
+# ─────────────────────────────────────────────────────────────────────────────
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Project metadata — declares the package to PyPI / `uv sync` / `pip install -e .`
+# ─────────────────────────────────────────────────────────────────────────────
+[project]
+name = "rto-trust-layer"
+version = "0.4.0"
+description = "Merchant-facing RTO risk command center"
+readme = "README.md"
+requires-python = ">=3.12"
+# Runtime deps — pinned to the same floors as requirements.txt, minus `shap`
+# (dead dep — never imported; removed in this same fix-batch). pytest and ruff
+# are dev-only and live in [project.optional-dependencies] below.
+# Day 2 Track E additions: psycopg v3 (raw, NO ORM per 04-TECH-STACK-DECISIONS),
+# alembic, pydantic-settings, cachetools (TTLCache for the file-mode idempotency
+# cache — closes the §A item 2 memory leak even without DATABASE_URL set).
+# Day 2 Track F additions: redis>=5.0 (Redis Streams producer/consumer + HLL).
+# Closes §A item 18 + driver G2 (REST-only, no event/streaming backbone).
+dependencies = [
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "scikit-learn>=1.8",
+    "fastapi>=0.136",
+    "uvicorn>=0.30",
+    "httpx>=0.28",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+    "pydantic-settings>=2.0",
+    "cachetools>=5.3",
+    "redis>=5.0",
+    # Day 4 Track M — OpenTelemetry instrumentation for the /risk/score
+    # decision pipeline (Jaeger UI + OTLP gRPC exporter). Dual-mode: if
+    # OTEL_EXPORTER_OTLP_ENDPOINT is unset the tracer is None + spans
+    # become no-ops (the 93 existing tests pass without a Jaeger fixture).
+    "opentelemetry-api>=1.20",
+    "opentelemetry-sdk>=1.20",
+    "opentelemetry-exporter-otlp>=1.20",
+]
+
+# Dev / lint / test extras — `uv sync --extra dev` or `pip install -e .[dev]`.
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "ruff>=0.15",
+]
+
+# Console-script entry points.
+# - `rto-evaluate` runs the train/eval pipeline (replaces `python scripts/evaluate.py`).
+# - The API server is intentionally NOT wired here because `create_app` is a
+#   factory function (not a bare ASGI callable). Document the run command in
+#   the README instead:
+#     uvicorn src.api.routes:create_app --factory --host 0.0.0.0 --port 8000
+#   Track K (Day 3) owns the README update.
+[project.scripts]
+rto-evaluate = "scripts.evaluate:main"
+
+# Tell hatchling which packages to include in the wheel. `scripts/` is a
+# loose-script folder (no __init__.py) — kept out of the wheel; `scripts.evaluate`
+# still resolves in editable installs because the project root is on sys.path.
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ruff — kept from the original config (verify.sh runs `ruff check src scripts tests`).
+# ─────────────────────────────────────────────────────────────────────────────
 [tool.ruff]
 line-length = 100
 target-version = "py312"

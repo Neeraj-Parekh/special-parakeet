@@ -17,7 +17,11 @@ from sklearn.metrics import (
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.features.cleaning import load_orders  # noqa: E402
-from src.features.enrich import add_address_features, add_geo_features  # noqa: E402
+from src.features.enrich import add_address_features  # noqa: E402
+# NOTE: `add_geo_features` was removed from `src/features/enrich.py` as dead
+# code (no pincodes CSV in the repo, never called from the API lifespan).
+# `--feature-set full` now silently trains on order+addr features only; the
+# `--pincodes` arg below is a no-op kept for backward-compat.
 from src.models.splitting import group_leakage, group_split  # noqa: E402
 from src.models.train import build_feature_frame, fit_model, save_model  # noqa: E402
 
@@ -42,8 +46,9 @@ def main() -> int:
     df = load_orders(args.data)
     if args.feature_set in {"order+addr", "full"}:
         df = add_address_features(df)
-    if args.feature_set == "full":
-        df = add_geo_features(df, args.pincodes)
+    # Geo features (add_geo_features) were removed as dead code — see
+    # `src/features/enrich.py`. --feature-set "full" now trains on
+    # order+addr features only; the `--pincodes` arg is a no-op.
 
     train_df, test_df = group_split(df)
     leakage = group_leakage(train_df, test_df)

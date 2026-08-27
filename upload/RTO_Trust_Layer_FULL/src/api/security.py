@@ -11,11 +11,29 @@ def _keys(env_var: str) -> set[str]:
     return {k.strip() for k in raw.split(",") if k.strip()}
 
 
-def default_keys() -> dict[str, str]:
-    """Demo fallback keys so local runs work without env setup."""
+def default_keys(
+    scorer_keys: str | None = None, admin_keys: str | None = None
+) -> dict[str, set[str]]:
+    """Demo fallback keys so local runs work without env setup.
+
+    Day 2 Track E: reads from ``src.config.Settings()`` (which honors the
+    ``.env`` file and OS env vars ``RTO_SCORER_KEYS`` / ``RTO_ADMIN_KEYS``)
+    when the caller doesn't pass explicit CSV strings. ``create_app`` now
+    passes ``settings.rto_scorer_keys`` / ``settings.rto_admin_keys`` here
+    instead of reading env vars directly (closing the ad-hoc ``os.environ``
+    read scattered around the codebase).
+
+    Backward-compat: zero-arg call still works — the Settings object reads
+    the same env vars the original ``_keys()`` did.
+    """
+    from src.config import get_settings
+
+    s = get_settings()
+    sk = scorer_keys if scorer_keys is not None else s.rto_scorer_keys
+    ak = admin_keys if admin_keys is not None else s.rto_admin_keys
     return {
-        "scorer": _keys("RTO_SCORER_KEYS") or {"score-demo-key"},
-        "admin": _keys("RTO_ADMIN_KEYS") or {"admin-demo-key"},
+        "scorer": {k.strip() for k in sk.split(",") if k.strip()} or {"score-demo-key"},
+        "admin": {k.strip() for k in ak.split(",") if k.strip()} or {"admin-demo-key"},
     }
 
 

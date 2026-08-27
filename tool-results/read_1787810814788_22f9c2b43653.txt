@@ -1,0 +1,774 @@
+     1→"""Train + evaluate RTO risk model. Prints JSON metrics; writes model + report."""
+     2→from __future__ import annotations
+     3→
+     4→import sys
+     5→import time
+     6→import uuid
+     7→from contextlib import asynccontextmanager
+     8→from datetime import datetime, timezone
+     9→from pathlib import Path
+    10→from typing import Any
+    11→
+    12→import pandas as pd
+    13→from fastapi import FastAPI, Header, HTTPException
+    14→from pydantic import BaseModel, Field
+    15→
+    16→sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    17→
+    18→from src.api.breaker import CircuitBreaker  # noqa: E402
+    19→from src.api.mandates import MandateVerdict, issue_mandate, verify_mandate  # noqa: E402
+    20→from src.api.metrics import Metrics, now_ms  # noqa: E402
+    21→from src.api.security import TokenBucket, bearer_token, check_key, default_keys  # noqa: E402
+    22→from src.audit.logger import AuditLogger, redact_customer  # noqa: E402
+    23→from src.business.cost_optimizer import (  # noqa: E402
+    24→    bootstrap_cost_ci,
+    25→    calibrate_probabilities,
+    26→    cost_curve_sweep,
+    27→    find_cost_crossover,
+    28→    optimal_decision,
+    29→)
+    30→
+    31→# Legacy static-threshold constants (replaced as the PRIMARY decision path on
+    32→# Day 1 Track C by ``optimal_decision()`` — Bahnsen Bayes Minimum Risk, ICMLA
+    33→# 2013, DOI 10.1109/ICMLA.2013.68). Kept here for backward compatibility in
+    34→# the ``gate_thresholds`` response field (so existing dashboards / consumers
+    35→# that read accept_below / reject_above still get a sensible value), and as
+    36→# the fallback threshold surface when ``optimal_decision`` is somehow skipped
+    37→# (degraded mode below falls back to REVIEW regardless).
+    38→ACCEPT_T, REJECT_T = 0.15, 0.60
+    39→# Cost weights for the Bahnsen BMR decision layer — must stay in lockstep
+    40→# with the defaults in ``src.business.cost_optimizer.optimal_decision`` so that
+    41→# the ``/v1/policy/cost-curves`` endpoint reports the same cost model the
+    42→# live decision path actually uses.
+    43→DEFAULT_COST_WEIGHTS: dict[str, float] = {
+    44→    "c_fp": 50.0,            # false-positive (good order held) admin / review fee, INR
+    45→    "c_fn": 600.0,           # false-negative (missed RTO) reverse-logistics + refund, INR
+    46→    "c_otp": 5.0,            # REVIEW-gate selective-OTP verification cost, INR
+    47→    "c_block": 1000.0,       # false-block (good order blocked) goodwill / churn, INR
+    48→    "otp_effectiveness": 0.82,  # published selective-OTP RTO-catch rate (0.78-0.84)
+    49→}
+    50→from src.cases.service import CaseService  # noqa: E402
+    51→from src.features.cleaning import load_orders  # noqa: E402
+    52→from src.features.enrich import add_address_features  # noqa: E402
+    53→from src.ml.registry import current_champion, psi  # noqa: E402
+    54→from src.models.explain import reason_codes_batch  # noqa: E402
+    55→from src.models.splitting import group_split  # noqa: E402
+    56→from src.models.train import build_feature_frame, fit_model, save_model  # noqa: E402
+    57→from src.rules.engine import (
+    58→    Rule,  # noqa: E402
+    59→    RulesEngine,  # noqa: E402
+    60→)
+    61→
+    62→# Default bootstrap CI parameters for the cost-curve endpoint (Drummond & Holte
+    63→# 2006 — skill.yaml recommends ≥500 resamples preserving row marginals).
+    64→DEFAULT_COST_CURVE_RESAMPLES = 500
+    65→DEFAULT_COST_CURVE_CONFIDENCE = 0.90
+    66→
+    67→
+    68→class OrderIn(BaseModel):
+    69→    order_id: str = Field(min_length=3, max_length=64)
+    70→    amount_inr: float = Field(gt=1, le=1_000_000)
+    71→    category: str = Field(min_length=2, max_length=32)
+    72→    customer_id: str = Field(min_length=3, max_length=64)
+    73→    address_quality: str = Field(default="complete", pattern="^(complete|partial|vague)$")
+    74→    city_tier: str = Field(default="tier_2", pattern="^tier_[123]$")
+    75→    payment_method: str = Field(default="COD", pattern="^(COD|Prepaid)$", max_length=16)
+    76→    prior_orders: int = Field(default=0, ge=0, le=10_000)
+    77→    prior_returns: int = Field(default=0, ge=0, le=10_000)
+    78→    items: int = Field(default=1, ge=1, le=100)
+    79→    order_hour: int = Field(default=12, ge=0, le=23)
+    80→    device: str = Field(default="Android App", max_length=32)
+    81→
+    82→
+    83→class RuleIn(BaseModel):
+    84→    rule_id: str = Field(min_length=3, max_length=32)
+    85→    name: str = Field(min_length=3, max_length=64)
+    86→    field: str = Field(max_length=48)
+    87→    op: str = Field(pattern="^(gt|lt|eq|in)$")
+    88→    value: float | str | bool | list
+    89→    action: str = Field(pattern="^(BLOCK|REVIEW)$")
+    90→    priority: int = Field(default=100, ge=1, le=1000)
+    91→    created_by: str = "admin"
+    92→
+    93→
+    94→def create_app(
+    95→    scorer_rate_per_min: int = 120, audit_path: str = "out/audit.jsonl"
+    96→) -> FastAPI:
+    97→    state: dict[str, Any] = {}
+    98→
+    99→    @asynccontextmanager
+   100→    async def lifespan(_: FastAPI):
+   101→        df = add_address_features(load_orders("data/raw/cod_orders.csv"))
+   102→        train_df, _ = group_split(df)
+   103→        X_tr, y_tr = build_feature_frame(train_df, "order+addr")
+   104→        model_path = Path("out/model_api.joblib")
+   105→        if not model_path.exists():
+   106→            save_model(fit_model(X_tr, y_tr), str(model_path))
+   107→        from src.models.train import load_model
+   108→
+   109→        state["model"] = load_model(str(model_path))
+   110→        state["reference"] = X_tr.mode().iloc[0]
+   111→        state["base_rate"] = float(y_tr.mean())
+   112→        state["audit"] = AuditLogger(audit_path)
+   113→        state["keys"] = default_keys()
+   114→        state["bucket"] = TokenBucket(scorer_rate_per_min)
+   115→        state["rules"] = RulesEngine()
+   116→        state["breaker"] = CircuitBreaker()
+   117→        state["metrics"] = Metrics()
+   118→        state["cases"] = CaseService("out/cases.jsonl")
+   119→        num_cols = [c for c in X_tr.columns if str(X_tr[c].dtype) != "category"]
+   120→        state["psi_sample"] = {
+   121→            c: X_tr[c].dropna().sample(n=min(2000, len(X_tr)), random_state=7).tolist()
+   122→            for c in num_cols
+   123→        }
+   124→        state["idem"] = {}
+   125→        # Pre-compute labeled (y, p) sequences for the /v1/policy/cost-curves
+   126→        # endpoint (Drummond & Holte 2006). The training set carries ground-
+   127→        # truth is_returned labels; running the model over it once at startup
+   128→        # lets the endpoint respond in O(1) for the per-threshold sweep and
+   129→        # ~3-5 sec for the 500-resample bootstrap (per-row performance only).
+   130→        # Note: this is in-sample — Day 2 Track E + G will swap in a held-out
+   131→        # test slice + delayed-label feedback so the curve reflects deployment
+   132→        # conditions, not training fit.
+   133→        try:
+   134→            _cost_curve_p = state["model"].predict_proba(X_tr)[:, 1].tolist()
+   135→            _cost_curve_y = [int(v) for v in y_tr.tolist()]
+   136→            state["cost_curve"] = {
+   137→                "y_true": _cost_curve_y,
+   138→                "probs": _cost_curve_p,
+   139→                "n": len(_cost_curve_y),
+   140→                "source": "train_df_in_sample",
+   141→            }
+   142→        except Exception as e:  # pragma: no cover — startup-only, defensive
+   143→            print(f"cost-curve warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
+   144→            state["cost_curve"] = None
+   145→        yield
+   146→
+   147→    app = FastAPI(title="RTO Trust Layer", version="0.2.0", lifespan=lifespan)
+   148→    app.state.core = state
+   149→
+   150→    def to_frame(o: OrderIn) -> pd.DataFrame:
+   151→        row = {
+   152→            "log_order_value": _log1p(o.amount_inr),
+   153→            "discount_pct": 0.0,
+   154→            "Items": o.items,
+   155→            "OrderDay": 180,
+   156→            "OrderHour": o.order_hour,
+   157→            "PriorOrders": o.prior_orders,
+   158→            "PriorReturns": o.prior_returns,
+   159→            "is_cod": int(o.payment_method.upper() == "COD"),
+   160→            "category": o.category,
+   161→            "device": o.device,
+   162→            "city_tier": o.city_tier,
+   163→            "address_quality": o.address_quality,
+   164→        }
+   165→        return pd.DataFrame([row])
+   166→
+   167→    @app.post("/risk/score")
+   168→    def score(
+   169→        order: OrderIn,
+   170→        authorization: str | None = Header(default=None),
+   171→        idempotency_key: str | None = Header(default=None),
+   172→        x_mandate: str | None = Header(default=None),
+   173→    ) -> dict:
+   174→        token = bearer_token(authorization)
+   175→        ok, err = check_key(token, "scorer", state["keys"])
+   176→        if not ok:
+   177→            raise HTTPException(status_code=401, detail=err)
+   178→        client = token
+   179→        if not state["bucket"].allow(client):
+   180→            raise HTTPException(status_code=429, detail="rate limit exceeded")
+   181→
+   182→        cache_key = (idempotency_key or "", order.model_dump_json())
+   183→        if idempotency_key and cache_key in state["idem"]:
+   184→            return dict(state["idem"][cache_key], replayed=True)
+   185→
+   186→        try:
+   187→            t0 = time.monotonic()
+   188→            # Mandate verification (cheap; always run; enforcement happens later).
+   189→            mandate_verdict, _payload = verify_mandate(x_mandate, order.amount_inr)
+   190→            fired = state["rules"].evaluate(order.model_dump())
+   191→            rule_fired = fired.rule_id if fired else None
+   192→
+   193→            proba: float | None = None
+   194→            reasons: list[dict] = []
+   195→            degraded = False
+   196→            breach_note: str | None = None
+   197→            cost_breakdown: dict | None = None
+   198→            decision: str | None = None
+   199→            # ``decision_source`` records which layer actually chose the
+   200→            # decision, for the audit trail + dashboard explainability.
+   201→            # One of: rules_engine_block | mandate_breach | mandate_invalid
+   202→            # | degraded_review | cost_optimal_bmr | cost_optimal_bmr_review_rule
+   203→            decision_source: str
+   204→
+   205→            # ------------------------------------------------------------------
+   206→            # Decision precedence (per Day 1 Track C spec):
+   207→            #   1. Rules fast-path (BLOCK)         → short-circuit REJECT
+   208→            #   2. Mandate enforcement (BREACH /
+   209→            #      TAMPERED / EXPIRED w/ header)   → short-circuit REJECT
+   210→            #   3. Circuit breaker OPEN            → degraded rules-only REVIEW
+   211→            #   4. optimal_decision(p, ...)         → PRIMARY decision path
+   212→            #      (replaces legacy static 0.15 / 0.60 thresholds)
+   213→            # REVIEW rules don't short-circuit; they gate step 4 to never ACCEPT.
+   214→            # ------------------------------------------------------------------
+   215→            if fired is not None and fired.action == "BLOCK":
+   216→                # 1. Rules-engine BLOCK short-circuits — no model invocation.
+   217→                decision = "REJECT"
+   218→                decision_source = "rules_engine_block"
+   219→            elif mandate_verdict == MandateVerdict.BREACH:
+   220→                # 2a. Mandate amount-breach short-circuits.
+   221→                decision = "REJECT"
+   222→                breach_note = "mandate_amount_breach"
+   223→                decision_source = "mandate_breach"
+   224→            elif x_mandate is not None and mandate_verdict != MandateVerdict.VALID:
+   225→                # 2b. Tampered / expired mandate with a header present.
+   226→                decision = "REJECT"
+   227→                breach_note = f"mandate_{mandate_verdict}"
+   228→                decision_source = "mandate_invalid"
+   229→            else:
+   230→                # 3. Circuit breaker guards model invocation.
+   231→                use_model = state["breaker"].allow_attempt()
+   232→                if use_model:
+   233→                    try:
+   234→                        X, _ = build_feature_frame(to_frame(order), "order+addr")
+   235→                        reasons = reason_codes_batch(
+   236→                            state["model"],
+   237→                            X,
+   238→                            list(X.columns),
+   239→                            state["base_rate"],
+   240→                            state["reference"],
+   241→                        )
+   242→                        proba = float(state["model"].predict_proba(X)[0, 1])
+   243→                        state["breaker"].record_success()
+   244→                    except Exception:
+   245→                        state["breaker"].record_failure()
+   246→                        proba = None
+   247→                if proba is None:
+   248→                    # 3. Degraded path: model unavailable → rules-only REVIEW.
+   249→                    degraded = True
+   250→                    decision = "REVIEW"
+   251→                    decision_source = "degraded_review"
+   252→                else:
+   253→                    # 4. Bahnsen Bayes Minimum Risk decision layer (ICMLA 2013,
+   254→                    #    DOI 10.1109/ICMLA.2013.68). Per-order argmin of expected
+   255→                    #    cost over {ACCEPT, REVIEW (selective-OTP), REJECT}.
+   256→                    decision, costs = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)
+   257→                    cost_breakdown = costs
+   258→                    # REVIEW rule gate: never ACCEPT when a REVIEW rule fired
+   259→                    # (still uses BMR cost math, but the rule forces REVIEW).
+   260→                    if fired is not None and fired.action == "REVIEW" and decision == "ACCEPT":
+   261→                        decision = "REVIEW"
+   262→                        decision_source = "cost_optimal_bmr_review_rule"
+   263→                    else:
+   264→                        decision_source = "cost_optimal_bmr"
+   265→
+   266→            # Legacy ``policy_hint`` is the BMR-optimal action string (kept for
+   267→            # dashboard / consumer backward compat; the actual decision is the
+   268→            # body's ``decision`` field — which equals ``policy_hint`` whenever
+   269→            # the cost-optimizer was the decision source).
+   270→            policy_hint = None
+   271→            if proba is not None:
+   272→                policy_hint = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)[0]
+   273→
+   274→            features_used = (
+   275→                {c: float(X.iloc[0][c]) for c in X.columns if str(X[c].dtype) != "category"}
+   276→                if proba is not None
+   277→                else {}
+   278→            )
+   279→            case_id = None
+   280→            if decision == "REVIEW":
+   281→                case_id = state["cases"].open_case(
+   282→                    prediction_id="pending", order_id=order.order_id,
+   283→                    reason="review_gate" if fired is None else f"rule:{fired.rule_id}",
+   284→                )
+   285→            audit_id = state["audit"].log(
+   286→                {
+   287→                    "request": {
+   288→                        **order.model_dump(),
+   289→                        "customer_id": redact_customer(order.customer_id),
+   290→                    },
+   291→                    "probability": round(proba, 5) if proba is not None else None,
+   292→                    "decision": decision,
+   293→                    "decision_source": decision_source,
+   294→                    "cost_breakdown": cost_breakdown,
+   295→                    "reason_codes": reasons[:5],
+   296→                    "mandate_verdict": mandate_verdict,
+   297→                    "breach_note": breach_note,
+   298→                    "rule_fired": rule_fired,
+   299→                    "degraded": degraded,
+   300→                    "features_used": features_used,
+   301→                    "latency_ms": now_ms(t0),
+   302→                    "case_id": case_id,
+   303→                }
+   304→            )
+   305→            body = {
+   306→                "prediction_id": str(uuid.uuid4()),
+   307→                "risk_score": round(proba * 100, 1) if proba is not None else None,
+   308→                "probability": round(proba, 4) if proba is not None else None,
+   309→                "decision": decision,
+   310→                # ``gate_thresholds`` now reports the policy in force. Legacy
+   311→                # accept_below / reject_above kept for backward compat — but
+   312→                # the live decision path no longer consults them; it consults
+   313→                # ``optimal_decision(p, weights=...)``. The dashboard reads
+   314→                # ``policy`` to label the decision card.
+   315→                "gate_thresholds": {
+   316→                    "policy": "cost_optimal_bmr",
+   317→                    "weights": DEFAULT_COST_WEIGHTS,
+   318→                    "legacy_accept_t": ACCEPT_T,
+   319→                    "legacy_reject_t": REJECT_T,
+   320→                },
+   321→                "decision_source": decision_source,
+   322→                "cost_breakdown": cost_breakdown,
+   323→                "explanation": reasons[:5],
+   324→                "rule_fired": rule_fired,
+   325→                "degraded": degraded,
+   326→                "policy_hint": policy_hint,
+   327→                "model_version": "rules_only"
+   328→                if degraded
+   329→                else (current_champion() or {"version": state["audit"].model_version})["version"],
+   330→                "latency_ms": now_ms(t0),
+   331→                "case_id": case_id,
+   332→                "mandate": {"verdict": mandate_verdict, "note": breach_note},
+   333→                "audit_trail_url": f"/audit/{audit_id}",
+   334→                "timestamp": datetime.now(timezone.utc).isoformat(),
+   335→            }
+   336→            state["metrics"].inc(
+   337→                "risk_decisions_total", {"decision": decision, "degraded": str(degraded)}
+   338→            )
+   339→            state["metrics"].observe_latency(now_ms(t0) / 1000)
+   340→            if idempotency_key:
+   341→                state["idem"][cache_key] = body
+   342→            return body
+   343→        except HTTPException:
+   344→            raise
+   345→        except Exception as e:  # no internal detail leakage
+   346→            incident = uuid.uuid4()
+   347→            print(f"incident={incident} scoring_failed={type(e).__name__}: {e}", file=sys.stderr)
+   348→            raise HTTPException(status_code=500, detail=f"internal_error incident={incident}")
+   349→
+   350→    @app.get("/metrics")
+   351→    def prometheus_metrics() -> dict:
+   352→        from fastapi import Response
+   353→
+   354→        m: Metrics = state["metrics"]
+   355→        state_map = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
+   356→        m.gauge("rto_circuit_state", state_map[state["breaker"].state])
+   357→        return Response(content=m.render(), media_type="text/plain; version=0.0.4")
+   358→
+   359→    @app.get("/v1/cases")
+   360→    def list_cases(
+   361→        status: str | None = None, authorization: str | None = Header(default=None)
+   362→    ) -> dict:
+   363→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   364→        if not ok:
+   365→            raise HTTPException(status_code=401, detail=err)
+   366→        return {"cases": state["cases"].list_cases(status)}
+   367→
+   368→    @app.post("/v1/cases/{case_id}/resolve")
+   369→    def resolve_case(
+   370→        case_id: str,
+   371→        decision: str,
+   372→        notes: str = "",
+   373→        authorization: str | None = Header(default=None),
+   374→    ) -> dict:
+   375→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   376→        if not ok:
+   377→            raise HTTPException(status_code=403, detail="case resolution requires admin scope")
+   378→        try:
+   379→            out = state["cases"].resolve(case_id, decision.upper(), notes, actor="admin")
+   380→        except ValueError as e:
+   381→            raise HTTPException(status_code=422, detail=str(e))
+   382→        return out
+   383→
+   384→    @app.get("/v1/models/current")
+   385→    def models_current(authorization: str | None = Header(default=None)) -> dict:
+   386→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   387→        if not ok:
+   388→            raise HTTPException(status_code=401, detail=err)
+   389→        return {"champion": current_champion()}
+   390→
+   391→    @app.get("/v1/models/drift")
+   392→    def models_drift(authorization: str | None = Header(default=None)) -> dict:
+   393→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   394→        if not ok:
+   395→            raise HTTPException(status_code=401, detail=err)
+   396→        recent = [
+   397→            r.get("features_used", {})
+   398→            for r in _read_audit_tail(state["audit"], limit=300)
+   399→            if r.get("features_used")
+   400→        ]
+   401→        if len(recent) < 30:
+   402→            return {"status": "insufficient_data", "observed": len(recent), "psi": {}}
+   403→        report = {}
+   404→        for col, ref in state["psi_sample"].items():
+   405→            obs = [r[col] for r in recent if col in r]
+   406→            if len(obs) >= 10:
+   407→                report[col] = round(psi(ref, obs), 4)
+   408→        worst = max(report.values(), default=0.0)
+   409→        status = "OK" if worst < 0.1 else ("WARNING" if worst <= 0.25 else "CRITICAL")
+   410→        return {"status": status, "n_observed": len(recent), "psi": report}
+   411→
+   412→    @app.get("/v1/compliance/audit-export")
+   413→    def audit_export(authorization: str | None = Header(default=None)) -> dict:
+   414→        import csv
+   415→        import io
+   416→
+   417→        from fastapi import Response
+   418→
+   419→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   420→        if not ok:
+   421→            raise HTTPException(status_code=401, detail=err)
+   422→        records = _read_audit_tail(state["audit"], limit=100000)
+   423→        buf = io.StringIO()
+   424→        if records:
+   425→            w = csv.DictWriter(buf, fieldnames=list(records[0].keys()), extrasaction="ignore")
+   426→            w.writeheader()
+   427→            w.writerows(records)
+   428→        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+   429→        return Response(
+   430→            content=buf.getvalue(),
+   431→            media_type="text/csv",
+   432→            headers={"Content-Disposition": f'attachment; filename="audit-export-{stamp}.csv"'},
+   433→        )
+   434→
+   435→    @app.get("/v1/compliance/model-card")
+   436→    def model_card(authorization: str | None = Header(default=None)) -> dict:
+   437→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   438→        if not ok:
+   439→            raise HTTPException(status_code=401, detail=err)
+   440→        champ = current_champion()
+   441→        return {
+   442→            "model_name": "RTO Trust Layer scorer",
+   443→            "model_type": "HistGradientBoostingClassifier (sklearn)",
+   444→            "version": champ["version"] if champ else state["audit"].model_version,
+   445→            "metrics_at_registration": champ["metrics"] if champ else {},
+   446→            "training_data": (
+   447→                "CODScore synthetic-but-realistic COD orders "
+   448→                "(7235 rows); real-data upgrade path documented"
+   449→            ),
+   450→            "label_definition": "DeliveryStatus == Returned -> is_returned=1",
+   451→            "split_discipline": "customer-grouped holdout; group leakage asserted 0",
+   452→            "primary_metric": "PR-AUC (class imbalance ~23% positives)",
+   453→            "intended_use": "pre-dispatch COD return-risk gating with human-in-the-loop review",
+   454→            "limitations": [
+   455→                "synthetic training data; validate before production use",
+   456→                "no address-string features in this dataset revision",
+   457→                "state-level geo features showed no lift (see E3)",
+   458→            ],
+   459→            "ethical_notes": "defense-only tool; every decision explainable + hash-chained audited",
+   460→        }
+   461→
+   462→    @app.get("/health")
+   463→    def health() -> dict:
+   464→        return {
+   465→            "status": "ok",
+   466→            "model_loaded": state.get("model") is not None,
+   467→            "circuit_state": state["breaker"].state,
+   468→            "active_rules": len(state["rules"].list_active()),
+   469→            "version": app.version,
+   470→        }
+   471→
+   472→    @app.get("/v1/rules")
+   473→    def list_rules(authorization: str | None = Header(default=None)) -> dict:
+   474→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   475→        if not ok:
+   476→            raise HTTPException(status_code=401, detail=err)
+   477→        return {"rules": state["rules"].list_active()}
+   478→
+   479→    @app.post("/v1/rules")
+   480→    def add_rule(rule: RuleIn, authorization: str | None = Header(default=None)) -> dict:
+   481→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   482→        if not ok:
+   483→            raise HTTPException(status_code=403, detail="rule changes require admin scope")
+   484→        state["rules"].add(
+   485→            Rule(
+   486→                rule_id=rule.rule_id,
+   487→                name=rule.name,
+   488→                field=rule.field,
+   489→                op=rule.op,
+   490→                value=rule.value,
+   491→                action=rule.action,
+   492→                priority=rule.priority,
+   493→                created_by=rule.created_by,
+   494→            )
+   495→        )
+   496→        state["audit"].log(
+   497→            {"request": {"rule_id": rule.rule_id}, "decision": "RULE_ADDED"}
+   498→        )
+   499→        return {"added": rule.rule_id}
+   500→
+   501→    @app.delete("/v1/rules/{rule_id}")
+   502→    def delete_rule(rule_id: str, authorization: str | None = Header(default=None)) -> dict:
+   503→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   504→        if not ok:
+   505→            raise HTTPException(status_code=403, detail="rule changes require admin scope")
+   506→        removed = state["rules"].remove(rule_id)
+   507→        return {"removed": removed}
+   508→
+   509→    @app.get("/v1/policy/optimal")
+   510→    def policy_optimal(
+   511→        probability: float,
+   512→        c_fp: float = 50,
+   513→        c_fn: float = 600,
+   514→        authorization: str | None = Header(default=None),
+   515→    ) -> dict:
+   516→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   517→        if not ok:
+   518→            raise HTTPException(status_code=401, detail=err)
+   519→        if not (0 <= probability <= 1):
+   520→            raise HTTPException(status_code=422, detail="probability must be in [0,1]")
+   521→        decision, costs = optimal_decision(probability, c_fp=c_fp, c_fn=c_fn)
+   522→        return {"probability": probability, "optimal_action": decision, "expected_costs": costs}
+   523→
+   524→    # OpenAPI: this endpoint will appear in docs/openapi.json after next FastAPI
+   525→    # app reload (openapi.json is auto-generated from the FastAPI routes — Track
+   526→    # H / K will refresh it on Day 2/3 with the full path schema + examples).
+   527→    @app.get("/v1/policy/cost-curves")
+   528→    def policy_cost_curves(
+   529→        n_resamples: int = DEFAULT_COST_CURVE_RESAMPLES,
+   530→        confidence: float = DEFAULT_COST_CURVE_CONFIDENCE,
+   531→        authorization: str | None = Header(default=None),
+   532→    ) -> dict:
+   533→        """Drummond-Holte cost-curve explorer (Machine Learning 65:95-130, 2006,
+   534→        DOI 10.1007/s10994-006-8199-5).
+   535→
+   536→        Returns a threshold sweep (0.05 → 0.95) over the labeled dataset that
+   537→        the in-process model was trained on. For each threshold we report the
+   538→        confusion counts, total Bahnsen cost (Eq. 1), precision, recall, plus
+   539→        a 90% bootstrap CI on cost (≥500 resamples preserving row marginals —
+   540→        per Drummond-Holte ``bootstrap_performance_ci`` capability).
+   541→
+   542→        The dashboard cost-curve explorer consumes this endpoint to render
+   543→        real bars (replacing the previously-hardcoded ``COSTS`` array).
+   544→
+   545→        Auth: scorer scope. Returns 503 if the model isn't loaded or no
+   546→        labeled data is available — never crashes the dashboard.
+   547→        """
+   548→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   549→        if not ok:
+   550→            raise HTTPException(status_code=401, detail=err)
+   551→
+   552→        # 1. Guard: model must be loaded (circuit breaker may be OPEN).
+   553→        if state.get("model") is None:
+   554→            raise HTTPException(
+   555→                status_code=503,
+   556→                detail="cost curves unavailable — model not loaded",
+   557→            )
+   558→        # 2. Guard: pre-computed labeled data must exist (startup warmup may
+   559→        # have failed silently; surface a clear error to the dashboard).
+   560→        cc = state.get("cost_curve")
+   561→        if not cc or not cc.get("y_true") or not cc.get("probs"):
+   562→            raise HTTPException(
+   563→                status_code=503,
+   564→                detail="cost curves unavailable — no labeled data available",
+   565→            )
+   566→        if n_resamples < 1 or n_resamples > 5000:
+   567→            raise HTTPException(
+   568→                status_code=422,
+   569→                detail="n_resamples must be in [1, 5000]",
+   570→            )
+   571→        if not (0.5 < confidence < 0.999):
+   572→            raise HTTPException(
+   573→                status_code=422,
+   574→                detail="confidence must be in (0.5, 0.999)",
+   575→            )
+   576→
+   577→        y_true = cc["y_true"]
+   578→        probs = cc["probs"]
+   579→        weights = DEFAULT_COST_WEIGHTS
+   580→        c_fp = float(weights["c_fp"])
+   581→        c_fn = float(weights["c_fn"])
+   582→
+   583→        # 3. Threshold sweep → per-threshold confusion + cost + precision +
+   584→        #    recall (pure-Python, O(N*T); ~140k ops for 7235 rows × 19 thr).
+   585→        curves = cost_curve_sweep(
+   586→            y_true=y_true,
+   587→            probs=probs,
+   588→            c_fp=c_fp,
+   589→            c_fn=c_fn,
+   590→        )
+   591→
+   592→        # 4. Bootstrap CI per threshold (Drummond-Holte row-marginal-preserving
+   593→        #    resampling; ~3-5 sec for 500 resamples × 19 thr × 7235 samples).
+   594→        try:
+   595→            bootstrap_ci = bootstrap_cost_ci(
+   596→                y_true=y_true,
+   597→                probs=probs,
+   598→                c_fp=c_fp,
+   599→                c_fn=c_fn,
+   600→                n_resamples=n_resamples,
+   601→                confidence=confidence,
+   602→                seed=42,
+   603→            )
+   604→        except Exception as e:  # pragma: no cover — defensive
+   605→            # If bootstrap fails for any reason, return degenerate CIs and a
+   606→            # warning rather than 500-ing the dashboard.
+   607→            bootstrap_ci = {
+   608→                str(r["threshold"]): {"low": 0.0, "high": 0.0, "mean": 0.0}
+   609→                for r in curves
+   610→            }
+   611→            print(
+   612→                f"cost-curves bootstrap degraded: {type(e).__name__}: {e}",
+   613→                file=sys.stderr,
+   614→            )
+   615→
+   616→        # 5. Optimal threshold = the one minimizing total cost (this is the
+   617→        #    threshold analog of what ``optimal_decision()`` does per order).
+   618→        optimal_record = min(curves, key=lambda r: r["cost"])
+   619→        optimal_threshold = float(optimal_record["threshold"])
+   620→
+   621→        # 6. Cost crossover: if a challenger model is registered in the model
+   622→        #    registry, find the threshold where it beats the incumbent. For
+   623→        #    now there is one in-process model so this is a degenerate case —
+   624→        #    the incumbent *is* the only model. We still surface the field so
+   625→        #    the dashboard wiring is forward-compatible with Day 2 Track E.
+   626→        cost_crossover: dict | None = None
+   627→        try:
+   628→            challenger = None
+   629→            champ = current_champion()
+   630→            # When more than one model is registered, treat the latest
+   631→            # non-champion as the challenger. (For now: single model, None.)
+   632→            if champ is not None:
+   633→                from src.ml.registry import load_registry
+   634→                reg = load_registry()
+   635→                non_champ = [m for m in reg.get("models", []) if not m.get("is_champion")]
+   636→                challenger = non_champ[-1] if non_champ else None
+   637→            if challenger is not None and challenger.get("version") != (champ or {}).get("version"):
+   638→                # We don't have challenger probabilities pre-computed yet
+   639→                # (single-model registry). Surface a placeholder that the
+   640→                # dashboard renders as "single-model — no crossover yet".
+   641→                cost_crossover = {
+   642→                    "status": "single_model",
+   643→                    "incumbent_version": (champ or {}).get("version"),
+   644→                    "challenger_version": None,
+   645→                    "crossover_threshold": None,
+   646→                    "note": (
+   647→                        "challenger predictions not pre-computed; "
+   648→                        "wire Day 2 Track E model-registry to enable"
+   649→                    ),
+   650→                }
+   651→            else:
+   652→                cost_crossover = {
+   653→                    "status": "single_model",
+   654→                    "incumbent_version": (champ or {}).get("version"),
+   655→                    "challenger_version": None,
+   656→                    "crossover_threshold": None,
+   657→                    "note": "only one model registered; no crossover available",
+   658→                }
+   659→        except Exception:  # pragma: no cover — defensive
+   660→            cost_crossover = {"status": "error", "crossover_threshold": None}
+   661→
+   662→        return {
+   663→            "thresholds": [r["threshold"] for r in curves],
+   664→            "curves": curves,
+   665→            "bootstrap_ci": bootstrap_ci,
+   666→            "optimal_threshold": optimal_threshold,
+   667→            "cost_crossover": cost_crossover,
+   668→            "cost_model": {
+   669→                "c_fp": c_fp,
+   670→                "c_fn": c_fn,
+   671→                "c_otp": float(weights["c_otp"]),
+   672→                "c_block": float(weights["c_block"]),
+   673→                "otp_effectiveness": float(weights["otp_effectiveness"]),
+   674→                "source_paper": "Bahnsen ICMLA 2013, DOI 10.1109/ICMLA.2013.68",
+   675→                "curve_paper": "Drummond & Holte 2006, DOI 10.1007/s10994-006-8199-5",
+   676→            },
+   677→            "data_source": cc.get("source", "unknown"),
+   678→            "n_samples": int(cc.get("n", 0)),
+   679→            "n_pos": int(sum(y_true)),
+   680→            "n_neg": int(len(y_true) - sum(y_true)),
+   681→        }
+   682→
+   683→    @app.get("/v1/audit/verify-chain")
+   684→    def verify_chain(authorization: str | None = Header(default=None)) -> dict:
+   685→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   686→        if not ok:
+   687→            raise HTTPException(status_code=401, detail=err)
+   688→        chain_ok, n, bad_id = state["audit"].verify_chain()
+   689→        return {"intact": chain_ok, "records_checked": n, "first_bad_audit_id": bad_id}
+   690→
+   691→    @app.post("/v1/mandates")
+   692→    def create_mandate(
+   693→        customer_ref: str,
+   694→        max_amount_inr: float,
+   695→        ttl_seconds: int = 3600,
+   696→        authorization: str | None = Header(default=None),
+   697→    ) -> dict:
+   698→        """Merchant backend (admin scope) mints bounded agent mandates."""
+   699→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   700→        if not ok:
+   701→            raise HTTPException(status_code=401, detail=err)
+   702→        if not (1 <= max_amount_inr <= 1_000_000):
+   703→            raise HTTPException(status_code=422, detail="mandate bound out of range")
+   704→        if not (30 <= ttl_seconds <= 86_400):
+   705→            raise HTTPException(status_code=422, detail="ttl out of range")
+   706→        return {
+   707→            "mandate": issue_mandate(customer_ref, max_amount_inr, ttl_seconds),
+   708→            "max_amount_inr": max_amount_inr,
+   709→            "ttl_seconds": ttl_seconds,
+   710→            "note": "agents cannot mint or widen mandates",
+   711→        }
+   712→
+   713→    @app.post("/risk/{prediction_id}/override")
+   714→    def override(
+   715→        prediction_id: str,
+   716→        new_decision: str,
+   717→        authorization: str | None = Header(default=None),
+   718→    ) -> dict:
+   719→        """Human-in-the-loop overrides are admin-scope only. Agents can never self-approve."""
+   720→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   721→        if not ok:
+   722→            raise HTTPException(
+   723→                status_code=403, detail="decision override requires admin scope"
+   724→            )
+   725→        if new_decision not in {"ACCEPT", "REVIEW", "REJECT"}:
+   726→            raise HTTPException(status_code=422, detail="invalid decision")
+   727→        audit_id = state["audit"].log(
+   728→            {
+   729→                "request": {"prediction_id": prediction_id},
+   730→                "decision": new_decision,
+   731→                "breach_note": "manual_override_by_admin",
+   732→            }
+   733→        )
+   734→        return {"overridden": prediction_id, "new_decision": new_decision, "audit_id": audit_id}
+   735→
+   736→    @app.get("/audit/{audit_id}")
+   737→    def get_audit(
+   738→        audit_id: str, authorization: str | None = Header(default=None)
+   739→    ) -> dict:
+   740→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   741→        if not ok:
+   742→            raise HTTPException(status_code=401, detail=err)
+   743→        rec = state["audit"].read(audit_id)
+   744→        if rec is None:
+   745→            raise HTTPException(status_code=404, detail="audit record not found")
+   746→        return rec
+   747→
+   748→    dashboard_dir = Path(__file__).resolve().parents[2] / "dashboard"
+   749→    if dashboard_dir.exists():
+   750→        from fastapi.staticfiles import StaticFiles
+   751→
+   752→        app.mount(
+   753→            "/dashboard",
+   754→            StaticFiles(directory=str(dashboard_dir), html=True),
+   755→            name="dashboard",
+   756→        )
+   757→
+   758→    return app
+   759→
+   760→
+   761→def _log1p(x: float) -> float:
+   762→    import math
+   763→
+   764→    return math.log1p(x)
+   765→
+   766→
+   767→def _read_audit_tail(audit_logger, limit: int = 300) -> list[dict]:
+   768→    import json as _json
+   769→
+   770→    if not audit_logger.path.exists():
+   771→        return []
+   772→    lines = audit_logger.path.read_text().splitlines()
+   773→    return [_json.loads(line) for line in lines[-limit:] if line.strip()]
+   774→

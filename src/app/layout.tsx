@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
+import { AppShell } from "@/components/app-shell";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,24 +15,34 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Z.ai Code Scaffold - AI-Powered Development",
-  description: "Modern Next.js scaffold optimized for AI-powered development with Z.ai. Built with TypeScript, Tailwind CSS, and shadcn/ui.",
-  keywords: ["Z.ai", "Next.js", "TypeScript", "Tailwind CSS", "shadcn/ui", "AI development", "React"],
-  authors: [{ name: "Z.ai Team" }],
+  title: "RTO Trust Layer — Risk Console",
+  description:
+    "Pre-dispatch COD return-risk gating with Bahnsen Bayes Minimum Risk decisions, tamper-evident Merkle audit, OC-201B UPI Circle mandates, DDM/ADWIN drift detection, and Drummond-Holte cost curves.",
+  keywords: [
+    "RTO",
+    "Razorpay",
+    "AI Risk Manager",
+    "Bahnsen Bayes Minimum Risk",
+    "Drummond-Holte",
+    "Merkle audit",
+    "OC-201B",
+    "Next.js",
+  ],
+  authors: [{ name: "RTO Trust Layer" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
   openGraph: {
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
-    url: "https://chat.z.ai",
-    siteName: "Z.ai",
+    title: "RTO Trust Layer — Risk Console",
+    description:
+      "Stripe-like dashboard for pre-dispatch COD return-risk gating.",
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
-    title: "Z.ai Code Scaffold",
-    description: "AI-powered development with modern React stack",
+    title: "RTO Trust Layer — Risk Console",
+    description:
+      "Stripe-like dashboard for pre-dispatch COD return-risk gating.",
   },
 };
 
@@ -41,11 +52,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning className="dark">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
-        {children}
+        <AppShell>{children}</AppShell>
         <Toaster />
       </body>
     </html>

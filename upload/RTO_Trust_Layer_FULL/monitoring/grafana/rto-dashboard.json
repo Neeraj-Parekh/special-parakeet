@@ -38,6 +38,55 @@
       "targets": [
         {"expr": "rate(rto_score_latency_seconds_sum[5m]) / clamp_min(rate(rto_score_latency_seconds_count[5m]), 0.0001)", "legendFormat": "avg s"}
       ]
+    },
+    {
+      "type": "stat",
+      "title": "Drift detector state — DDM (Track G)",
+      "description": "DDM (Gama 2014 survey §3.2). 0=STABLE, 1=WARNING (95% / 2σ), 2=DRIFT (99% / 3σ). Fed by LabelFeedbackService.current_state().",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 16},
+      "targets": [{"expr": "rto_drift_ddm_state"}],
+      "fieldConfig": {"defaults": {"thresholds": {"steps": [
+        {"color": "green", "value": null},
+        {"color": "yellow", "value": 1},
+        {"color": "red", "value": 2}
+      ]}, "mappings": [
+        {"options": {"0": {"text": "STABLE", "color": "green"}, "1": {"text": "WARNING", "color": "yellow"}, "2": {"text": "DRIFT", "color": "red"}}, "type": "value"}
+      ]}}
+    },
+    {
+      "type": "stat",
+      "title": "Drift detector state — ADWIN (Track G)",
+      "description": "ADWIN (Bifet & Gavalda 2007, survey §3.3). Variable-length sliding window cut on Hoeffding-bound breach. 0=STABLE, 1=WARNING, 2=DRIFT.",
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 16},
+      "targets": [{"expr": "rto_drift_adwin_state"}],
+      "fieldConfig": {"defaults": {"thresholds": {"steps": [
+        {"color": "green", "value": null},
+        {"color": "yellow", "value": 1},
+        {"color": "red", "value": 2}
+      ]}, "mappings": [
+        {"options": {"0": {"text": "STABLE", "color": "green"}, "1": {"text": "WARNING", "color": "yellow"}, "2": {"text": "DRIFT", "color": "red"}}, "type": "value"}
+      ]}}
+    },
+    {
+      "type": "stat",
+      "title": "Drift samples processed",
+      "description": "Number of delayed is_returned labels ingested by the feedback service so far. Source: POST /v1/feedback/ingest → LabelFeedbackService.ingest_label → DDM.update.",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 16},
+      "targets": [{"expr": "rto_drift_samples_processed"}],
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"steps": [
+        {"color": "green", "value": null},
+        {"color": "blue", "value": 1}
+      ]}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "DDM error rate + ADWIN window length (Track G)",
+      "description": "DDM running error rate p (left axis) + ADWIN adaptive window length (right axis). A sustained p increase with shrinking ADWIN window = concept drift per Gama 2014 §3.2/§3.3.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 20},
+      "targets": [
+        {"expr": "rto_drift_ddm_p", "legendFormat": "DDM error rate p"},
+        {"expr": "rto_drift_adwin_window_len", "legendFormat": "ADWIN window length"}
+      ]
     }
   ]
 }

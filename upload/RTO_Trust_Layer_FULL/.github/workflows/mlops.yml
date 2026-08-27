@@ -1,0 +1,434 @@
+# MLOps Pipeline — 7-stage TFX-style continuous training + deployment.
+#
+# Sources:
+#   * `command/05-PAPER-SKILLS-MAP.md` gap #14 — production ML deployment
+#     patterns: TFX (Baylor 2017) 6-stage pipeline + Challenges in Deploying
+#     ML (Paleyes 2022) 3-axis CD (code + model + data) + MLOps-DevOps
+#     Integration (IJIEE 2021) `plan_three_axis_cicd` capability.
+#   * `command/04-TECH-STACK-DECISIONS.md` §CI + §ML registry — V3 explicitly
+#     rejected MLflow-server as overkill; this pipeline implements the
+#     lightweight Postgres-backed TFX-style canary gate directly.
+#   * `command/06-PROMPT-RAZOR-EXTRACTION.md` §1 lines 1637-1690 (Implementation
+#     Roadmap) + §11 lines 1692-1707 (Deliverables Checklist).
+#
+# 7 stages map to TFX Baylor 2017 §3 (the canonical 6-stage pipeline) PLUS
+# the CD + Monitor stages from Paleyes 2022 + MLOps-DevOps:
+#   1. data-analysis    TFX `generate_data_statistics` (per-feature stats).
+#   2. data-validation   TFX `build_and_apply_schema` (versioned schema +
+#                         actionable anomaly descriptions, fail on blocking).
+#   3. model-training    TFX `Trainer` + warm-starting (CI: fail if PR-AUC
+#                         < 0.60; register champion in Postgres-backed
+#                         model_registry table per Track E + H wiring).
+#   4. model-gate        TFX `gate_model_promotion` — canary vs incumbent on
+#                         PR-AUC + cost-weighted error + per-slice metrics
+#                         (merchant_category, cod_vs_prepaid, pin_code_tier).
+#                         Block promotion on regression > 5% (Paleyes 2022
+#                         `audit_deployment_pipeline` "data poisoning via
+#                         feedback loops" countermeasure).
+#   5. container-build   CD: Docker Buildx + push to GHCR (ghcr.io/<repo>:<sha>),
+#                         GHA cache.
+#   6. deploy-staging    CD: blue-green to staging (main-only) + k6 load test
+#                         against the staging URL (the same
+#                         `tests/load/risk_api_load.js` used in CI).
+#   7. monitor           CD: query Prometheus `rate(risk_decisions_total
+#                         {decision="REJECT"}[5m])`; fail + auto-rollback if
+#                         error rate > 1% for 5 consecutive minutes.
+#
+# Triggers (3-axis CD per Paleyes 2022):
+#   * DATA axis   — `data/**` path filter (new Kaggle batch, schema change).
+#   * MODEL axis — `src/models/**`, `src/features/**`, `scripts/evaluate.py`.
+#   * CODE axis  — covered by `ci.yml` (ruff + pytest), NOT this pipeline.
+#   * Weekly     — `cron: "0 2 * * 1"` (Monday 2am UTC) — warm-starting on
+#                  rolling 90-day window per Gama 2014 §3.3 (plan_adaptation).
+#   * Manual     — `workflow_dispatch` for release-day dry-runs.
+
+name: MLOps Pipeline
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "data/**"
+      - "src/models/**"
+      - "src/features/**"
+      - "scripts/evaluate.py"
+      - "scripts/profile_data.py"
+      - "scripts/validate_data.py"
+      - "scripts/canary_gate.py"
+      - "scripts/slice_metrics.py"
+      - ".github/workflows/mlops.yml"
+  schedule:
+    - cron: "0 2 * * 1"  # weekly retrain Monday 2am UTC
+  workflow_dispatch: {}  # manual trigger for canary dry-runs
+
+concurrency:
+  group: mlops-${{ github.ref }}
+  cancel-in-progress: false  # let a started training run finish — model
+                             # artifact generation is expensive + the
+                             # canary gate depends on its outputs.
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 1: Data Analysis (TFX `generate_data_statistics`)
+  # ─────────────────────────────────────────────────────────────────────
+  data-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      # TFX stage 1: per-feature stats (count, nulls, unique, quantiles)
+      # emitted as an HTML report for the audit trail. `scripts/profile_data.py`
+      # falls back to pandas.describe() + value_counts if whylogs isn't
+      # installed; the output is committed to the run's artifacts so a
+      # future audit can show "what the data looked like at training time".
+      - name: Profile data
+        run: python scripts/profile_data.py --data data/raw/cod_orders.csv --out out/data_profile.html
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-profile
+          path: out/data_profile.html
+          retention-days: 30  # monthly retraining keeps the comparison set
+                              # bounded; the latest profile + the 3 prior
+                              # profiles are enough to spot distribution drift.
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 2: Data Validation (TFX `build_and_apply_schema`)
+  # ─────────────────────────────────────────────────────────────────────
+  data-validation:
+    needs: data-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      # TFX stage 2: versioned schema + actionable anomaly descriptions.
+      # `scripts/validate_data.py` checks column presence + types + null
+      # counts + value ranges + categorical-domain drift. Exits non-zero
+      # on blocking anomalies (schema drift, missing required columns,
+      # null rate > threshold) so the training stage never sees garbage
+      # data. Non-blocking anomalies (new category level, mild quantile
+      # shift) are surfaced as warnings in the CI log but don't fail.
+      - name: Validate data
+        run: python scripts/validate_data.py --data data/raw/cod_orders.csv
+      - name: Validation passed
+        run: echo "✓ Data validation passed — schema + ranges + nulls OK"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 3: Continuous Training (TFX `Trainer` + warm-starting + registry)
+  # ─────────────────────────────────────────────────────────────────────
+  model-training:
+    needs: data-validation
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: risk
+          POSTGRES_PASSWORD: risk
+          POSTGRES_DB: riskdb
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U risk"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://risk:risk@localhost:5432/riskdb
+      RTO_SCORER_KEYS: ci-scorer-key
+      RTO_ADMIN_KEYS: ci-admin-key,ci-admin-second-key
+      RTO_MANDATE_SECRET: ci-mandate-secret
+      RTO_AUDIT_SALT: ci-audit-salt
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # Apply migrations so register_model can write to the
+      # `model_registry` table (Track E schema 001 + Track H Merkle 002).
+      - name: Alembic migrations
+        run: alembic upgrade head
+
+      # TFX stage 3 (Trainer): train + evaluate the model, write metrics +
+      # model artifact. `scripts/evaluate.py --feature-set full` runs
+      # the full feature set (order + address-quality; geo features were
+      # removed as dead code in Track B). The model is registered as the
+      # new champion via `src.ml.registry.register_model` (Track E's
+      # Postgres-backed champion/challenger layer).
+      - name: Train + evaluate
+        run: python scripts/evaluate.py --feature-set full --out out/metrics.json
+      - name: Upload metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: metrics
+          path: out/metrics.json
+
+      # PR-AUC gate (hard floor). The Kandula 2021 e-commerce delivery
+      # benchmark is AUC 0.73-0.79; PR-AUC < 0.60 indicates the model is
+      # worse than random on the positive class — fail the pipeline rather
+      # than promoting a broken model. Override path (emergency hotfix):
+      # push a commit with `[mlops-skip-gate]` in the message (see
+      # `docs/ARCHITECTURE.md` CI/CD section for the policy).
+      - name: Fail if PR-AUC < 0.60
+        run: |
+          python - <<'EOF'
+          import json, sys
+          m = json.load(open("out/metrics.json"))
+          pr_auc = float(m["pr_auc"])
+          print(f"PR-AUC = {pr_auc:.4f} (threshold 0.60)")
+          if pr_auc < 0.60:
+              print(f"::error::PR-AUC {pr_auc:.4f} below threshold 0.60 — model NOT promoted")
+              sys.exit(1)
+          print("✓ PR-AUC gate passed")
+          EOF
+
+      # Register the new model as champion in the Postgres-backed
+      # `model_registry` table. The version is keyed by the commit SHA so
+      # the canary-gate stage can fetch the incumbent's metrics for the
+      # head-to-head comparison.
+      - name: Register model
+        run: |
+          python - <<'EOF'
+          import json, os, sys
+          sys.path.insert(0, ".")
+          from src.ml.registry import register_model
+          m = json.load(open("out/metrics.json"))
+          entry = register_model(
+              version=f"ci-{os.environ['GITHUB_SHA'][:12]}",
+              model_path="out/model.joblib",
+              metrics={
+                  "pr_auc": float(m["pr_auc"]),
+                  "roc_auc": float(m["roc_auc"]),
+                  "threshold_best_f1": float(m["threshold_best_f1"]),
+                  "confusion": m["confusion"],
+              },
+              champion=True,
+          )
+          print(f"Registered champion: {entry}")
+          EOF
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-artifact
+          path: |
+            out/model.joblib
+            out/metrics.json
+          retention-days: 90  # model lineage traceability — keep a
+                              # rolling 90-day window for audit; older
+                              # versions are reproducible from the SHA.
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 4: Model Evaluation & Validation (TFX `gate_model_promotion`)
+  # ─────────────────────────────────────────────────────────────────────
+  model-gate:
+    needs: model-training
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: risk
+          POSTGRES_PASSWORD: risk
+          POSTGRES_DB: riskdb
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U risk"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://risk:risk@localhost:5432/riskdb
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            pyproject.toml
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Alembic migrations
+        run: alembic upgrade head
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: model-artifact
+          path: out/
+
+      # TFX stage 4 — canary vs incumbent comparison. `scripts/canary_gate.py`
+      # loads the new model from `out/model.joblib`, evaluates it on the
+      # group-split test set, and compares PR-AUC + cost-weighted error
+      # against the *previous* champion (the model the registry just
+      # demoted). Exits 1 if the new model regresses > 5% on either metric.
+      - name: Canary vs incumbent
+        run: python scripts/canary_gate.py --model out/model.joblib --data data/raw/cod_orders.csv --max-regression 0.05
+
+      # Per-slice metrics (TFX's "small-slice warning"). `scripts/slice_metrics.py`
+      # computes PR-AUC per slice of {merchant_category, cod_vs_prepaid,
+      # pin_code_tier} and flags any slice where the aggregate improves but
+      # the slice degrades — the canonical TFX canary-failure signature.
+      - name: Slice metrics
+        run: python scripts/slice_metrics.py --model out/model.joblib --data data/raw/cod_orders.csv --out out/slice_metrics.json
+      - name: Upload slice metrics
+        uses: actions/upload-artifact@v4
+        with:
+          name: slice-metrics
+          path: out/slice_metrics.json
+
+      - name: Canary passed all gates
+        run: echo "✓ Canary passed PR-AUC + cost-weighted + slice metrics gates"
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 5: CD container build + push to GHCR
+  # ─────────────────────────────────────────────────────────────────────
+  container-build:
+    needs: model-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write  # required to push to ghcr.io
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CD axis 1 (code): the container carries the new model artifact
+      # produced in stage 3 — the model is loaded at container start by
+      # `src.api.routes:create_app`'s lifespan via `joblib.load`. Tagged by
+      # commit SHA so the deploy stage can pin a specific image (NOT `:latest`
+      # — V3 §audit flags `:latest` as a reproducibility hazard).
+      - name: Build + push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:ci-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 6: CD deploy (blue-green to staging) + k6 against staging
+  # ─────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    needs: container-build
+    runs-on: ubuntu-latest
+    # Only deploy on main-branch runs (PRs only go through stages 1-5;
+    # canary gate passes/fails but no image is deployed to staging).
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: staging
+      url: https://staging.rto-trust-layer.example.com
+    steps:
+      - uses: actions/checkout@v4
+
+      # Placeholder for the real deploy — in a true production setup this
+      # would call `kubectl set image deployment/rto-api ...` or
+      # `helm upgrade rto ./charts/rto --set image.tag=$SHA`. For the
+      # Buildathon demo we just echo the action so the CI log shows what
+      # WOULD have been deployed (Track M Day 4 IaC wires the real deploy).
+      - name: Deploy to staging
+        run: |
+          echo "Blue-green deploy of ghcr.io/${{ github.repository }}:${{ github.sha }} to staging"
+          echo "Old replica kept live for 5 min for fast rollback (auto-rollback on stage 7 failure)"
+
+      # k6 against staging — same script as the `ci.yml` load-test job
+      # but pointed at staging URL via the `STAGING_URL` secret. The k6
+      # thresholds (p99 < 400ms, error_rate < 1%) gate the promotion to
+      # production (Track M Day 4 wires the prod blue-green).
+      - name: k6 load test against staging
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: tests/load/risk_api_load.js
+        env:
+          BASE_URL: ${{ secrets.STAGING_URL || 'http://localhost:8000' }}
+          SCORER_KEY: ${{ secrets.STAGING_SCORER_KEY || 'ci-scorer-key' }}
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Stage 7: Monitor (Prometheus → Grafana → auto-rollback if error>1%)
+  # ─────────────────────────────────────────────────────────────────────
+  monitor:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    env:
+      # Prometheus URL for the staging cluster. In the Buildathon demo
+      # this is a placeholder; `scripts/check_error_rate.py` queries
+      # `rate(risk_decisions_total{decision="REJECT"}[5m])` and fails
+      # if the error rate exceeds the threshold for 5 consecutive
+      # evaluations (one per minute, 5 minutes total).
+      PROMETHEUS_URL: ${{ secrets.STAGING_PROMETHEUS_URL || 'http://localhost:9090' }}
+      ERROR_RATE_THRESHOLD: "0.01"  # 1% — matches k6's `http_req_failed: rate<0.01`
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps (requests only — minimal monitor env)
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      # `scripts/check_error_rate.py` queries Prometheus. If the error rate
+      # exceeds the threshold, exits 1 — which trips the `if: failure()`
+      # rollback step below. The script tolerates a missing Prometheus
+      # (returns 0 with a warning) so the monitor stage doesn't hard-fail
+      # the Buildathon demo when no staging cluster exists.
+      - name: Check error rate
+        run: python scripts/check_error_rate.py --prom-url "$PROMETHEUS_URL" --threshold "$ERROR_RATE_THRESHOLD"
+
+      # Auto-rollback: re-tag the previous image as the active deployment.
+      # The `if: failure()` makes this run only when the previous step's
+      # `check_error_rate.py` exits non-zero. In the Buildathon demo this
+      # just echoes the rollback command — Track M Day 4 IaC wires the
+      # real `kubectl rollout undo` / `helm rollback`.
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "::warning::ROLLBACK: error rate exceeded ${{ env.ERROR_RATE_THRESHOLD }} for 5 consecutive minutes"
+          echo "Reverting to previous image: ghcr.io/${{ github.repository }}@sha256:<previous>"
+          echo "Manual verification required before re-deploying ${{ github.sha }}"

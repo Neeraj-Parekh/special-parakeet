@@ -1,5 +1,31 @@
 global:
   scrape_interval: 15s
+  # Evaluation interval for alert rules — Prometheus evaluates each rule
+  # in monitoring/alert_rules.yml every 15s (matches the scrape_interval
+  # so a metric is at most 1 cycle stale when an alert rule evaluates).
+  evaluation_interval: 15s
+
+# Day 4 Track M — alert rule files. Loaded at boot. Each file in the list
+# is a YAML group of rules; the alerts fire + route to alertmanager
+# (configured below).
+rule_files:
+  - "alert_rules.yml"
+
+# Day 4 Track M — alertmanager target. When a rule in alert_rules.yml
+# fires, Prometheus pushes the alert to alertmanager:9093 here. The
+# alertmanager service (defined in docker-compose.yml under the ["full"]
+# profile) groups + dedups + routes to the configured Slack/PagerDuty
+# webhook per monitoring/alertmanager.yml.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+      # Per the alertmanager client convention: timeout 10s, api v2.
+      # These defaults are fine for the demo (the alertmanager image's
+      # default config has these set); a future prod hardening pass
+      # may set them explicitly.
+      timeout: 10s
+      api_version: v2
 
 scrape_configs:
   - job_name: rto-api

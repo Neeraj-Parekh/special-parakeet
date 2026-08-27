@@ -1,3 +1,16 @@
+> AUTHORITATIVE — this is the current engineering architecture. V2
+> (`docs/ARCHITECTURE_V2.md`) is historical (superseded by this V3's
+> 19-finding audit). The consolidated user-facing version
+> (`docs/ARCHITECTURE.md`) is the one judges and integrators read;
+> this V3 is the engineering audit trail with the 12 code deltas
+> (CD-1..CD-12), the claims ledger (§21), the revisit-trigger register
+> (Part IV), and the unexpurgated reasoning for every "we're NOT
+> doing X" decision. Day 3 Track K consolidated V1+V2+V3 into
+> `ARCHITECTURE.md` for readability; this V3 stays as the engineering
+> source of truth.
+
+---
+
 # Architecture v3 — Trust & Risk Intelligence Platform
 
 > **Status:** DRAFT-FOR-REVIEW (living document, edit in place)

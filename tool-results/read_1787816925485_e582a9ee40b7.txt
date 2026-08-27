@@ -1,0 +1,262 @@
+     1→# RTO Trust Layer — Project Worklog
+     2→
+     3→Shared work log for all agents working on the RTO Trust Layer project.
+     4→Each agent appends a new section starting with `---` containing:
+     5→Task ID, Agent, Task, Work Log (concrete steps), Stage Summary (key results/decisions/artifacts).
+     6→
+     7→**Project root (extracted):** `/home/z/my-project/upload/RTO_Trust_Layer_FULL`
+     8→**User's benchmark:** Microsoft Fabric real-time fraud-detection reference architecture
+     9→https://learn.microsoft.com/en-us/fabric/real-time-intelligence/architectures/fraud-detection
+    10→**User's goal:** Make this project look professional + full-stack, comparable to the
+    11→Microsoft reference, by incorporating insights from 40 distilled papers (the
+    12→`paper studied/` knowledge base the user built — NOTE: NOT present in the current
+    13→zip upload; only the 10 tracked MD files arrived. Must ask user to upload
+    14→`paper studied/all_skills.yaml` + `paper studied/index.md` separately).
+    15→
+    16→**Current phase:** READ-ONLY scoping. No code changes yet. Output = sharp questions.
+    17→
+    18→---
+    19→
+    20→---
+    21→Task ID: 1-c
+    22→Agent: general-purpose (infra/scripts/dashboard reader)
+    23→Task: Read all scripts + dashboard + docker + nginx + monitoring + configs, produce high-signal synthesis
+    24→
+    25→Work Log:
+    26→- Read /home/z/my-project/worklog.md (existing context: prior agents framed benchmark vs Microsoft Fabric fraud-detection reference)
+    27→- Listed project root; found uv.lock (3 lines, stub) and infra/README.md (present, intentionally no IaC)
+    28→- Read all 5 scripts: scripts/security_probes.py, scripts/ingest_kaggle.py, scripts/evaluate.py, scripts/demo_agent.py, scripts/cost_table.py
+    29→- Read dashboard/index.html (138 lines, single-file vanilla JS, no CDN framework, no chart library)
+    30→- Read verify.sh (8 lines), Dockerfile (17 lines), docker-compose.yml (57 lines), nginx/nginx.conf (30 lines)
+    31→- Read monitoring/prometheus.yml (8 lines, 1 scrape job) and monitoring/grafana/rto-dashboard.json (4 panels)
+    32→- Read pyproject.toml (6 lines, ruff-only), requirements.txt (9 lines, 9 deps), uv.lock (stub, 3 lines)
+    33→- Inspected docs/openapi.json: 16 paths, 4 schemas (HTTPValidationError, ValidationError, OrderIn, RuleIn) — operationIds follow FastAPI auto-gen pattern (e.g. score_risk_score_post), confirms auto-generated from code, not hand-written
+    34→- Inspected autoresearch-results.tsv: 6 data rows + header, 17 columns — looks like an autonomous research-loop trace (iteration/decision/metric/verify/guard/hypothesis), NOT a model×dataset×metric sweep
+    35→- Confirmed dashboard is actually wired: src/api/routes.py:498-505 mounts /dashboard via FastAPI StaticFiles
+    36→- Appended this record to worklog.md
+    37→
+    38→Stage Summary:
+    39→- Scripts: 4/5 are genuinely useful (evaluate.py trains+saves+registers model; cost_table.py produces cost_table.md; security_probes.py is a real authz/PII/idempotency probe harness; demo_agent.py is a working narrative demo with abuse drills). ingest_kaggle.py is the weakest — manual Kaggle CSV download, writes data/raw/ingested_real.csv, but warns that "load_orders" must be extended to read it (so the wiring is unfinished).
+    40→- Dashboard: vanilla JS, no framework, no chart lib — bars and gauge are hand-rolled CSS. It IS genuinely wired to /risk/score and /audit/{id} (not mocked). But "scored orders this session" is in-memory only (no persistence, lost on refresh), and the cost-threshold explorer uses a HARDCODED array `COSTS=[[0.15,1258],...]` — not fetched from /v1/policy/optimal. Slick-looking but half-toy.
+    41→- verify.sh: ruff + pytest + evaluate.py. Hardcoded interpreter path `/mnt/20265E15265DEC72/...linux_venv/bin/python` (author's machine only — will not run anywhere else). No CI config present in repo.
+    42→- docker-compose: api (build) + nginx/redis/postgres/prometheus/grafana all under `profile: full`. Postgres has no volumes, no migrations, no healthcheck. Redis is declared but UNUSED (no service depends on it, no env wiring). Grafana volume path is wrong (`/etc/grafana/provisioning/dashboards-src` is not a standard Grafana path; should be `/etc/grafana/provisioning/dashboards`).
+    43→- Dockerfile: single-stage python:3.12-slim, copies src/scripts/dashboard/tests but NOT data/raw except cod_orders.csv. Bakes default ENV secrets (change-me-scorer / rotate-in-prod) — defaults are placeholders but visible in image layers.
+    44→- nginx.conf: rate-limit 25r/s burst 50, /metrics gated to private CIDRs, /dashboard proxied, no TLS, no cache headers, no security headers (CSP/HSTS/XFO).
+    45→- Monitoring: prometheus.yml scrapes only api:8000/metrics (no postgres/redis/nginx exporters). Grafana dashboard has 4 panels (Decisions/min by outcome, Circuit breaker state, Degraded share, Scoring latency avg). No alerting rules. Looks minimal but real (metric names risk_decisions_total, rto_circuit_state, rto_score_latency_seconds — these are referenced from src/api/metrics.py per the openapi /metrics endpoint).
+    46→- pyproject.toml vs requirements.txt: NOT in sync. pyproject.toml has ONLY [tool.ruff] config, no [project] table, no dependencies. requirements.txt is the source of truth. uv.lock is a 3-line stub (version=1, revision=3, requires-python>=3.11) — NOT a real lockfile, uv was never run. No dev/runtime split. Pin discipline is loose (>=).
+    47→- openapi.json: 16 endpoints, auto-generated from FastAPI, recent and detailed (matches v0.4 platform-complete state per autoresearch TSV).
+    48→- autoresearch-results.tsv: 6 iterations, looks like an autonomous orchestrator's research loop trace (decision kept/discarded, metric_value = pr_auc 0.524→0.5495, hypothesis, change_summary, branch, parent_id). Iteration 5 mentions "5/5 probes mitigated", iteration 6 = v0.4 platform-complete with "41 tests green". This is the project's own build history, not external research.
+    49→- Gaps vs production: no CI/CD workflow file in repo (verify.sh references a venv path), no secrets manager, no DB migrations runner (no alembic/flyway), no message bus (kafka/redis-streams) — Redis is declared but unused, Postgres has no schema, no object store, no tracing (no OTel), no log aggregation, no alerting rules in Prometheus/Grafana, no runbook, infra/README.md explicitly defers IaC ("intentionally contains no half-deployable Terraform").
+    50→Task ID: 1-a
+    51→Agent: general-purpose (docs reader)
+    52→Task: Read all 10 documentation MD files + openapi.json skim, produce high-signal synthesis
+    53→
+    54→Work Log:
+    55→- Read /home/z/my-project/worklog.md (header + protocol)
+    56→- Read README.md (root) — pitch, results table E1-E4, run instructions
+    57→- Read docs/ARCHITECTURE.md (v1) — small-box mermaid, model slice + audit jsonl
+    58→- Read docs/ARCHITECTURE_V2.md — enterprise 9-service spec, OAuth2/Kafka/ClickHouse/Feast/MLflow, cost model, SLOs
+    59→- Read docs/ARCHITECTURE_V3.md (full 558 lines, 3 chunks) — DRAFT-FOR-REVIEW, supersedes V2, 19-finding audit (A1-A19), modular monolith doctrine, CD-1..CD-12 code deltas, phased P0-P6 roadmap, claims ledger §21
+    60→- Read docs/API_SPEC.md — bare: 16 paths + auth scope table, no request/response schemas, no examples
+    61→- Skimmed docs/openapi.json — confirms 16 paths match API_SPEC; FastAPI auto-gen; no examples, descriptions only on /v1/mandates + /risk/{id}/override
+    62→- Read docs/cost_table.md — 8-row threshold sweep (0.15-0.6), FN=12×FP, optimal=0.15
+    63→- Read docs/feature_importance.md — 10 features, permutation AP drop, is_cod 0.1796 / PriorReturns 0.1150 lead
+    64→- Read docs/PITCH_SCRIPT.md — 5:00 Razorpay buildathon, 4-beat demo (verify.sh → demo_agent.py → tamper → cost_table)
+    65→- Read docs/research/INDEX.md — 18 citations across ML methodology/platform/agentic-trust; PDFs only committed for Tramer/NIST/Fraud-RLA (3 of 18)
+    66→- Read infra/README.md — short, defers to ARCHITECTURE_V2 §9.2, deliberately no Terraform
+    67→- Appended this record to worklog.md
+    68→
+    69→Stage Summary:
+    70→- Confirmed framing: COD RTO (Return-to-Origin) risk scoring for Indian e-commerce; target customer = Razorpay AI Buildathon Track 02 (AI Risk Manager).
+    71→- Architecture truth = V3 (DRAFT-FOR-REVIEW); V1 is the model-only snapshot; V2 is explicitly superseded but infra/README.md still points at V2 §9.2 as production spec — stale reference, contradicts V3.
+    72→- V3 is unusually self-aware: §1 audit A1-A19 rejects ~80% of V2's enterprise boxes (Kafka, ClickHouse, Feast, MLflow-server, Hyperledger Aries, E2B sandbox, Listmonk, Go/Rust rules) as cargo-cult / resume-driven / license-inconsistent; flags V2 patent numbers as SUSPECT-FABRICATED.
+    73→- Real code footprint in src/: routes.py, mandates.py, breaker.py, engine.py, logger.py, cost_optimizer.py, cases/service.py, ml/registry.py, audit/logger.py, api/{security,metrics,mandates,breaker,routes}.py + dashboard/index.html — V3 §20 says only 12 code deltas (CD-1..CD-12) needed to close plan↔code gap.
+    74→- API surface = 16 endpoints, all exist (openapi.json matches API_SPEC.md). But API_SPEC.md is path-list-only; no request/response bodies, no examples — looks mid vs MS Fabric reference.
+    75→- Cost model = simple 8-row table, FN=12×FP, optimal threshold 0.15. V3 §11.6 promises to extend into full intervention-policy engine {ship, otp_verify, partial_cod, address_check, hold} — aspirational, not in code.
+    76→- Feature importance = 10 features, permutation AP drop, is_cod dominates (0.18) then PriorReturns (0.115). OrderDay/OrderHour negative (noise). Tied to real E2 model run via scripts/evaluate.py — NOT aspirational.
+    77→- Pitch = single-author demo ("I'm Neeraj"); customer=Razorpay judges; asks: real labeled data + pincode dir + Agent Studio integration. No monetization/pricing ask — pure buildathon entry.
+    78→- Research bibliography strong (18 papers, incl. 2026 DOI-anchored anchor paper on AI Agents in Payments); but only 3 of 18 PDFs committed (Tramer/NIST/Fraud-RLA); the `paper studied/` KB mentioned in worklog header is DIFFERENT from docs/research/ — docs/research/ is the project's own citations, NOT the user's 40-paper distillation.
+    79→- Top gaps/smells: (1) API_SPEC.md has no schemas/examples — judges will judge by this file first; (2) infra/README.md points at superseded V2; (3) compose `--profile full` starts Postgres+Redis that nothing wires to (V3 finding A2); (4) model trains-at-startup inside API (V3 A3, CD-1); (5) audit is fire-and-forget BackgroundTasks violating RPO=0 (V3 A5, CD-3/CD-4); (6) Merkle proof endpoint /v1/audit/{id}/proof is specified in V3 §10.3 but NOT in openapi.json (16 paths) — V3 spec > code; (7) /v1/simulate, /v1/usage, /v1/cases vs /v1/cases — V3 mentions many endpoints not yet in API; (8) no real IaC, no Alembic, no SDK clients published; (9) "16 paths" but no examples — comparing to MS Fabric fraud reference, missing: real-time ingestion pipeline diagram, eventhouse/lakehouse layer, KQL queries, PowerBI dashboard artifact, activation loop.
+    80→- Did not modify any project file. Read-only confirmed.
+    81→
+    82→---
+    83→Task ID: 1-b
+    84→Agent: general-purpose (Python source reader)
+    85→Task: Read all src/*.py + tests/*.py + pyproject/requirements, produce high-signal synthesis
+    86→
+    87→Work Log:
+    88→- Read existing worklog.md (header only, prior agents had not yet appended).
+    89→- Listed project tree; confirmed 22 .py files in src/ + 5 test files + 1 k6 .js load profile + pyproject.toml + requirements.txt in scope.
+    90→- Read src/__init__.py (empty), src/api/{routes,security,metrics,mandates,breaker}.py, src/audit/logger.py, src/ml/{registry,__init__}.py, src/rules/engine.py, src/cases/{service,__init__}.py, src/features/{enrich,cleaning,__init__}.py, src/models/{train,splitting,explain,__init__}.py, src/business/cost_optimizer.py.
+    91→- Read tests/test_{pipeline,security,mandates,platform,ship}.py and tests/load/risk_api_load.js.
+    92→- Read pyproject.toml (ruff config only, 7 lines) and requirements.txt (9 deps).
+    93→- Grepped src/ for TODO/FIXME/NotImplementedError/pass/placeholder; only hit: src/cases/service.py:64 "placeholder, real return below" (dead code in CaseService._latest).
+    94→- Grepped project for `create_app|^app =|uvicorn` to find ASGI entrypoint; NONE in src/ — `create_app()` is a factory used only from tests/scripts. No main.py / no module-level `app =`.
+    95→- Grepped src/ for `register_model|current_champion`; register_model is only ever invoked from tests (test_platform.py:69-70), never from the lifespan in routes.py — so champion metadata is empty at runtime.
+    96→- Appended this record to worklog.md.
+    97→
+    98→Stage Summary:
+    99→- App: FastAPI factory `create_app()` in src/api/routes.py (524 LOC, single file doing routes + decision pipeline + audit + metrics + dashboard mount). No ASGI entrypoint file in src/. Lifespan loads CSV `data/raw/cod_orders.csv` -> trains HistGradientBoostingClassifier in-process -> dumps to `out/model_api.joblib` if missing. No middleware wired (no CORS, no TrustedHost, no GZip, no OTel middleware).
+   100→- Real working subsystems: hash-chained JSONL audit (`AuditLogger.verify_chain`, with byte-offset index), HMAC-signed mandates with VALID/TAMPERED/EXPIRED/BREACH verdicts, in-memory thread-safe circuit breaker (CLOSED/OPEN/HALF_OPEN) protecting model.predict_proba only, rules engine with 4 ops (gt/lt/eq/in) + 2 default rules + short-circuit on first match, token-bucket rate limiter, idempotency cache (unbounded), PSI drift calc, permutation-importance + leave-one-out local attribution (NOT SHAP despite shap in requirements.txt — dead dep).
+   101→- Stubs / half-implementations: CaseService._latest returns None always (line 64 dead placeholder); no DB anywhere (everything is JSONL/CSV files); register_model never called from runtime so `current_champion()` returns None and model-card endpoint hardcodes fallback `"dev"`; cost_optimizer is only attached as a `policy_hint` field, NOT used in the actual ACCEPT/REVIEW/REJECT decision (routes.py:172-180 uses static thresholds 0.15/0.60); no A/B, no shadow deploy, no challenger promotion path; features are pure toy (no device fingerprint / velocity / graph features, only 8 numeric + 3 categorical).
+   102→- Security: 2 static demo keys hardcoded as fallback ("score-demo-key", "admin-demo-key") with sha256-equality check; no JWT, no per-merchant RBAC, no nonce/replay protection beyond idempotency-key, no HMAC on requests (mandates are the only HMAC). Secrets from env: RTO_SCORER_KEYS, RTO_ADMIN_KEYS, RTO_MANDATE_SECRET, RTO_AUDIT_SALT.
+   103→- Tests: 5 real pytest files (~526 LOC), actually assert behavior (hash-chain tamper detection, mandate breach escalation, circuit breaker open, degraded mode, RBAC scopes). k6 load profile (steady+ramp+spike, p99<400ms threshold). No CI config visible in scope.
+   104→- Critical production gaps vs Microsoft Fabric fraud ref: no DB/migrations, no message bus / streaming, no feature store, no model server, no OTel tracing, no graceful shutdown handler, no retry/timeout on the model call (the breaker swallows exceptions but there's no retry, no timeout), idempotency cache is in-memory and unbounded (memory leak + lost on restart), config has zero validation (no pydantic-settings, no env schema), audit log is local file only (single-replica, no replication).
+   105→
+   106→---
+   107→Task ID: 1-d
+   108→Agent: general-purpose (Microsoft Fabric fraud-detection reference fetcher)
+   109→Task: Fetch + analyze Microsoft Fabric real-time fraud-detection reference architecture
+   110→
+   111→Work Log:
+   112→- Fetched https://learn.microsoft.com/en-us/fabric/real-time-intelligence/architectures/fraud-detection via `z-ai function -n page_reader` and `curl` (both 200 OK; 31.5 KB plain text extracted)
+   113→- Downloaded the architecture image to /home/z/my-project/reference/fabric/fraud-detection.png (PNG 1000x296, 38 KB — wide left-to-right diagram, page text fully describes components so vision parse not required)
+   114→- Parent index page (https://learn.microsoft.com/en-us/fabric/real-time-intelligence/architectures/) returned 404 — but main page sidebar TOC shows fraud-detection is one of ~8 vertical reference architectures under "Financial services" alongside Automotive/Energy/Industrials/Retail/Healthcare/Telecom
+   115→- Extracted: 10 named Fabric components, 4 operational phases, end-to-end data flow trace, ML/rules/storage/observability sections
+   116→- Cross-referenced user's project tree (src/api/, src/rules/engine.py, src/features/, src/cases/service.py, dashboard/index.html, monitoring/grafana, docs/ARCHITECTURE_V3.md) to produce gap list
+   117→- Appended this record to worklog.md
+   118→
+   119→Stage Summary:
+   120→- Microsoft's reference is a 4-phase pipeline: **Ingest & process → Analyze, transform & enrich → Train & score → Visualize & activate**
+   121→- Named components: Eventstreams (stream ingest) | Data Factory (batch ERP→lake sync) | Eventhouse (hot KQL streaming + raw tx table) | OneLake (cold governed lakehouse) | Data Science (ML workspace, online scoring) | Activator (declarative rules + auto-actions) | Real-Time Dashboard (live, DirectQuery, drill-down) | Power BI (BI/reporting, separate from ops dashboard) | Copilot (NL Q&A) | DirectQuery (live query mode)
+   122→- Key sleekness drivers that make it look production-grade: (1) Real-Time Dashboard vs Power BI separation, (2) DirectQuery live-push mode, (3) declarative Activator rule routing w/ auto-blocking + auto-notifications, (4) governed OneLake lakehouse w/ raw→clean zones, (5) explicit hot (Eventhouse) vs cold (OneLake) split, (6) streaming transformations as first-class Eventhouse capability, (7) ERP batch path separated from transaction stream path by velocity, (8) Copilot NL layer, (9) RBAC/MFA/PAM/immutable-audit as named architectural sections, (10) capacity planning / autoscaling / lifecycle tiers as named sections, (11) phased rollout playbook (Foundation→Pilot→Ops Validation→Advanced→Enterprise-Scale)
+   123→- Gap list vs user's RTO Trust Layer (concrete):
+   124→  - User has rules engine but no Activator-equivalent declarative rule UI / auto-actioning layer (current: Python module + DEFAULT_RULES list, no rule DSL, no auto-block/auto-notify wiring beyond cases/service.py)
+   125→  - User has ONE static dashboard/index.html "merchant console v2" — Microsoft splits into Real-Time Dashboard (live, DirectQuery, drill-down) + Power BI (reporting) + Copilot (NL). User needs: (a) live WebSocket/SSE push dashboard, (b) separate reporting dashboard, (c) LLM Q&A layer
+   126→  - User has REST API ingest only (routes.py) — no Eventstream-equivalent streaming ingestion layer (Kafka/Redpanda/Redis Streams). ARCHITECTURE_V3 §9.3 already prescribes Redis Streams now → NATS → Kafka by trigger — implement that to match
+   127→  - User has features/enrich.py called inline — Microsoft runs streaming transformations as a separate continuous stage. User needs a stream-processor step (Faust/Bytewax/Quix-like) for normalize/filter/aggregate
+   128→  - User has cases/service.py (good parity) but unclear if there's a case queue UI; Microsoft's Activator orchestrates investigation workflows w/ SLA timers
+   129→  - User has cost_table.md + cost_optimizer.py (actually AHEAD of Microsoft in explicit cost-model math) — surface this in architecture doc
+   130→  - User has src/audit/logger.py + mandates.py + security.py (parity with Microsoft's RBAC/audit/MFA framing) — but the architecture doc needs to call these out as named architectural sections, not just modules
+   131→  - User has src/models/explain.py — parity with Microsoft's "explainable AI for investigation support" — surface as first-class
+   132→  - User has src/features/cleaning.py + enrich.py — needs explicit raw/clean/curated zone partitioning to match OneLake's governed lakehouse pattern (Iceberg/Delta tables via DuckDB+Parquet minimum)
+   133→  - User has Prometheus + Grafana (parity with Microsoft's "system health dashboards" + "performance metrics w/ SLA monitoring") — Microsoft's observability is abstract; user's is concrete. User is actually ahead here.
+   134→  - User has no ERP/asset enrichment batch path — Microsoft explicitly separates ERP batch sync (Data Factory → OneLake) from tx stream (Eventstreams → Eventhouse). Add a merchant-profile/device-registry batch ingest path
+   135→  - User has ingest_kaggle.py (single dataset) — Microsoft explicitly designs for multi-channel (mobile banking + ATM + e-commerce + call center). User needs a multi-source ingestion story even if mocked
+   136→  - ARCHITECTURE_V3.md is actually MORE rigorous than Microsoft's page (register-based decisions, revisit triggers, persona map) — but lacks a single named 4-phase architecture diagram. Redraw as Ingest→Analyze→Score→Activate.
+   137→- Recommendation: User is NOT as far behind Microsoft as they fear. The "mid at best" feeling comes from (a) the single static HTML dashboard vs Microsoft's three-tier Real-Time Dashboard + Power BI + Copilot split, and (b) the absence of a streaming ingestion layer between producers and the API. Both are addressable with ~1 sprint of work, not a rewrite.
+   138→---
+   139→Task ID: 1-orchestrator
+   140→Agent: main (Z.ai Code orchestrator)
+   141→Task: Coordinate 4 parallel readers, synthesize findings, prepare clarifying questions
+   142→
+   143→Work Log:
+   144→- Extracted RTO_Trust_Layer_FULL_20260827.zip → /home/z/my-project/upload/RTO_Trust_Layer_FULL (35 MB)
+   145→- Mapped structure via Glob: 10 MD, 22 src/*.py + 5 tests + 1 k6, 5 scripts, dashboard/index.html, Dockerfile, docker-compose.yml, nginx/nginx.conf, monitoring/{prometheus.yml,grafana/rto-dashboard.json}, pyproject.toml, requirements.txt, uv.lock (stub), docs/openapi.json, autoresearch-results.tsv
+   146→- **CRITICAL FINDING: `paper studied/` knowledge base (40 papers × 5 files = 135 MD/YAML/JSON) described in user's message is NOT in the zip — only 10 tracked MD files arrived. Must request separate upload.**
+   147→- Spawned 4 parallel general-purpose agents (1-a docs, 1-b code, 1-c infra, 1-d Microsoft ref arch)
+   148→- All 4 returned tight syntheses; consolidated findings below.
+   149→
+   150→Stage Summary:
+   151→- **Reframe**: User believes project is "mid at best" vs Microsoft Fabric ref. Truth: project is MORE rigorous than Microsoft's marketing page in 4 areas (audit hash chain + Merkle, BMR cost math, real Prometheus+Grafana stack, V3 architecture register with self-audit). The "mid" feeling is real but localized to PRESENTATION + STREAMING, not code quality. Fixable in ~1 sprint, not a rewrite.
+   152→- **Genuinely strong**: audit/logger.py hash chain (test_ship.py tampers + breaks chain), mandates.py HMAC verdicts (UPI Circle / delegated payments — real, not stubbed), group_split leakage control, circuit breaker degraded-mode fallback, cost_table.py + cost_optimizer.py BMR math, 5 real pytest files + k6 load profile, V3 self-audit (calls out own "repo amnesia" + "decorative infra" + "cargo-cult boxes").
+   153→- **Actually broken / stubbed / decorative**:
+   154→  1. cost_optimizer.py NOT wired into actual decision (uses static 0.15/0.60 thresholds)
+   155→  2. idempotency cache `state["idem"]` unbounded dict (memory leak)
+   156→  3. features/enrich.py::add_geo_features dead code (never called from lifespan)
+   157→  4. ml/registry.py::register_model dead in prod (only called from tests; champion always None)
+   158→  5. cases/service.py::_latest() always returns None (placeholder stub)
+   159→  6. requirements.txt has `shap` but never imported (dead dep, ~30MB)
+   160→  7. docker-compose `--profile full` starts postgres+redis the API never connects to (V3 finding A2, "decorative infra")
+   161→  8. Grafana provisioning mount path is wrong (`/etc/grafana/provisioning/dashboards-src` vs expected `dashboards`) — dashboard won't auto-load
+   162→  9. verify.sh hardcodes `/mnt/20265E15265DEC72/study/CODE/linux_venv/bin/python` — won't run elsewhere
+   163→  10. uv.lock is a 3-line stub — `uv lock` never actually run
+   164→  11. pyproject.toml has no `[project]` table — package not declared
+   165→  12. No CI workflow file despite autoresearch TSV claiming "CI workflow(quality+data-model-gate+docker)"
+   166→  13. API_SPEC.md is bare (16 path names + auth table, no schemas/examples); openapi.json has zero `example` fields
+   167→  14. V3 specifies endpoints not in openapi.json: /v1/audit/{id}/proof, /v1/simulate, /v1/usage, outcome-ingest
+   168→  15. Override endpoint single-admin in API vs dual-control promised in V3 §12.1 (contradiction)
+   169→  16. No DB / migrations — everything JSONL/CSV files
+   170→  17. No streaming / message bus — Redis declared but unused; synchronous request/response only; no feedback loop for `is_returned` ground truth
+   171→  18. No OpenTelemetry, no structured logging, no alerting rules
+   172→  19. Dockerfile bakes ENV defaults (`change-me-scorer`) visible via `docker history`
+   173→  20. nginx no TLS, no security headers, no gzip
+   174→  21. dashboard/index.html vanilla JS, slick-looking but obviously 1-screen demo; cost-threshold bars hardcoded, not fetched from /v1/policy/optimal; defaults `score-demo-key`/`admin-demo-key` visible in input fields
+   175→  22. `is_cod` 0.18 permutation importance is near-tautological (whole problem is COD RTO)
+   176→  23. Single-author pitch ("I'm Neeraj"); Track 02 vs 05 still undecided (V3 §22.1)
+   177→  24. Synthetic dataset only (7,235 CODScore rows); real Indian labeled data needs Kaggle credentials
+   178→- **3 biggest perceived-gap drivers vs Microsoft Fabric** (per agent 1-d):
+   179→  1. ONE static HTML dashboard vs Microsoft's Real-Time Dashboard + Power BI + Copilot (3 surfaces)
+   180→  2. REST-only, no event/streaming backbone (Microsoft has Eventstreams → Eventhouse → Activator)
+   181→  3. No DB / no migrations / no feedback loop (Microsoft has Eventhouse + OneLake + Activator)
+   182→- **Tech-stack elephant**: Project is Python+FastAPI; this sandbox is Next.js 16 + TypeScript. 4 paths: (a) improve Python in-place (can't run here), (b) port to Next.js (large rewrite), (c) build new Next.js dashboard/control-plane that talks to existing Python API (recommended), (d) focus on what I can verify here (dashboard/docs/openapi/cost presentation) + user runs Python changes on laptop.
+   183→- Next step: present synthesis + tiered clarifying questions to user.
+   184→---
+   185→Task ID: 1-orchestrator-correction
+   186→Agent: main (Z.ai Code orchestrator)
+   187→Task: Correct earlier false finding about paper studied/ folder
+   188→
+   189→Work Log:
+   190→- User disputed my finding that paper studied/ was missing from zip
+   191→- Verified: unzip -l shows 145 .md in zip, 437 files, 35MB uncompressed
+   192→- Top-level dirs in zip: .github/, dashboard/, data/, docs/, infra/, monitoring/, nginx/, notebooks/, out/, paper_ref/, scripts/, src/, tests/, AND "paper studied/" (the space in the name caused my earlier awk filter + Glob tool to miss it)
+   193→- Re-extracted: rm -rf RTO_Trust_Layer_FULL && unzip -o ... → 331 files in paper studied/ now on disk, 145 .md total on disk (matches zip)
+   194→- Glob tool has a bug with spaces in folder names — confirmed
+   195→
+   196→Stage Summary:
+   197→- **CORRECTION**: paper studied/ knowledge base (40 papers, 135 distilled MDs + all_skills.yaml + index.md + knowledge-graph.md) IS in the zip and IS now on disk at /home/z/my-project/upload/RTO_Trust_Layer_FULL/paper studied/
+   198→- Subagent 2-knowledge spawned to read prompt-razor.txt (2102 lines) + paper studied/ entry points + 7 priority papers
+   199→- Command folder initialized at /home/z/my-project/command/
+   200→- User directive acknowledged: PRIMARY focus = papers + tech stack + code (NOT web design first); frontend later
+   201→- User deadline confirmed: Aug 28-29 internal (so GitHub + video prep can happen after)
+   202→- User identity confirmed: Neeraj Parekh, ENTC TY, MITAOE
+   203→- Track confirmed: 02 — AI Risk Manager
+   204→- Tailscale bridge offered by user for >10GB downloads / running Python/tests/k6 against real data — deferred until needed
+   205→
+   206→---
+   207→Task ID: 2-knowledge
+   208→Agent: general-purpose (prompt-razor + paper studied synthesizer)
+   209→Task: Read prompt-razor.txt (2102 lines) + paper studied/ knowledge base (40 papers, 7 priority deep-dive), produce synthesis + skills-to-code-gaps map
+   210→
+   211→Work Log:
+   212→- Read /home/z/my-project/worklog.md (prior 4 readers' syntheses + orchestrator notes + correction note confirming paper studied/ IS on disk)
+   213→- Read /home/z/my-project/upload/prompt-razor.txt in chunks: lines 1-200 (autoresearch:ship header + Gap Analysis + Pivot + Production Architecture diagram + 5-Day Build Plan), 64-138 (6-box ascii Production Architecture), 144-203 (Day-by-day + docker-compose), 1003-1102 (Agentic Layer + Track Rec + RFC §1 Architectural Principles + §2 Full System 6-Layer diagram), 1100-1229 (Principles + Full System Architecture), 1228-1470 (§3 Service Breakdown 3.1-3.10 — THE 10 SERVICES), 1492-1741 (Data Arch §5.1-5.2, Security §6, Frontend §7, Observability §8, Deployment §9, Roadmap §10, Deliverables §11, Moat §12, 1:1 Coverage Map §A-D), 1826-2090 (Missing Assets Brief §1 GitHub repos, §2 5 Papers, §3 Patents, §4 Kaggle datasets, §5 Geocoding, §6 k6, §7 CI/CD, §8 IaC, §9 Cost Model), 2080-2102 (V3 audit closure note)
+   214→- Used Grep to map all H2/H3/H4 headers (200+ matches) + key tokens (Mission, paper, RESEARCH, dataset, Feast, Kafka, Redis, Go, Python, Postgres, Parquet, MLflow, DOI, arXiv)
+   215→- Read paper studied/index.md (184 lines): 40-row TOC (rows 13-52), Tag Cloud (line 56), 5 Thematic Clusters (lines 60-170), Duplicate PDF list (lines 172-182)
+   216→- Read paper studied/knowledge-graph.md (124 lines): 40 papers × ~3 closest-kin edges each
+   217→- Skimmed paper studied/all_skills.yaml (3523 lines): 40 skill blocks × ~4 caps avg = ~150 named capabilities total; grepped `- name:` headers to enumerate all capability names
+   218→- Deep-dove 7 priority papers (summary.md + skill.yaml + research_requests.md each):
+   219→  1. cost-sensitive-fraud-detection-bayes-minimum-risk (ICMLA 2013, Bahnsen et al., DOI 10.1109/ICMLA.2013.68) — BMR layer with per-tx FN cost = Amt, RF-MR A saves 23% vs RF on €148k test fraud
+   220→  2. hybrid-multistage-credit-card-anomaly-fraud (IEEE Access 2025, Alsagri, DOI 10.1109/ACCESS.2025.3565612) — 6-classifier Layer 1 + Linear SVM meta, fraud recall 0.901 / legit recall 0.995 / model cost 0.421
+   221→  3. sok-security-autonomous-llm-agents-agentic-commerce (arXiv 2604.15367v2, 2026, Mao et al.) — D1-D5 taxonomy + 12 cross-layer attack vectors (P2T/T2R/T2T/P2K/C2E/O2P/N2C/I2M/S2I/M2A/R2I) + 5-layer defense
+   222→  4. prescriptive-analytics-ecommerce-order-delivery (Decision Support Systems 2021, Kandula et al., DOI 10.1016/j.dss.2021.113584) — Two-stage: XGBoost+weighted loss success profile → VRPTW scheduling; 7.2-10.2% delivery-cost savings; AUC 73.65/79.12
+   223→  5. survey-concept-drift-adaptation (ACM CSUR 2014, Gama/Žliobaitė/Bifet, DOI 10.1145/2523813) — 4 modules (memory/change-detection/learning/loss); DDM 2σ-warning/3σ-drift, ADWIN O(log W); prequential + McNemar/Nemenyi
+   224→  6. challenges-in-deploying-ml-case-studies (ACM CSUR 2022, Paleyes/Urma/Lawrence, DOI 10.1145/3533378) — Ashmore 4-stage taxonomy; Booking.com proxy-metric failure; CD3 axes code/model/data; 8% poisoning = medical wrong dosage
+   225→  7. tfx-production-scale-ml-platform (KDD'17, Baylor et al., DOI 10.1145/3097983.3098021) — 6-stage pipeline (Analysis→Transform→Validate→Train→Eval/Canary→Serve); +2% Google Play installs from fixing train/serve skew; p99.9 500-1500ms→75-150ms via load isolation
+   226→- Also read supporting skill.yaml for cost-curves (Drummond & Holte 2006, ML journal), upi-delegated-payments-npci-oc201b-lexology, npci-oc201b-upi-circle-iot-circular, ml-interpretability-logistics-delay-risk-ecommerce
+   227→- Appended this record to worklog.md (atomic append via heredoc)
+   228→
+   229→Stage Summary:
+   230→- prompt-razor.txt is the V2 RFC vision (line 1094: "Version: 2.0"). ARCHITECTURE_V3.md came AFTER (line 2093) and supersedes it via a 19-finding self-audit. User has BOTH: V2 vision (in prompt-razor) + V3 critique (committed in repo). V3 rejects ~80% of V2's enterprise boxes per agent 1-a.
+   231→- 10 backend services (RFC §3.1-3.10): Risk Scorer, Rules Engine (Go/Rust preferred, Python fallback), Feature Store (Redis online + PG+Parquet offline, Feast registry), Model Registry & MLOps (MLflow+Evidently+SQLite), Audit (PG+Parquet→S3), Case Mgmt (PG), Merchant Svc (PG multi-tenant), Notification (webhook/email/SMS), Threshold Manager (dynamic per-merchant + cost model), Compliance Export (CSV/Parquet + model cards). Agent Gateway is §4 Phase-2 plugin, NOT counted in 10.
+   232→- §9.1 docker-compose says "12 services" but lists 16 (nginx+10 backend+postgres+redis+kafka+prometheus+grafana+jaeger+frontend) — typo, actually 16.
+   233→- Specific tech commitments: Kong gateway + Nginx; Go/Rust rules; Redis Streams OR Kafka event bus (5 topics: risk.scores, audit.records, cases.created, model.drift, notifications); Feast for feature store; MLflow for registry; Evidently for drift; TensorFlow Serving for serving; Prometheus+Grafana+Jaeger+ELK/Loki+OpenTelemetry+AlertManager for observability; React+Vite+Tailwind+Recharts frontend; mTLS+JWT+bcrypt+Vault.
+   234→- 5 papers user wants in docs/RESEARCH.md (RFC §2, lines 1863-1875): (1) E-Commerce Fraud Detection ML Systematic Lit Review (Big Data Mining and Analytics 2024); (2) Modeling/Optimization DL+ML for Credit Card Fraud Risk Mgmt (Mathematics 2026); (3) Building Trust in Agentic Commerce (Liminal 2025); (4) COD Fraud in Indian E-commerce (Pragma 2025); (5) AI Agent Risks & Guardrails 2026 Enterprise Security Guide (Atlan 2026).
+   235→- Datasets named: Amazon India Sales Report (Kaggle, ~129k orders, primary); Indian E-commerce Dataset (Kaggle ~50k); Online Retail Dataset (UCI ~541k UK). Expected lift: PR-AUC 0.55→0.72-0.78.
+   236→- §9 cost model (line 2028-2071): C_FP=₹50, C_FN=₹600, C_OTP=₹5, C_BLOCK=₹1000, OTP_eff=0.82; τ* = C_FP/(C_FP+C_FN) = 50/650 ≈ 0.077; explicit Python `optimal_decision()` fn with min-cost comparison across ACCEPT/REVIEW/REJECT.
+   237→- §3 patents (lines 1879-1890): US20240012345A1 (Visa), US20230187654B2 (Amazon Logistics), WO2024/098765A1 (IBM/Samsung). V3 audit (line 2097) flags these as SUSPECT-FABRICATED — DO NOT CITE.
+   238→- Milestones: 5-Day Build Plan; Deliverables checklist (10 items); ~16 hours estimated agent integration time. NO additional explicit deadlines beyond Aug 28-29 internal.
+   239→- Knowledge base: 40 papers confirmed (from 54 PDFs, 9 exact-dupes folded). Tag cloud top 5: governance(22), trust(21), agentic-payments(15), agentic-commerce(15), consent(15). 5 clusters: Agentic Commerce & Payments (29 papers), Trust/Governance/Liability (28), Risk Modelling RTO/Fraud/Delay (15), Production ML & Infra (12), Supply Chain & Retail Ops (13). Most-central paper in knowledge-graph (highest in-degree): AI Agents in Payments: Applications, Risks and Regulations (9 kin edges at weight 4-6); 2nd: SoK: Security of Autonomous LLM Agents in Agentic Commerce (8 edges); 3rd: Agentic Proxies: Governance, Accountability, and the Architecture of a Trustworthy AI Economy (5+ edges at weight 5-6).
+   240→- KEY DELIVERABLE for command folder: Part D skills-to-code-gaps map (delivered in final synthesis message) covering 14 specific gaps from cost-optimizer wiring to production ML patterns.
+   241→---
+   242→Task ID: 2-knowledge-complete
+   243→Agent: main (Z.ai Code orchestrator) — logging subagent 2-knowledge's completion
+   244→Task: Subagent read prompt-razor.txt + paper studied knowledge base; produced synthesis
+   245→
+   246→Work Log:
+   247→- Subagent 2-knowledge (agent-1dda8756) read prompt-razor.txt (2102 lines) + paper studied/ entry points + 7 priority paper folders
+   248→- Produced 4-part synthesis: Part A (prompt-razor extraction not in chat), Part B (paper KB summary), Part C (7 priority paper deep-dives), Part D (14-row skills-to-code-gaps map)
+   249→- Key findings:
+   250→  * 10 services confirmed (RFC §3.1-3.10): Risk Scorer, Rules Engine, Feature Store, Model Registry & MLOps, Audit, Case Mgmt, Merchant, Notification, Threshold Manager, Compliance Export (Agent Gateway is Phase-2 plugin, not in the 10)
+   251→  * 5 datasets named: Amazon India Sale Report (primary, ~129k orders), Indian E-commerce Dataset (~50k), Online Retail Dataset (UCI, ~541k)
+   252→  * 5 papers for docs/RESEARCH.md (DIFFERENT from 40-paper KB — these are blog/industry citations for the pitch)
+   253→  * Contradictions: V2 (prompt-razor) vs V3 (ARCHITECTURE_V3.md) — V3 supersedes; treat V3 as authoritative
+   254→  * Patent numbers in V2 are SUSPECT-FABRICATED per V3 audit — do not cite
+   255→  * 14-row skills-to-code-gaps map produced (the key deliverable)
+   256→  * Top-3 actions: (1) wire optimal_decision() into routes.py ~2h, (2) build 6-stage TFX pipeline ~1 day, (3) build LabelFeedbackService with DDM+ADWIN ~4h
+   257→
+   258→Stage Summary:
+   259→- Knowledge base fully read + mapped to code gaps
+   260→- Command folder being built at /home/z/my-project/command/ with 8 files
+
+[showing lines 1-260 of 520; use offset=261 with limit to continue reading]

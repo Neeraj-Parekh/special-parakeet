@@ -1,3 +1,13 @@
+> HISTORICAL — superseded by V3 (`docs/ARCHITECTURE_V3.md`) and the
+> consolidated user-facing version (`docs/ARCHITECTURE.md`). Kept for
+> context. V2's enterprise 9-service spec was audit-corrected by V3's
+> 19 findings (A1-A19) which rejected ~80% of V2's enterprise boxes as
+> cargo-cult / resume-driven / license-inconsistent. The current truth
+> is in `ARCHITECTURE.md`; V3 is the engineering audit trail; this V2
+> is the pre-audit enterprise RFC.
+
+---
+
 # Architecture v2 — Enterprise System Design (cloud-neutral)
 
 > v1 proved the model slice. v2 specifies the system a payment company would actually run.

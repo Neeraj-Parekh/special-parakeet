@@ -1,0 +1,53 @@
+groups:
+  - name: rto-alerts
+    interval: 30s
+    rules:
+      - alert: CircuitBreakerOpen
+        expr: rto_circuit_state == 2
+        for: 5m
+        labels:
+          severity: critical
+          component: risk-scorer
+        annotations:
+          summary: "Circuit breaker OPEN for 5+ minutes"
+          description: "The model circuit breaker is OPEN — /risk/score is in degraded rules-only mode. Check model loading + Redis connectivity."
+
+      - alert: DriftDetected
+        expr: rto_drift_ddm_state == 2 or rto_drift_adwin_state == 2
+        for: 1m
+        labels:
+          severity: warning
+          component: ml
+        annotations:
+          summary: "Model drift detected ({{ $labels.detector }})"
+          description: "DDM or ADWIN detector fired DRIFT. Check /v1/models/drift + consider shadow-retraining."
+
+      - alert: AuditWriteErrors
+        expr: rate(rto_audit_write_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: audit
+        annotations:
+          summary: "Audit write errors in the last 5 minutes"
+          description: "Audit hash chain may be broken. Check Postgres connectivity + disk space."
+
+      - alert: HighRtoRate
+        expr: rate(risk_decisions_total{decision="REJECT"}[5m]) / clamp_min(rate(risk_decisions_total[5m]), 0.001) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "REJECT rate > 50% for 10+ minutes"
+          description: "More than half of decisions are REJECT. Check if rules engine is too aggressive or model drifted."
+
+      - alert: StreamConsumerDown
+        expr: up{job="stream-worker"} == 0 or up{job="stream-processor"} == 0 or up{job="drift-consumer"} == 0
+        for: 2m
+        labels:
+          severity: warning
+          component: streaming
+        annotations:
+          summary: "Stream consumer {{ $labels.job }} down for 2+ minutes"
+          description: "A stream consumer is down. Risk.scores/audit.records/cases.created/model.drift messages may backlog."

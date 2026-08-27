@@ -1,0 +1,22 @@
+# Grafana dashboard provider config — auto-loaded on container boot.
+# Ref: https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards
+#
+# Grafana scans `/etc/grafana/provisioning/dashboards/` for *.yaml files; each
+# yaml defines a "provider" with a `path` that points to a folder of dashboard
+# JSONs. Without this file, Grafana does NOT auto-import dashboard JSONs even
+# if they're in the right folder.
+apiVersion: 1
+
+providers:
+  - name: rto-default
+    orgId: 1
+    folder: ""           # top-level (no sub-folder) — panels show on the root
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30   # rescan every 30s — lets you live-edit JSON
+    allowUiUpdates: true         # UI edits persist back to the JSON file
+    options:
+      # Path is the in-container path. We mount `./monitoring/grafana` here,
+      # so this finds `rto-dashboard.json` and any future dashboards.
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

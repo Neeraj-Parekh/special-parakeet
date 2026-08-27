@@ -1,0 +1,2102 @@
+# /autoresearch:ship
+
+Run the ship-readiness workflow.
+
+## Activation
+
+1. Read `/home/neeraj-parekh/.cache/opencode/packages/opencode-autoresearch@latest/node_modules/opencode-autoresearch/skills/autoresearch/references/ship-workflow.md`
+2. Read `/home/neeraj-parekh/.cache/opencode/packages/opencode-autoresearch@latest/node_modules/opencode-autoresearch/skills/autoresearch/references/loop-workflow.md`
+
+## When to Use
+
+Use this when the user wants to prepare a change for release. Runs the full verify loop with a ship-readiness subagent pool.
+
+## Execution
+
+1. Baseline the current state.
+2. Run the full improve-verify loop with ship-readiness gates.
+3. Verify rollout risk and user-visible regressions mechanically.
+4. Record final state.
+5. Present the ship readiness summary.
+
+Follow the ship workflow reference for release gates and handoff format.
+
+
+
+make sure you have downloaded , edited edited and done all things i hsave said in this prmpt below ---> 
+
+
+
+ You're absolutely right. What you have is a **data science notebook dressed as an API** — not a system. For Razorpay to take you seriously (especially for a ₹75k/mo internship), they need to see **systems thinking**: security boundaries, failure domains, observability, multi-tenancy, and a frontend that doesn't look like a Jupyter cell output.
+
+Let me first pull current production patterns for ML platforms and fraud/risk architectures, then give you a concrete expansion plan.  
+ You're right. What you have is a **ML notebook with an API wrapper** — not a system Razorpay would bet merchant money on. The gap between "model that scores 0.55 PR-AUC" and "platform that processes ₹50Cr GMV/day" is exactly what separates hackathon participants from hires.
+
+Let me give you the brutal truth, then a concrete build plan for the remaining days.
+
+---
+
+## The Honest Gap Analysis
+
+| What you have | What Razorpay needs | Your gap |
+|---|---|---|
+| Single FastAPI route | API Gateway + rate limiting + auth + circuit breakers | No security boundary |
+| Pandas in-memory features | Feature store (online/offline split) | Training-serving skew, no reuse |
+| One static model | Model registry + champion/challenger + drift monitoring | Model rots silently |
+| Hardcoded thresholds | Rules engine + dynamic threshold management | Ops can't tune without deploy |
+| JSONL audit log | Tamper-evident audit trail + compliance dashboard | Not court-admissible |
+| No frontend | Merchant dashboard + case management UI | No user |
+| 7K synthetic rows | Real transaction streams + feature backfill | Model doesn't generalize |
+| "Agent" script | Bounded agent with guardrails, human-in-the-loop | Unconstrained LLM = liability |
+
+Your agent built a **science fair project**. You need to build a **platform** in the remaining ~5 days.
+
+---
+
+## The Pivot: "RTO Shield Pro" → "Trust & Risk Intelligence Layer"
+
+Don't just predict RTO. Build the **infrastructure layer** that any risk system sits on. This positions you for **Track 02 (AI Risk Manager)** if you nail the metrics, or **Track 05 (Open)** if you frame it as "the risk platform Razorpay should have open-sourced."
+
+**Core thesis:** *Agentic commerce is coming, but agents hallucinate, bypass guardrails, and create liability. Before you give an agent a wallet, you need a deterministic Trust Layer that bounds every action, logs every decision, and fails loud.*
+
+---
+
+## Production Architecture (What You Build Next)
+
+Here's the system. Every box is a Docker service. You build the ones marked **BUILD**, mock the ones marked **MOCK**.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         CLIENT LAYER                                     │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
+│  │  Merchant    │  │   Case Mgmt  │  │   Agent      │                  │
+│  │  Dashboard   │  │   Dashboard  │  │   Console    │                  │
+│  │  (React)     │  │   (React)    │  │   (React)    │                  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                  │
+└─────────┼─────────────────┼─────────────────┼──────────────────────────┘
+          │                 │                 │
+          ▼                 ▼                 ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                      API GATEWAY (NGINX + Kong)                         │
+│  • Rate limiting (per merchant API key)                                 │
+│  • Request validation (JSON Schema)                                     │
+│  • Auth (JWT + API key)                                                 │
+│  • Circuit breaker (fail open if ML down)                               │
+└─────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ORCHESTRATION LAYER (FastAPI)                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐ │
+│  │  /risk/score│  │ /audit/:id  │  │ /rules      │  │ /agent/act   │ │
+│  │  (sync)     │  │             │  │  (CRUD)     │  │  (bounded)   │ │
+│  └──────┬──────┘  └─────────────┘  └─────────────┘  └──────────────┘ │
+└─────────┼───────────────────────────────────────────────────────────────┘
+          │
+    ┌─────┴─────┐
+    ▼           ▼
+┌────────┐  ┌─────────────────────────────────────────────────────────┐
+│ RULES  │  │              FEATURE STORE (Redis + SQLite)             │
+│ ENGINE │  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐  │
+│ (YAML) │  │  │  Online     │  │  Offline    │  │  Registry    │  │
+│        │  │  │  (Redis)    │  │  (SQLite)   │  │  (SQLite)    │  │
+└───┬────┘  │  │  <5ms       │  │  Historical │  │  Metadata    │  │
+    │       │  └─────────────┘  └─────────────┘  └──────────────┘  │
+    │       └─────────────────────────────────────────────────────────┘
+    │                           │
+    └─────────────┬─────────────┘
+                  ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ML PLATFORM (Python Services)                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐ │
+│  │  Scorer     │  │  Explainer  │  │  Monitor    │  │  Registry    │ │
+│  │  (HistGB)   │  │  (SHAP)     │  │  (Evidently)│  │  (SQLite)   │ │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └──────────────┘ │
+└─────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    OBSERVABILITY (Prometheus + Grafana)                 │
+│  • Request latency p50/p99                                             │
+│  • Model score distribution                                             │
+│  • Feature drift (PSI)                                                  │
+│  • Decision outcome rates                                               │
+│  • Alert on anomaly                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    AUDIT & COMPLIANCE (Append-only)                     │
+│  • Structured JSONL → Parquet rotation                                  │
+│  • Tamper-evident hash chain (previous_hash field)                      │
+│  • Export to CSV for regulators                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 5-Day Build Plan (Prioritized for Demo Impact)
+
+### Day 1: Infrastructure Skeleton
+**Goal:** `docker-compose up` spins up 6 services. You can show the architecture diagram and say "this runs locally, here's the compose file."
+
+Services to add:
+- `nginx` (reverse proxy, static file serve for React build)
+- `redis` (feature store online)
+- `postgres` (feature store offline + audit + model registry)
+- `prometheus` + `grafana` (monitoring)
+- `frontend` (React build served by nginx)
+
+### Day 2: Frontend (The "Whoa" Factor)
+**Goal:** A dashboard that looks like Stripe's dashboard. Dark mode, charts, real-time scoring.
+
+Pages:
+- **Risk Console:** Submit an order, see score + explanation + decision in real-time
+- **Audit Explorer:** Search audit logs by order ID, merchant, date range
+- **Rules Manager:** CRUD for business rules (ops team can add "Block all >₹50K COD to Tier-3 new customers")
+- **Model Monitor:** Feature drift chart, score distribution, AUC over time
+- **Agent Console:** Show the bounded agent with its constraint list, not a chatbot
+
+### Day 3: Backend Hardening
+**Goal:** FastAPI becomes a platform, not a script.
+
+Add:
+- **API Key auth** (merchants get keys, rate limited per tier)
+- **Feature Store** (Redis for online <5ms, SQLite for offline historical)
+- **Rules Engine** (YAML-based, evaluated before ML, 1-5ms)
+- **Circuit breaker** (if ML service down, fallback to rules-only)
+- **Async background jobs** (Celery or FastAPI BackgroundTasks for audit writes, model retraining triggers)
+- **Request validation** (Pydantic v2, strict schemas)
+
+### Day 4: Model Improvements + Monitoring
+**Goal:** PR-AUC > 0.65 (minimum viable for demo credibility) + drift detection.
+
+- **Feature engineering:** Add temporal features (time since last order, rolling return rate per customer, day-of-week patterns)
+- **Model registry:** Version models, A/B test champion vs challenger
+- **Monitoring:** Use `evidently` or simple PSI calculation to detect feature drift
+- **Threshold management:** Store thresholds in DB, ops can adjust via API without redeploy
+
+### Day 5: Polish, Docs, Video Prep
+**Goal:** Everything is demo-ready.
+
+- **README:** Architecture diagram, setup instructions, API docs
+- **Pitch script:** "We didn't build an agent. We built the trust layer that makes agents safe."
+- **Demo flow:** 
+  1. Show merchant dashboard
+  2. Submit 3 orders (ACCEPT, REVIEW, REJECT)
+  3. Show audit trail with SHAP explanations
+  4. Show rules engine blocking a known fraud pattern
+  5. Show model monitoring detecting drift
+  6. Show agent console with bounded actions
+
+---
+
+## Concrete Code: What to Build Right Now
+
+### 1. `docker-compose.yml` (The Foundation)
+
+```yaml
+version: '3.8'
+
+services:
+  # --- API Gateway ---
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./frontend/build:/usr/share/nginx/html:ro
+    depends_on:
+      - api
+    networks:
+      - risk-net
+
+  # --- Application ---
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://risk:risk@postgres:5432/riskdb
+      - REDIS_URL=redis://redis:6379/0
+      - MODEL_PATH=/app/models/rto_predictor.pkl
+    volumes:
+      - ./models:/app/models:ro
+      - ./audit:/app/audit
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - risk-net
+
+  # --- Data Stores ---
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: risk
+      POSTGRES_PASSWORD: risk
+      POSTGRES_DB: riskdb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - risk-net
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - risk-net
+
+  # --- Observability ---
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - risk-net
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+    depends_on:
+      - prometheus
+    networks:
+      - risk-net
+
+networks:
+  risk-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  grafana_data:
+```
+
+### 2. Enhanced FastAPI Backend (`backend/src/main.py`)
+
+This replaces your current `routes.py` with a production-grade setup:
+
+```python
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Optional
+
+import hashlib
+import json
+import redis
+import structlog
+from fastapi import FastAPI, Depends, HTTPException, Request, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi_limiter import FastAPILimiter
+from fastapi_limiter.depends import RateLimiter
+from pydantic import BaseModel, Field, validator
+from sqlalchemy import create_engine, Column, String, Float, DateTime, JSON, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+import joblib
+import numpy as np
+
+# --- Configuration ---
+REDIS_URL = "redis://redis:6379/0"
+DATABASE_URL = "postgresql://risk:risk@postgres:5432/riskdb"
+MODEL_PATH = "/app/models/rto_predictor.pkl"
+
+# --- Logging (Structured) ---
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer()
+    ],
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    wrapper_class=structlog.stdlib.BoundLogger,
+    cache_logger_on_first_use=True,
+)
+logger = structlog.get_logger()
+
+# --- Database ---
+Base = declarative_base()
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+class AuditRecord(Base):
+    __tablename__ = "audit_records"
+    prediction_id = Column(String, primary_key=True)
+    order_id = Column(String, index=True)
+    merchant_id = Column(String, index=True)
+    risk_score = Column(Float)
+    probability = Column(Float)
+    decision = Column(String)
+    features = Column(JSON)
+    shap_values = Column(JSON)
+    top_features = Column(JSON)
+    model_version = Column(String)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    previous_hash = Column(String)  # Tamper-evident chain
+    raw_hash = Column(String)       # Hash of this record
+
+class FeatureRegistry(Base):
+    __tablename__ = "feature_registry"
+    feature_name = Column(String, primary_key=True)
+    feature_type = Column(String)  # online, offline, on_demand
+    source = Column(String)
+    description = Column(Text)
+    last_updated = Column(DateTime)
+
+class ModelRegistry(Base):
+    __tablename__ = "model_registry"
+    model_version = Column(String, primary_key=True)
+    model_path = Column(String)
+    metrics = Column(JSON)
+    is_champion = Column(String)  # champion, challenger, archived
+    deployed_at = Column(DateTime)
+
+class Rule(Base):
+    __tablename__ = "rules"
+    rule_id = Column(String, primary_key=True)
+    name = Column(String)
+    condition = Column(Text)  # JSON logic
+    action = Column(String)   # BLOCK, REVIEW, PASS
+    priority = Column(Integer)
+    is_active = Column(String)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# --- Redis Feature Store ---
+redis_client = redis.from_url(REDIS_URL)
+
+class FeatureStore:
+    """Simple online/offline feature store."""
+    
+    @staticmethod
+    def get_online_features(entity_id: str, feature_names: list) -> dict:
+        """Get real-time features from Redis. <5ms."""
+        pipe = redis_client.pipeline()
+        for feat in feature_names:
+            pipe.hget(f"features:{entity_id}", feat)
+        values = pipe.execute()
+        return {k: float(v) if v else 0.0 for k, v in zip(feature_names, values)}
+    
+    @staticmethod
+    def set_online_features(entity_id: str, features: dict):
+        redis_client.hset(f"features:{entity_id}", mapping=features)
+    
+    @staticmethod
+    def get_offline_features(entity_id: str, as_of: datetime):
+        """Get historical features from PostgreSQL."""
+        # Simplified: in production, query time-travel table
+        pass
+
+# --- Model Loading with Registry ---
+class ModelService:
+    def __init__(self):
+        self.model = None
+        self.model_version = "unknown"
+        self.load_model()
+    
+    def load_model(self):
+        try:
+            self.model = joblib.load(MODEL_PATH)
+            self.model_version = "v2.1.0"  # From registry
+            logger.info("model_loaded", version=self.model_version)
+        except Exception as e:
+            logger.error("model_load_failed", error=str(e))
+            raise
+    
+    def predict(self, features: np.ndarray) -> tuple:
+        if self.model is None:
+            raise HTTPException(503, "Model unavailable")
+        prob = self.model.predict_proba(features)[0, 1]
+        return float(prob), self.model_version
+
+model_service = ModelService()
+
+# --- Rules Engine ---
+class RulesEngine:
+    """Deterministic rules evaluated before ML. 1-5ms."""
+    
+    def evaluate(self, order: dict, db: Session) -> Optional[str]:
+        rules = db.query(Rule).filter(Rule.is_active == "true").order_by(Rule.priority).all()
+        for rule in rules:
+            if self._match(rule.condition, order):
+                logger.info("rule_fired", rule_id=rule.rule_id, action=rule.action)
+                return rule.action
+        return None
+    
+    def _match(self, condition: str, order: dict) -> bool:
+        # Simplified: parse JSON logic
+        cond = json.loads(condition)
+        field = cond.get("field")
+        op = cond.get("operator")
+        value = cond.get("value")
+        actual = order.get(field)
+        
+        if op == "gt": return actual > value
+        if op == "eq": return actual == value
+        if op == "in": return actual in value
+        return False
+
+rules_engine = RulesEngine()
+
+# --- Circuit Breaker ---
+class CircuitBreaker:
+    """Fail open if ML is down."""
+    def __init__(self, failure_threshold=5, recovery_timeout=30):
+        self.failures = 0
+        self.state = "CLOSED"  # CLOSED, OPEN, HALF_OPEN
+        self.threshold = failure_threshold
+        self.timeout = recovery_timeout
+        self.last_failure = None
+    
+    def call(self, func, *args, **kwargs):
+        if self.state == "OPEN":
+            if (datetime.utcnow() - self.last_failure).seconds > self.timeout:
+                self.state = "HALF_OPEN"
+            else:
+                return None  # Fail open
+        
+        try:
+            result = func(*args, **kwargs)
+            if self.state == "HALF_OPEN":
+                self.state = "CLOSED"
+                self.failures = 0
+            return result
+        except Exception as e:
+            self.failures += 1
+            self.last_failure = datetime.utcnow()
+            if self.failures >= self.threshold:
+                self.state = "OPEN"
+                logger.error("circuit_breaker_opened")
+            raise
+
+circuit_breaker = CircuitBreaker()
+
+# --- Auth ---
+security = HTTPBearer()
+
+def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
+    # Simplified: in production, query merchant DB, check rate limits
+    key = credentials.credentials
+    if not key.startswith("rzp_live_"):
+        raise HTTPException(401, "Invalid API key")
+    return {"merchant_id": "merchant_001", "tier": "standard"}
+
+# --- Pydantic Models ---
+class RiskRequest(BaseModel):
+    order_id: str = Field(..., min_length=3)
+    amount: float = Field(..., gt=0)
+    category: str
+    customer_id: str
+    delivery_address: str
+    pincode: str
+    is_repeat_customer: bool = False
+    is_cod: bool = True
+    merchant_id: str = "default"
+    
+    @validator('pincode')
+    def validate_pincode(cls, v):
+        if not v.isdigit() or len(v) != 6:
+            raise ValueError('Indian pincode must be 6 digits')
+        return v
+
+class RiskResponse(BaseModel):
+    prediction_id: str
+    risk_score: float
+    probability: float
+    decision: str
+    explanation: list
+    rule_fired: Optional[str]
+    model_version: str
+    latency_ms: float
+    timestamp: datetime
+
+# --- Tamper-Evident Audit ---
+def compute_hash(record: dict, previous_hash: str) -> str:
+    record_str = json.dumps(record, sort_keys=True) + previous_hash
+    return hashlib.sha256(record_str.encode()).hexdigest()
+
+def write_audit(record: dict, db: Session):
+    # Get last hash for chain
+    last = db.query(AuditRecord).order_by(AuditRecord.timestamp.desc()).first()
+    prev_hash = last.raw_hash if last else "0" * 64
+    
+    record["previous_hash"] = prev_hash
+    record["raw_hash"] = compute_hash(record, prev_hash)
+    
+    db_record = AuditRecord(**record)
+    db.add(db_record)
+    db.commit()
+
+# --- FastAPI App ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await FastAPILimiter.init(redis_client)
+    yield
+    await FastAPILimiter.close()
+
+app = FastAPI(
+    title="Trust & Risk Intelligence API",
+    version="2.1.0",
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.post("/risk/score", response_model=RiskResponse)
+async def score_order(
+    request: RiskRequest,
+    background_tasks: BackgroundTasks,
+    merchant: dict = Depends(verify_api_key),
+    db: Session = Depends(get_db),
+    rate: RateLimiter = Depends(RateLimiter(times=100, seconds=60))
+):
+    start = datetime.utcnow()
+    
+    # 1. Rules Engine First (deterministic, fast)
+    order_dict = request.dict()
+    rule_decision = rules_engine.evaluate(order_dict, db)
+    if rule_decision == "BLOCK":
+        return RiskResponse(
+            prediction_id=f"pred_{start.timestamp()}",
+            risk_score=100.0,
+            probability=1.0,
+            decision="REJECT",
+            explanation=[{"feature": "rule_engine", "reason": "Hard rule matched"}],
+            rule_fired="BLOCK",
+            model_version="rules_only",
+            latency_ms=5.0,
+            timestamp=start
+        )
+    
+    # 2. Feature Store Lookup
+    online_features = FeatureStore.get_online_features(
+        request.customer_id,
+        ["prior_returns", "prior_orders", "avg_order_value"]
+    )
+    
+    # 3. Feature Engineering (simplified)
+    features = np.array([[
+        request.amount,
+        1 if request.is_cod else 0,
+        online_features.get("prior_returns", 0),
+        online_features.get("prior_orders", 0),
+        len(request.delivery_address),
+        1 if request.is_repeat_customer else 0
+    ]])
+    
+    # 4. ML Scoring with Circuit Breaker
+    try:
+        prob, version = circuit_breaker.call(model_service.predict, features)
+    except Exception as e:
+        # Fallback to rules-only if ML down
+        logger.error("ml_fallback", error=str(e))
+        prob = 0.5
+        version = "fallback"
+    
+    risk_score = prob * 100
+    
+    # 5. Decision Gates (Dynamic Thresholds)
+    if risk_score < 15:
+        decision = "ACCEPT"
+    elif risk_score < 60:
+        decision = "REVIEW"
+    else:
+        decision = "REJECT"
+    
+    # 6. SHAP-like Explanation (simplified)
+    explanation = [
+        {"feature": "order_amount", "value": request.amount, "contribution": 0.3},
+        {"feature": "is_cod", "value": request.is_cod, "contribution": 0.25},
+        {"feature": "prior_returns", "value": online_features.get("prior_returns", 0), "contribution": 0.2}
+    ]
+    
+    # 7. Build Response
+    prediction_id = f"pred_{request.order_id}_{int(start.timestamp())}"
+    latency = (datetime.utcnow() - start).total_seconds() * 1000
+    
+    response = RiskResponse(
+        prediction_id=prediction_id,
+        risk_score=risk_score,
+        probability=prob,
+        decision=decision,
+        explanation=explanation,
+        rule_fired=rule_decision,
+        model_version=version,
+        latency_ms=round(latency, 2),
+        timestamp=start
+    )
+    
+    # 8. Async Audit Write
+    audit_record = {
+        "prediction_id": prediction_id,
+        "order_id": request.order_id,
+        "merchant_id": merchant["merchant_id"],
+        "risk_score": risk_score,
+        "probability": prob,
+        "decision": decision,
+        "features": features.tolist()[0],
+        "shap_values": explanation,
+        "top_features": explanation[:3],
+        "model_version": version
+    }
+    background_tasks.add_task(write_audit, audit_record, db)
+    
+    logger.info("order_scored", 
+                order_id=request.order_id,
+                merchant=merchant["merchant_id"],
+                decision=decision,
+                latency_ms=latency)
+    
+    return response
+
+@app.get("/audit/{prediction_id}")
+async def get_audit(prediction_id: str, db: Session = Depends(get_db)):
+    record = db.query(AuditRecord).filter(AuditRecord.prediction_id == prediction_id).first()
+    if not record:
+        raise HTTPException(404, "Audit record not found")
+    return {
+        "prediction_id": record.prediction_id,
+        "order_id": record.order_id,
+        "decision": record.decision,
+        "features": record.features,
+        "explanation": record.shap_values,
+        "timestamp": record.timestamp,
+        "hash": record.raw_hash,
+        "previous_hash": record.previous_hash,
+        "tamper_check": "pass"  # In production, verify chain
+    }
+
+@app.get("/health")
+async def health():
+    return {
+        "status": "healthy",
+        "model_loaded": model_service.model is not None,
+        "circuit_state": circuit_breaker.state,
+        "redis_connected": redis_client.ping()
+    }
+
+@app.get("/metrics")
+async def metrics():
+    # Prometheus-compatible metrics endpoint
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+```
+
+### 3. React Frontend Scaffold (`frontend/src/App.js`)
+
+You need a dashboard that doesn't look like a school project. Use Tailwind + Recharts.
+
+```jsx
+import React, { useState } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+// --- Components ---
+
+const RiskScore = ({ score, decision }) => {
+  const color = decision === 'ACCEPT' ? 'green' : decision === 'REVIEW' ? 'yellow' : 'red';
+  return (
+    <div className={`p-6 rounded-lg border-2 border-${color}-500 bg-${color}-50`}>
+      <div className="text-4xl font-bold text-gray-900">{score.toFixed(1)}</div>
+      <div className={`text-sm font-semibold text-${color}-700 uppercase`}>{decision}</div>
+    </div>
+  );
+};
+
+const ExplanationCard = ({ features }) => (
+  <div className="bg-white p-4 rounded shadow">
+    <h3 className="font-bold mb-2">Top Risk Factors</h3>
+    {features.map((f, i) => (
+      <div key={i} className="flex justify-between py-1 border-b">
+        <span className="text-gray-600">{f.feature}</span>
+        <span className={`font-mono ${f.contribution > 0 ? 'text-red-600' : 'text-green-600'}`}>
+          {f.contribution > 0 ? '+' : ''}{f.contribution.toFixed(2)}
+        </span>
+      </div>
+    ))}
+  </div>
+);
+
+const AuditTrail = ({ records }) => (
+  <div className="bg-white rounded shadow overflow-hidden">
+    <table className="min-w-full">
+      <thead className="bg-gray-50">
+        <tr>
+          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Order ID</th>
+          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Decision</th>
+          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Score</th>
+          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Latency</th>
+          <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Hash</th>
+        </tr>
+      </thead>
+      <tbody>
+        {records.map((r) => (
+          <tr key={r.prediction_id} className="border-b hover:bg-gray-50">
+            <td className="px-4 py-2 font-mono text-sm">{r.order_id}</td>
+            <td className="px-4 py-2">
+              <span className={`px-2 py-1 rounded text-xs font-bold ${
+                r.decision === 'ACCEPT' ? 'bg-green-100 text-green-800' :
+                r.decision === 'REVIEW' ? 'bg-yellow-100 text-yellow-800' :
+                'bg-red-100 text-red-800'
+              }`}>
+                {r.decision}
+              </span>
+            </td>
+            <td className="px-4 py-2">{r.risk_score?.toFixed(1)}</td>
+            <td className="px-4 py-2 text-gray-500">{r.latency_ms}ms</td>
+            <td className="px-4 py-2 font-mono text-xs text-gray-400">{r.hash?.slice(0, 16)}...</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+);
+
+// --- Main App ---
+
+function App() {
+  const [order, setOrder] = useState({
+    order_id: 'ORD-2026-001',
+    amount: 2500,
+    category: 'electronics',
+    customer_id: 'CUST-12345',
+    delivery_address: '123 MG Road, Bangalore',
+    pincode: '560001',
+    is_cod: true,
+    is_repeat_customer: false
+  });
+  
+  const [result, setResult] = useState(null);
+  const [auditRecords, setAuditRecords] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const scoreOrder = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch('http://localhost/risk/score', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer rzp_live_test_key_123'
+        },
+        body: JSON.stringify(order)
+      });
+      const data = await res.json();
+      setResult(data);
+      setAuditRecords(prev => [data, ...prev].slice(0, 50));
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100">
+      {/* Header */}
+      <nav className="bg-slate-900 text-white p-4">
+        <div className="max-w-7xl mx-auto flex justify-between items-center">
+          <h1 className="text-xl font-bold">Trust & Risk Intelligence Layer</h1>
+          <div className="text-sm text-gray-400">v2.1.0 | Model: HistGB-v2 | Circuit: CLOSED</div>
+        </div>
+      </nav>
+
+      <div className="max-w-7xl mx-auto p-6 grid grid-cols-12 gap-6">
+        {/* Left: Order Form */}
+        <div className="col-span-4 space-y-4">
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h2 className="text-lg font-bold mb-4">New Order</h2>
+            <div className="space-y-3">
+              <input className="w-full p-2 border rounded" placeholder="Order ID" 
+                     value={order.order_id} onChange={e => setOrder({...order, order_id: e.target.value})} />
+              <input className="w-full p-2 border rounded" type="number" placeholder="Amount" 
+                     value={order.amount} onChange={e => setOrder({...order, amount: Number(e.target.value)})} />
+              <input className="w-full p-2 border rounded" placeholder="Pincode" 
+                     value={order.pincode} onChange={e => setOrder({...order, pincode: e.target.value})} />
+              <label className="flex items-center space-x-2">
+                <input type="checkbox" checked={order.is_cod} 
+                       onChange={e => setOrder({...order, is_cod: e.target.checked})} />
+                <span>Cash on Delivery</span>
+              </label>
+              <button onClick={scoreOrder} disabled={loading}
+                      className="w-full bg-blue-600 text-white p-2 rounded hover:bg-blue-700 disabled:opacity-50">
+                {loading ? 'Scoring...' : 'Score Risk'}
+              </button>
+            </div>
+          </div>
+
+          {/* Model Monitor */}
+          <div className="bg-white p-6 rounded-lg shadow">
+            <h2 className="text-lg font-bold mb-4">Model Health</h2>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-gray-600">PR-AUC (7d)</span>
+                <span className="font-mono font-bold">0.647</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Feature Drift (PSI)</span>
+                <span className="font-mono text-green-600">0.023 ✓</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">P99 Latency</span>
+                <span className="font-mono">45ms</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Circuit Breaker</span>
+                <span className="font-mono text-green-600">CLOSED</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Center: Results */}
+        <div className="col-span-4 space-y-4">
+          {result && (
+            <>
+              <RiskScore score={result.risk_score} decision={result.decision} />
+              <ExplanationCard features={result.explanation} />
+              <div className="bg-white p-4 rounded shadow">
+                <h3 className="font-bold mb-2">Decision Trace</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Rule Engine</span>
+                    <span className={result.rule_fired ? 'text-red-600' : 'text-green-600'}>
+                      {result.rule_fired || 'PASS'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>ML Model</span>
+                    <span className="text-gray-600">{result.model_version}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Latency</span>
+                    <span className="font-mono">{result.latency_ms}ms</span>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Right: Audit Trail */}
+        <div className="col-span-4">
+          <div className="bg-white p-4 rounded-lg shadow">
+            <h2 className="text-lg font-bold mb-4">Audit Trail (Last 50)</h2>
+            <AuditTrail records={auditRecords} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
+```
+
+### 4. Rules Engine Config (`backend/rules/default.yaml`)
+
+```yaml
+rules:
+  - rule_id: "RULE-001"
+    name: "High Value COD New Customer"
+    description: "Block COD orders > ₹50K from new customers"
+    condition: '{"field": "amount", "operator": "gt", "value": 50000}'
+    action: "BLOCK"
+    priority: 1
+    is_active: "true"
+
+  - rule_id: "RULE-002"
+    name: "Vague Address High Value"
+    description: "Review COD > ₹20K with vague address"
+    condition: '{"field": "address_length", "operator": "lt", "value": 20}'
+    action: "REVIEW"
+    priority: 2
+    is_active: "true"
+
+  - rule_id: "RULE-003"
+    name: "Known Fraud Pincode"
+    description: "Block known high-RTO pincodes"
+    condition: '{"field": "pincode", "operator": "in", "value": ["110001", "400001"]}'
+    action: "BLOCK"
+    priority: 1
+    is_active: "false"
+```
+
+### 5. Nginx Config (`nginx/nginx.conf`)
+
+```nginx
+events { worker_connections 1024; }
+
+http {
+    upstream api {
+        server api:8000;
+    }
+
+    # Rate limiting zone
+    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+
+    server {
+        listen 80;
+        server_name localhost;
+
+        # Frontend (React build)
+        location / {
+            root /usr/share/nginx/html;
+            try_files $uri $uri/ /index.html;
+        }
+
+        # API with rate limiting
+        location /risk/ {
+            limit_req zone=api burst=20 nodelay;
+            proxy_pass http://api;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+
+        location /audit/ {
+            limit_req zone=api burst=20 nodelay;
+            proxy_pass http://api;
+        }
+
+        location /health {
+            proxy_pass http://api;
+        }
+
+        # Prometheus metrics (internal only)
+        location /metrics {
+            allow 172.0.0.0/8;
+            deny all;
+            proxy_pass http://api;
+        }
+    }
+}
+```
+
+---
+
+## The "Agentic" Layer (Day 5 Add-on)
+
+You were right to be scared of unconstrained agents. Here's how you add agentic capability **safely**:
+
+```python
+# src/agents/bounded_agent.py
+from typing import List, Literal
+
+class BoundedAgent:
+    """
+    Agent that can ONLY perform pre-approved actions.
+    No LLM decides money movements. Ever.
+    """
+    
+    ALLOWED_ACTIONS = {
+        "score_order": {"params": ["order_id"], "cost": 0},
+        "request_otp": {"params": ["customer_id"], "cost": 1},
+        "flag_review": {"params": ["order_id", "reason"], "cost": 2},
+        "block_order": {"params": ["order_id", "reason"], "cost": 10, "requires_approval": True}
+    }
+    
+    def __init__(self, risk_api_client, approval_queue):
+        self.client = risk_api_client
+        self.approval = approval_queue
+    
+    def act(self, intent: str, params: dict) -> dict:
+        if intent not in self.ALLOWED_ACTIONS:
+            return {"error": "Action not in allowlist", "blocked": True}
+        
+        action = self.ALLOWED_ACTIONS[intent]
+        
+        # High-cost actions require human approval
+        if action.get("requires_approval"):
+            self.approval.submit(intent, params)
+            return {"status": "pending_approval", "ticket_id": str(uuid4())}
+        
+        # Execute bounded action
+        if intent == "score_order":
+            return self.client.score(params["order_id"])
+        elif intent == "request_otp":
+            return self.client.send_otp(params["customer_id"])
+        
+        return {"error": "Unknown execution path"}
+```
+
+**This is your competitive moat:** Every other hackathon team will show a chatbot that "intelligently" refunds orders. You show an agent that **physically cannot** perform unbounded actions, with an audit trail proving it.
+
+---
+
+## Track Recommendation
+
+**Stay in Track 02 (AI Risk Manager)** but reposition:
+
+- Old pitch: "We predict RTO with ML"
+- New pitch: "We built the production risk infrastructure that makes Razorpay's RTO Shield enterprise-grade: feature stores, circuit breakers, tamper-evident audit trails, and bounded agents."
+
+The judges will ask: *"Why not just use Razorpay RTO Shield?"*
+
+Your answer: *"RTO Shield is pincode-level and black-box. We're address-level, explainable, and give merchants control via the rules engine. Plus, we built the trust layer that makes agentic commerce safe — something no existing product does."*
+
+---
+
+## What Your Agent Should Do Next (Right Now)
+
+1. **Create the `docker-compose.yml`** and verify `docker-compose up` works
+2. **Scaffold the React frontend** with `create-react-app` + Tailwind + Recharts
+3. **Migrate your current FastAPI** to the enhanced version above (copy the auth, circuit breaker, feature store, and audit structures)
+4. **Add the rules engine** with 3 default rules
+5. **Add Prometheus metrics** to the API
+6. **Create Grafana dashboard** JSON for model monitoring
+
+If your agent can't do this, **you** do it. The agent can help with boilerplate, but the architecture decisions need your judgment.
+
+Want me to generate the full `Dockerfile` for the backend, the Grafana dashboard JSON, or the database migration scripts?
+
+ Yes, I understood you perfectly. Let me confirm explicitly and then give you the **full system architecture blueprint** (not code — your agents handle that) that puts the agentic layer as a **thin plugin on top of a battle-hardened platform**.
+
+Let me pull current production patterns for financial risk platforms to make sure the architecture spec is grounded in what actually ships at scale.  
+ 
+
+---
+
+## Confirmation: System First, Agentic Second
+
+**Yes, I understood you perfectly.** The agentic layer is a **thin, bounded plugin** that sits on top of a production-grade risk platform. The platform must be able to process real merchant volume *without* any agent involved. The agent only gets access to pre-approved, audited, bounded actions.
+
+Here is the **complete architecture specification** your agents should implement. Treat this as an RFC — they build every box, every wire, every database schema.
+
+---
+
+# Architecture RFC: RTO Trust & Risk Intelligence Layer
+**Version:** 2.0  
+**Target:** Razorpay AI Buildathon — Track 02 (AI Risk Manager) or Track 05 (Open)  
+**Constraint:** System must be demo-ready and architecturally credible for ₹50Cr+ GMV/day
+
+---
+
+## 1. Architectural Principles
+
+| Principle | Rule |
+|---|---|
+| **System First** | The platform runs independently. Agent is an optional consumer of the API, not the core. |
+| **Defense in Depth** | Every layer has its own auth, validation, and circuit breaker. |
+| **Fail Loud, Fail Safe** | If ML is down, fallback to rules. If rules are down, fallback to deny-all. Never silent failure. |
+| **Audit Everything** | Every decision, every feature read, every model inference is tamper-evident logged. |
+| **Zero Trust** | No service trusts another by default. mTLS between services, JWT at gateway. |
+| **Explainability by Design** | No black-box score reaches a merchant. Every decision carries human-readable reasoning. |
+
+---
+
+## 2. Full System Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 0: EDGE & CDN                                                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                        │
+│  │  CloudFlare │  │  AWS Cloud  │  │  Static Asset│                        │
+│  │  (DDoS/WAF) │  │  Front /    │  │  Cache       │                        │
+│  │             │  │  CloudFront │  │  (React Build)│                       │
+│  └──────┬──────┘  └──────┬──────┘  └─────────────┘                        │
+└─────────┼─────────────────┼──────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 1: API GATEWAY & SECURITY (Kong / Nginx + Lua)                      │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  • Rate Limiting (per merchant tier: 100/500/2000 req/min)         │   │
+│  │  • Request Validation (OpenAPI 3.0 strict schema enforcement)      │   │
+│  │  • JWT + API Key dual auth (merchant keys + internal service mTLS) │   │
+│  │  • WAF rules (SQLi, XSS, payload size limits)                      │   │
+│  │  • Request ID propagation (x-request-id across all hops)           │   │
+│  │  • Circuit Breaker state machine (CLOSED/OPEN/HALF_OPEN)           │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 2: APPLICATION SERVICES (Microservices)                              │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  Risk Scorer │  │  Rules Engine│  │  Audit Svc   │  │  Merchant Svc│  │
+│  │  Service     │  │  Service     │  │              │  │              │  │
+│  │  (Python)    │  │  (Go/Rust)   │  │  (Python)    │  │  (Python)    │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
+│         │                 │                 │                 │           │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  Feature     │  │  Model       │  │  Case Mgmt   │  │  Notification│  │
+│  │  Store Svc   │  │  Registry Svc│  │  Service     │  │  Service     │  │
+│  │  (Python)    │  │  (Python)    │  │  (Python)    │  │  (Python)    │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                     │
+│  │  Agent       │  │  Threshold   │  │  Compliance  │                     │
+│  │  Gateway Svc │  │  Manager Svc │  │  Export Svc  │                     │
+│  │  (Bounded)   │  │  (Python)    │  │  (Python)    │                     │
+│  └──────────────┘  └──────────────┘  └──────────────┘                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+          │
+    ┌─────┴─────┐
+    ▼           ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 3: ML PLATFORM & FEATURE STORE                                       │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  FEATURE STORE                                                      │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │   │
+│  │  │  Online     │  │  Offline    │  │  Registry   │               │   │
+│  │  │  (Redis)    │  │  (PostgreSQL│  │  (PostgreSQL│               │   │
+│  │  │  <5ms       │  │  + Parquet) │  │  + Feast)   │               │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘               │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  MODEL REGISTRY & MLOps                                             │   │
+│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │   │
+│  │  │  Model      │  │  Drift      │  │  Champion/  │               │   │
+│  │  │  Versions   │  │  Monitor    │  │  Challenger │               │   │
+│  │  │  (MLflow)   │  │  (Evidently)│  │  (SQLite)   │               │   │
+│  │  └─────────────┘  └─────────────┘  └─────────────┘               │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 4: DATA & PERSISTENCE                                                │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐     │
+│  │  PostgreSQL │  │  Redis      │  │  ClickHouse │  │  MinIO/S3    │     │
+│  │  (Transactional│  │  (Cache/   │  │  (Analytics │  │  (Object     │     │
+│  │   + Audit)  │  │   Session)  │  │   + TSDB)   │  │   Storage)   │     │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └──────────────┘     │
+│                                                                             │
+│  ┌─────────────┐  ┌─────────────┐                                         │
+│  │  Apache     │  │  RabbitMQ / │                                         │
+│  │  Kafka      │  │  Redis      │                                         │
+│  │  (Event Bus)│  │  Streams    │                                         │
+│  └─────────────┘  └─────────────┘                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 5: OBSERVABILITY & COMPLIANCE                                        │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐     │
+│  │  Prometheus │  │  Grafana    │  │  Jaeger     │  │  AlertManager│     │
+│  │  (Metrics)  │  │  (Dashboards│  │  (Tracing)  │  │  (PagerDuty) │     │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └──────────────┘     │
+│                                                                             │
+│  ┌─────────────┐  ┌─────────────┐                                         │
+│  │  ELK Stack  │  │  OpenTelemetry│                                       │
+│  │  (Logs)     │  │  (Instrumentation)                                    │
+│  └─────────────┘  └─────────────┘                                         │
+└─────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  LAYER 6: FRONTEND (React + Vite + Tailwind + Recharts)                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
+│  │  Merchant    │  │  Case Mgmt   │  │  Admin /     │  │  Agent       │ │
+│  │  Dashboard   │  │  Dashboard   │  │  Ops Console │  │  Console     │ │
+│  │  (Risk Scores│  │  (Review Queue│  │  (Rules,     │  │  (Bounded    │ │
+│  │   + Trends)  │  │   + Actions)  │  │   Models,    │  │   Actions)   │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘ │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Service Breakdown (What Each Agent Builds)
+
+### 3.1 Risk Scorer Service
+**Responsibility:** The core scoring engine. Receives order payload, fetches features, runs model, returns decision.
+
+**API Endpoints:**
+- `POST /v1/risk/score` — synchronous, <100ms p99
+- `GET /v1/risk/health` — deep health check (model loaded, feature store reachable)
+- `GET /v1/risk/metrics` — Prometheus format
+
+**Internal Flow:**
+1. Validate request (Pydantic v2 strict)
+2. Check circuit breaker state
+3. Call Rules Engine (fast path, <5ms)
+4. If rule fires → return immediately with rule trace
+5. If no rule → fetch online features from Feature Store
+6. Run model inference (HistGB, cached model object)
+7. Generate SHAP-like explanation (one-at-a-time perturbation)
+8. Log to Audit Service (async, via message queue)
+9. Return structured response
+
+**Dependencies:** Feature Store, Model Registry, Rules Engine, Audit Service, Message Queue
+
+**Database:** None (stateless, reads model from shared volume/registry)
+
+---
+
+### 3.2 Rules Engine Service
+**Responsibility:** Deterministic, sub-millisecond rule evaluation. Written in Go or Rust for speed. Python fallback acceptable for hackathon.
+
+**Data Model:**
+```yaml
+rules:
+  - rule_id: "RULE-001"
+    name: "High Value COD New Customer"
+    condition:
+      operator: "AND"
+      clauses:
+        - { field: "is_cod", op: "eq", value: true }
+        - { field: "amount", op: "gt", value: 50000 }
+        - { field: "prior_orders", op: "eq", value: 0 }
+    action: "BLOCK"
+    priority: 1
+    is_active: true
+    created_by: "admin"
+    merchant_scope: "global"  # or specific merchant_id
+```
+
+**API Endpoints:**
+- `POST /v1/rules/evaluate` — evaluate single order
+- `GET /v1/rules` — list active rules
+- `POST /v1/rules` — create new rule (admin only)
+- `PUT /v1/rules/{id}` — update rule
+- `DELETE /v1/rules/{id}` — soft delete
+
+**Performance Target:** p99 < 5ms for rule evaluation
+
+---
+
+### 3.3 Feature Store Service
+**Responsibility:** Unified feature serving. Eliminates training-serving skew.
+
+**Architecture Pattern:** Virtual Feature Store (maps logical features to physical storage)
+
+**Components:**
+- **Online Store:** Redis (latest values, <5ms retrieval)
+- **Offline Store:** PostgreSQL + Parquet files (historical, point-in-time correct)
+- **Registry:** PostgreSQL table (feature metadata, lineage, owner)
+
+**Feature Types:**
+| Type | Storage | Latency | Example |
+|---|---|---|---|
+| Static | Online + Offline | <1ms | `is_cod`, `product_category` |
+| On-Demand | Computed at request | <10ms | `address_length`, `hour_of_day` |
+| Streaming | Online (Redis) + Offline (Parquet) | <5ms | `rolling_7d_return_rate` |
+| Batch | Offline only (training) | N/A | `customer_lifetime_value` |
+
+**API Endpoints:**
+- `GET /v1/features/{entity_type}/{entity_id}` — fetch online features
+- `POST /v1/features/batch` — batch fetch for multiple entities
+- `POST /v1/features/backfill` — trigger offline backfill (admin)
+- `GET /v1/features/registry` — list all registered features
+
+**Critical:** Every feature has `feature_name`, `data_type`, `owner`, `freshness_sla`, `online_store`, `offline_store`, `description`.
+
+---
+
+### 3.4 Model Registry & MLOps Service
+**Responsibility:** Model versioning, champion/challenger, A/B testing, drift detection.
+
+**Data Model:**
+```sql
+model_registry:
+  - model_version (PK)
+  - model_path (S3/MinIO URI)
+  - metrics (JSON: pr_auc, roc_auc, f1)
+  - is_champion (boolean)
+  - is_challenger (boolean)
+  - traffic_split (float: 0.0-1.0)
+  - deployed_at
+  - drift_status (OK | WARNING | CRITICAL)
+
+model_performance:
+  - model_version
+  - date
+  - pr_auc
+  - score_distribution (histogram bins)
+  - feature_psi (population stability index per feature)
+```
+
+**API Endpoints:**
+- `GET /v1/models/current` — get champion model metadata
+- `POST /v1/models/{version}/promote` — promote challenger to champion
+- `GET /v1/models/{version}/drift` — get drift report
+- `POST /v1/models/drift/check` — trigger manual drift check
+
+**Drift Detection:** PSI (Population Stability Index) per feature. Alert if PSI > 0.25.
+
+---
+
+### 3.5 Audit Service
+**Responsibility:** Tamper-evident, append-only audit trail. Court-admissible.
+
+**Data Model:**
+```sql
+audit_records:
+  - prediction_id (PK, UUID v4)
+  - order_id
+  - merchant_id
+  - request_payload (JSONB)
+  - feature_snapshot (JSONB)  # exact features used at inference time
+  - model_version
+  - probability
+  - risk_score
+  - decision
+  - rule_fired (nullable)
+  - explanation (JSONB array of SHAP-like values)
+  - timestamp (UTC, indexed)
+  - previous_hash (SHA-256 of previous record)
+  - raw_hash (SHA-256 of this record's content + previous_hash)
+  - integrity_verified (boolean, computed on read)
+```
+
+**Tamper Evidence:** Each record hashes the previous record's hash. Breaking one record breaks the chain.
+
+**API Endpoints:**
+- `POST /v1/audit/log` — write audit record (internal only, from Risk Scorer)
+- `GET /v1/audit/{prediction_id}` — fetch single record with integrity check
+- `GET /v1/audit/search` — query by order_id, merchant_id, date range
+- `GET /v1/audit/export` — export to CSV/Parquet for compliance
+
+**Storage:** PostgreSQL (transactional) + daily Parquet rotation to MinIO/S3 for long-term.
+
+---
+
+### 3.6 Case Management Service
+**Responsibility:** Human-in-the-loop review queue. When decision = REVIEW, create a case.
+
+**Data Model:**
+```sql
+cases:
+  - case_id (PK)
+  - prediction_id (FK)
+  - order_id
+  - merchant_id
+  - status: OPEN | UNDER_REVIEW | APPROVED | REJECTED | ESCALATED
+  - assigned_to (nullable)
+  - priority: LOW | MEDIUM | HIGH | CRITICAL
+  - created_at
+  - resolved_at
+  - resolution_notes
+  - resolution_by
+```
+
+**API Endpoints:**
+- `GET /v1/cases` — list cases (filter by status, merchant, priority)
+- `POST /v1/cases/{id}/resolve` — resolve case with decision
+- `POST /v1/cases/{id}/escalate` — escalate to senior reviewer
+- `GET /v1/cases/metrics` — queue metrics (avg resolution time, backlog)
+
+---
+
+### 3.7 Merchant Service
+**Responsibility:** Multi-tenancy. Each merchant has API keys, rate limits, rules, thresholds.
+
+**Data Model:**
+```sql
+merchants:
+  - merchant_id (PK)
+  - name
+  - tier: FREE | STARTUP | GROWTH | ENTERPRISE
+  - api_key_hash
+  - rate_limit_rpm
+  - webhook_url (nullable)
+  - custom_rules_enabled (boolean)
+  - created_at
+
+merchant_thresholds:
+  - merchant_id
+  - accept_threshold (default 0.15)
+  - review_threshold (default 0.60)
+  - reject_threshold (default 0.85)
+```
+
+**API Endpoints:**
+- `POST /v1/merchants` — onboard merchant
+- `GET /v1/merchants/{id}` — get merchant config
+- `PUT /v1/merchants/{id}/thresholds` — update thresholds
+- `GET /v1/merchants/{id}/usage` — API usage stats
+
+---
+
+### 3.8 Notification Service
+**Responsibility:** Webhooks, email, SMS alerts to merchants.
+
+**API Endpoints:**
+- `POST /v1/notify/webhook` — send webhook
+- `POST /v1/notify/email` — send email alert
+- `GET /v1/notify/delivery/{id}` — check delivery status
+
+---
+
+### 3.9 Threshold Manager Service
+**Responsibility:** Dynamic threshold optimization. Merchants can A/B test thresholds.
+
+**Logic:**
+- Default: ACCEPT < 0.15, REVIEW 0.15-0.60, REJECT > 0.60
+- Merchant can override via API
+- System suggests optimal threshold based on cost model (FP cost vs FN cost)
+
+---
+
+### 3.10 Compliance Export Service
+**Responsibility:** RBI/PCI DSS compliance reports.
+
+**API Endpoints:**
+- `GET /v1/compliance/audit-export` — export audit trail for date range
+- `GET /v1/compliance/model-card/{version}` — model card (training data, metrics, limitations)
+- `GET /v1/compliance/drift-report` — last 30 days drift summary
+
+---
+
+## 4. The Agentic Layer (Phase 2 — Thin Plugin)
+
+**Location:** `Agent Gateway Service` — sits as a consumer of the Risk API, not as a controller.
+
+**Design:** The agent **cannot** call payment APIs, refund APIs, or modify orders. It can only:
+1. `risk.score(order_id)` — get risk score
+2. `risk.explain(prediction_id)` — get explanation
+3. `case.create(order_id, reason)` — create review case
+4. `notify.merchant(merchant_id, message)` — send alert
+5. `rules.suggest(condition, action)` — suggest new rule (pending admin approval)
+
+**Guardrails:**
+- Action allowlist (hardcoded, not LLM-decided)
+- Every agent action is logged via Audit Service with `actor: "agent:{agent_id}"`
+- High-cost actions (block, refund suggestions) require human approval queue
+- Agent has no direct DB access — only API calls
+- Agent prompt is deterministic (no open-ended LLM reasoning on money)
+
+**Why this wins:** Other teams show chatbots that "intelligently" refund orders. You show an agent that **physically cannot** perform unbounded actions, with cryptographic proof in the audit trail.
+
+---
+
+## 5. Data Architecture
+
+### 5.1 Database per Service
+| Service | Database | Why |
+|---|---|---|
+| Risk Scorer | Stateless (model in memory) | No DB needed |
+| Rules Engine | PostgreSQL (small, relational) | Rule definitions are relational |
+| Feature Store | Redis (online) + PostgreSQL (offline registry) | Speed + metadata |
+| Audit Service | PostgreSQL + Parquet (S3) | ACID + long-term cheap storage |
+| Case Mgmt | PostgreSQL | Relational, transactional |
+| Merchant Svc | PostgreSQL | Relational, multi-tenant |
+| Analytics | ClickHouse | Columnar, time-series, fast aggregations |
+
+### 5.2 Event Bus (Apache Kafka or Redis Streams)
+**Topics:**
+- `risk.scores` — every scoring event (for analytics)
+- `audit.records` — audit log writes
+- `cases.created` — new review cases
+- `model.drift` — drift alerts
+- `notifications` — webhook/email triggers
+
+**Why:** Decouples Risk Scorer from Audit/Analytics. Risk Scorer publishes and returns immediately. Consumers process async.
+
+---
+
+## 6. Security Model
+
+### 6.1 Zero Trust Between Services
+- **Gateway → Services:** JWT with short expiry (5 min), signed with RS256
+- **Service → Service:** mTLS (mutual TLS) certificates
+- **Service → DB:** Connection pooling with dedicated DB user per service
+- **Secrets:** HashiCorp Vault or Docker Secrets (for hackathon)
+
+### 6.2 Data Protection
+- **At Rest:** PostgreSQL encrypted (LUKS), Redis encrypted (Redis ACL + TLS)
+- **In Transit:** TLS 1.3 everywhere
+- **PII:** Address fields hashed (SHA-256) in audit logs. Original address only in encrypted DB column.
+- **API Keys:** Hashed with bcrypt, never stored plaintext
+
+### 6.3 Compliance Posture
+- **RBI PA Guidelines:** Data localization (all data stays in India region)
+- **PCI DSS:** Tokenization of sensitive fields, audit trail completeness
+- **GDPR-style:** Right to explanation (every decision has SHAP), right to deletion (soft delete + anonymization)
+
+---
+
+## 7. Frontend Architecture
+
+### 7.1 Merchant Dashboard
+**URL:** `/dashboard`
+**Pages:**
+- **Risk Console:** Submit order → see score + gauge chart + decision badge
+- **Trends:** Line chart of risk scores over time, decision distribution pie chart
+- **Audit Explorer:** Search by order ID, filter by date, export CSV
+- **Settings:** Update thresholds, webhook URL, API key rotation
+
+### 7.2 Case Management Dashboard
+**URL:** `/cases`
+**Pages:**
+- **Queue:** Table of open cases, sortable by priority/age
+- **Case Detail:** Order info, risk explanation, approve/reject/escalate buttons
+- **Metrics:** Avg resolution time, cases per reviewer, false positive rate
+
+### 7.3 Admin / Ops Console
+**URL:** `/admin`
+**Pages:**
+- **Rules Manager:** CRUD rules, toggle active/inactive, test rule against sample order
+- **Model Monitor:** PR-AUC over time, feature drift charts, champion/challenger toggle
+- **Merchant Management:** Onboard merchants, view usage, manage tiers
+- **System Health:** Service status, circuit breaker states, queue depths
+
+### 7.4 Agent Console
+**URL:** `/agent`
+**Pages:**
+- **Action Log:** Every action the agent took, with audit trail link
+- **Constraint Viewer:** Read-only view of what the agent CAN and CANNOT do
+- **Approval Queue:** Pending high-cost actions awaiting human approval
+
+---
+
+## 8. Observability Stack
+
+### 8.1 Metrics (Prometheus)
+**Key Metrics:**
+- `risk_score_latency_seconds` (histogram, by p50/p95/p99)
+- `risk_score_decisions_total` (counter, by decision: accept/review/reject)
+- `model_drift_psi` (gauge, by feature)
+- `circuit_breaker_state` (gauge: 0=closed, 1=open, 2=half_open)
+- `feature_store_miss_rate` (gauge)
+- `audit_log_write_errors` (counter)
+
+### 8.2 Dashboards (Grafana)
+**Dashboards:**
+1. **Risk Operations:** Decision volume, score distribution, latency, error rate
+2. **Model Health:** PR-AUC trend, drift PSI per feature, champion vs challenger traffic
+3. **Business Impact:** Estimated RTO loss prevented, review queue depth, resolution time
+4. **Infrastructure:** CPU/memory per service, DB connection pool, Redis hit rate
+
+### 8.3 Tracing (Jaeger)
+- Every request gets a `trace-id` at the gateway
+- Propagated through: Gateway → Risk Scorer → Feature Store → Model → Audit Service
+- Jaeger UI shows full request waterfall with timing per span
+
+### 8.4 Logging (ELK or Loki)
+- Structured JSON logs from every service
+- Fields: `timestamp`, `level`, `service`, `trace_id`, `request_id`, `message`, `context`
+- Centralized search: "Show me all errors for order ORD-123 in the last hour"
+
+---
+
+## 9. Deployment Architecture
+
+### 9.1 For Hackathon Demo (Docker Compose)
+```yaml
+# 12 services, 1 command: docker-compose up
+services:
+  - nginx (gateway)
+  - risk-scorer
+  - rules-engine
+  - feature-store
+  - model-registry
+  - audit-service
+  - case-mgmt
+  - merchant-service
+  - notification-service
+  - postgres
+  - redis
+  - kafka (or redis streams)
+  - prometheus
+  - grafana
+  - jaeger
+  - frontend (nginx serving React build)
+```
+
+### 9.2 Production Migration Path (Kubernetes)
+- Each service → Kubernetes Deployment + Service
+- PostgreSQL → Cloud SQL / RDS (managed)
+- Redis → Memorystore / ElastiCache
+- Kafka → MSK / Confluent Cloud
+- Object Storage → S3 / GCS
+- Istio service mesh for mTLS + traffic management
+- Horizontal Pod Autoscaler (HPA) per service
+
+---
+
+## 10. Implementation Roadmap for Your Agents
+
+### Day 1: Infrastructure Skeleton
+**Goal:** `docker-compose up` works. All services start without errors.
+
+**Agent Tasks:**
+1. Write `docker-compose.yml` with all 16 services
+2. Write `nginx/nginx.conf` with rate limiting, routing, WAF rules
+3. Write `scripts/init-databases.sql` — create all DBs, users, schemas
+4. Write `scripts/init-kafka-topics.sh` — create topics
+5. Verify: `curl http://localhost/health` returns 200 from every service
+
+### Day 2: Core Backend Services
+**Goal:** Risk Scorer + Rules Engine + Feature Store + Audit Service are functional.
+
+**Agent Tasks:**
+1. **Risk Scorer:** FastAPI app, Pydantic models, circuit breaker, model loading
+2. **Rules Engine:** FastAPI app, YAML rule storage, evaluation logic
+3. **Feature Store:** Redis wrapper + PostgreSQL registry + API
+4. **Audit Service:** PostgreSQL schema, hash chain logic, write/read API
+5. Integration test: Submit order → get score → check audit record → verify hash chain
+
+### Day 3: Frontend + Case Management
+**Goal:** Dashboard looks like a real product (dark mode, charts, tables).
+
+**Agent Tasks:**
+1. React + Vite + Tailwind setup
+2. Merchant Dashboard: Risk console, trends charts (Recharts), audit explorer
+3. Case Management: Queue table, case detail page, action buttons
+4. Admin Console: Rules CRUD, model monitor charts, merchant list
+5. Connect frontend to backend APIs (axios, error handling, loading states)
+
+### Day 4: MLOps + Observability
+**Goal:** Model registry, drift detection, metrics, dashboards.
+
+**Agent Tasks:**
+1. **Model Registry:** SQLite/PostgreSQL schema, champion/challenger logic
+2. **Drift Detection:** PSI calculation script, scheduled job (cron or Celery)
+3. **Prometheus:** `metrics` endpoint on every service, custom metrics
+4. **Grafana:** Import dashboard JSONs for Risk Ops, Model Health, Infrastructure
+5. **Jaeger:** OpenTelemetry instrumentation on all services
+
+### Day 5: Agent Gateway + Polish + Video Prep
+**Goal:** Bounded agent demo + all docs + pitch ready.
+
+**Agent Tasks:**
+1. **Agent Gateway:** FastAPI service with hardcoded allowlist, approval queue
+2. **Agent Console:** React page showing action log + constraints + approvals
+3. **Compliance Export:** CSV export endpoint, model card generator
+4. **README:** Architecture diagram, setup instructions, API docs (Swagger UI)
+5. **Pitch Script:** 5-minute beat sheet, demo commands
+6. **Final Verify:** `./verify.sh` runs ruff + pytest + integration tests + docker health checks
+
+---
+
+## 11. Deliverables Checklist for Razorpay
+
+| Deliverable | Location | Status Target |
+|---|---|---|
+| Public GitHub repo | GitHub | Day 5 |
+| `README.md` with architecture | `/README.md` | Day 5 |
+| `docs/ARCHITECTURE.md` | `/docs/ARCHITECTURE.md` | Day 2 |
+| `docs/API_SPEC.md` (OpenAPI 3.0) | `/docs/API_SPEC.md` | Day 2 |
+| `docs/PITCH_SCRIPT.md` | `/docs/PITCH_SCRIPT.md` | Day 5 |
+| Working Docker Compose | `/docker-compose.yml` | Day 1 |
+| 5-min pitch video | YouTube/Vimeo | Day 5 |
+| Live demo URL (optional) | Render/Railway | Day 5 |
+| Test suite (`pytest`) | `/tests/` | Day 2-5 |
+| Integration tests | `/tests/integration/` | Day 3 |
+
+---
+
+## 12. The Competitive Moat (Your Pitch Angle)
+
+**What everyone else builds:** "We used XGBoost to predict RTO with 85% accuracy."
+
+**What you build:** "We built the production risk infrastructure that makes Razorpay's RTO Shield enterprise-grade. Feature stores eliminate training-serving skew. Circuit breakers keep merchants online when models fail. Tamper-evident audit trails satisfy RBI auditors. Bounded agents make AI commerce safe. And it all runs on `docker-compose up`."
+
+**The judge question:** *"Why not just use Razorpay RTO Shield?"*
+
+**Your answer:** *"RTO Shield is pincode-level and opaque. We're address-level, explainable, and give merchants control via the rules engine. More importantly, we built the trust layer that makes agentic commerce safe — deterministic guardrails, not LLM hope."*
+
+---
+
+Give this RFC to your agents. Tell them: **"Build every service, every database schema, every Grafana dashboard, every React page. The agentic layer is the last 10%."** Here is the honest 1:1 mapping. I am flagging **COVERED**, **PARTIALLY COVERED**, **ADDED BY ME**, and **STILL MISSING** so you can direct your agents precisely.
+
+---
+
+## 1:1 Coverage Map
+
+### A. What Was In Your Original Request (Uploaded Doc + Text)
+
+| Your Original Ask | My Coverage | Status |
+|---|---|---|
+| **Geospatial-Enhanced RTO Prediction** | Mentioned in context, but I explicitly told you to **deprioritize geo features** because your own agent already proved they added no lift (E3 no-lift). I kept the Feature Store architecture ready to ingest geo if you get real data later. | ⚠️ PARTIALLY COVERED — Architecture supports it, but I didn't build geo-specific logic because your own eval said it failed |
+| **Trust/Consent Layer for Agentic Commerce** | Covered as **Layer 6 (Agent Gateway)** — bounded agent with hardcoded allowlist, approval queue, no direct DB access, audit trail for every agent action. Positioned as "Phase 2 plugin on top of deterministic platform." | ✅ COVERED |
+| **RTO Precision ≥85%, Recall ≥75%** | Acknowledged as target. I noted your current PR-AUC is 0.55 (weak) and said Day 4 should push to >0.65 minimum. I did NOT provide a magic path to 85% because that requires real data (Amazon.in 129k dataset) + feature engineering your synthetic data can't support. | ⚠️ PARTIALLY COVERED — I gave the MLOps infra to measure and improve it, but honest about data limitation |
+| **False Positive Cost <10%** | Covered via **Threshold Manager Service** + cost model integration. Dynamic threshold optimization based on FP/FN cost ratio. | ✅ COVERED |
+| **Address-level geocode resolution** | Acknowledged but descoped to roadmap. Your agent already cut E3 geo. I kept Feature Store ready to plug in geocoding later. | ⚠️ PARTIALLY COVERED |
+| **Audit trail completeness 100%** | Fully covered via **Audit Service** with tamper-evident hash chain, PostgreSQL + Parquet, compliance export. Every prediction, every feature read, every agent action logged. | ✅ COVERED |
+| **XGBoost baseline + SHAP** | Acknowledged your agent used HistGB because XGBoost install failed. I kept HistGB in architecture but added **Model Registry** so you can swap in XGBoost later without code changes. Added SHAP-like explanation via perturbation (since TreeExplainer doesn't support HistGB). | ✅ COVERED (adapted to your constraint) |
+| **Agent Studio integration** | Covered as **Agent Gateway Service** — NOT an unconstrained chatbot. Bounded, deterministic, with explicit allowlist. | ✅ COVERED (but hardened significantly) |
+| **API endpoint `/risk/score`** | Covered and massively expanded: rate limiting, auth, circuit breaker, fallback logic, structured logging, Prometheus metrics. | ✅ COVERED |
+| **Documentation + Mermaid diagrams** | Covered in architecture spec. I gave you 6-layer architecture diagram, ER models, service interaction maps. | ✅ COVERED |
+| **Specific file components** (cleaning.py, enrich.py, etc.) | Acknowledged as existing. I told your agents to **migrate/elevate** them into proper services rather than scripts. | ⚠️ PARTIALLY COVERED — I referenced them but didn't rewrite each file |
+| **Data sources** (CODScore 7K rows, India Post pincodes, Kaggle Amazon.in) | Acknowledged. I noted the 7K synthetic data is insufficient for 85% precision and flagged the Amazon.in dataset as the upgrade path. | ✅ COVERED (honest assessment) |
+| **9-day timeline / 5 phases** | Replaced with **5-day implementation roadmap** (Day 1-5) because hackathon deadline is likely sooner. Mapped to Docker services. | ✅ COVERED (compressed and made actionable) |
+| **GitHub repos to fork** (fraud-detection-pipeline, geocoder, etc.) | NOT covered. I gave you a "build from scratch" microservices architecture instead of forking boilerplate. If you want me to identify specific repos to fork for each service, I can add that. | ❌ MISSING — I can provide this if needed |
+| **Papers to reference** | NOT covered in my response. Your original doc listed 3 papers. I did not cite them or add new ones. | ❌ MISSING |
+| **Frontend, Backend, CDN, "much more stuff"** | Fully covered: React frontend (4 dashboards), Nginx reverse proxy (CDN-like static serving), 10 backend services, PostgreSQL, Redis, Kafka, Prometheus, Grafana, Jaeger. | ✅ COVERED |
+| **"Agentic is second, system is first"** | **This was your #1 directive.** I led with 5 layers of system infrastructure and put the agent as "Phase 2 — Thin Plugin" in Layer 2/6. The agent cannot function without the platform. | ✅ COVERED (core priority respected) |
+| **Security concerns** (agents hallucinating, free API access, password leaks, coupons) | Covered via **Zero Trust security model**, bounded agent allowlist, mTLS between services, no agent DB access, approval queue for high-cost actions. | ✅ COVERED |
+| **Track selection** (01-05) | I recommended **Track 02 (AI Risk Manager)** with repositioning, or **Track 05 (Open)**. Gave pitch angle for each. | ✅ COVERED |
+| **"Go online, download repos, research papers, patents, skills, tools"** | NOT covered. I did not give your agent a list of specific repos/papers to download. I gave architecture specs only. | ❌ MISSING — I can provide a download list |
+| **Working dir, venv, git commit `aee8a74`** | Acknowledged in context but I did not reference them in the build plan. My architecture assumes Docker, not your local venv. | ⚠️ PARTIALLY COVERED |
+
+---
+
+### B. What You Explicitly Asked From Me
+
+| Your Ask | What I Delivered |
+|---|---|
+| **"I don't see it as consumer ready and big business company ready yet"** | I agreed and gave a **production microservices architecture** with 16 Docker services, multi-tenancy, auth, rate limiting, circuit breakers, and compliance posture. |
+| **"You need to create frontend backend, CDN and much more stuff"** | Delivered: React frontend with 4 dashboards, Nginx CDN-like static serving, 10 backend services, full data layer, observability stack. |
+| **"Agentic front is just a thing we build on legacy arch and legal + powerful system"** | Delivered exactly this: 5 system layers first, agent as thin consumer in Layer 6. |
+| **"I don't need to make it around agentic from start"** | Respected. Agent is explicitly Phase 2. |
+| **"Agents have hallucinated / tricked to give free access... vulnerable actions"** | Addressed via bounded agent design: hardcoded allowlist, no money movement APIs, approval queue for block actions, tamper-evident audit. |
+| **"I need it to do more work like a full infra over the ps"** | Delivered full infrastructure: API Gateway, Feature Store, Model Registry, Audit Service, Case Management, Compliance Export, Notification Service, Threshold Manager, Event Bus, Observability. |
+| **"Don't worry of code and complexity as I have agent to do it"** | I gave you **architecture RFC + service specs + data models** — not line-by-line code. The agents implement from the spec. |
+
+---
+
+### C. What I Added (Not Originally Asked, But Required for Production)
+
+| What I Added | Why I Added It |
+|---|---|
+| **Circuit Breaker** | Your original doc had no failure handling. I added it because Razorpay cannot have a down ML model blocking all orders. |
+| **Multi-tenancy (Merchant Service)** | Your original was single-tenant. A real risk platform serves thousands of merchants with isolated rules/thresholds. |
+| **Case Management Service** | Human-in-the-loop is mandatory for "REVIEW" decisions. Your original had no review queue UI. |
+| **Feature Store (Online/Offline split)** | Your original had pandas in-memory features. I added Redis + PostgreSQL registry to eliminate training-serving skew. |
+| **Model Registry + Champion/Challenger** | Your original had one static pkl file. I added versioning, A/B testing, and drift detection. |
+| **Threshold Manager Service** | Your original had hardcoded thresholds (0.15, 0.60). I made them dynamic per-merchant with cost optimization. |
+| **Tamper-evident hash chain** | Your original had JSONL logs. I upgraded to cryptographic integrity for RBI compliance. |
+| **Prometheus + Grafana + Jaeger** | Your original had no observability. Production systems require metrics, tracing, and dashboards. |
+| **Event Bus (Kafka/Redis Streams)** | Your original had synchronous audit writes. I decoupled services for resilience. |
+| **ClickHouse for Analytics** | Your original had no analytics DB. I added columnar storage for fast aggregations. |
+| **Compliance Export Service** | Your original had no regulatory export. I added CSV/Parquet export + model cards. |
+| **4 Frontend Dashboards** | Your original had no frontend. I specified Merchant, Case Mgmt, Admin, and Agent consoles. |
+| **Zero Trust / mTLS / WAF** | Your original had no security model. I added defense-in-depth. |
+
+---
+
+### D. What Is Still Missing (You Need to Tell Your Agents to Add These)
+
+| Missing Item | Action for Your Agents |
+|---|---|
+| **Specific GitHub repos to fork/download** | I can give you a list of 10 repos (Feast for feature store, MLflow for model registry, Evidently for drift, etc.) |
+| **Research paper references** | I can pull 5-10 relevant papers on fraud detection, RTO prediction, and agentic commerce guardrails |
+| **Patent / prior art search** | Not covered. If you want patent landscape for "bounded agent + risk platform," I can search. |
+| **Kaggle API integration** | Your agent noted this is blocked. I didn't provide the drop-in code for Amazon.in dataset ingestion. |
+| **Real geocoding provider integration** | Your original wanted Nominatim/Google Maps. I kept it as "on_demand feature" but didn't spec the geocoder service. |
+| **Load testing / k6 scripts** | Not covered. A real platform needs load tests. I can add this. |
+| **CI/CD pipeline** | Not covered. GitHub Actions for testing, building, deploying. |
+| **Infrastructure-as-Code** | Not covered. Terraform/Pulumi for AWS/GCP deployment. |
+| **Specific cost model implementation** | I mentioned cost-optimal threshold but didn't provide the cost function code. |
+
+---
+
+## Summary Verdict
+
+| Category | Count |
+|---|---|
+| **Fully Covered** | 18 items |
+| **Partially Covered** | 5 items |
+| **Added by Me (Production Hardening)** | 13 items |
+| **Still Missing** | 9 items |
+
+**The core directive — "System first, agentic second" — was fully respected.** The architecture I gave you is 90% system infrastructure and 10% agentic layer.
+
+**The honest gap:** I gave you the **architecture specification** (the blueprint), but I did NOT give your agents the **implementation shortcuts** (specific repos to clone, specific papers to download, specific libraries to pip install). If you want me to generate a "download and integrate" list so your agents don't code everything from scratch, tell me and I'll produce it now.
+
+Do you want me to fill the **Still Missing** column now? I'll research and fill every missing strategic asset. Let me pull current production-grade resources, academic backing, competitive intelligence, and operational patterns.  
+  
+     
+        
+ Here is the complete **Missing Assets Brief** — every gap filled with curated, production-grade resources your agents can download and wire into the architecture. No coding from scratch. All strategic decisions made for you.
+
+---
+
+# Missing Assets Brief: Strategic Downloads & Integrations
+
+---
+
+## 1. GitHub Repos to Fork / Download (Per Service Layer)
+
+Instead of building every component from scratch, your agents fork these battle-tested repos and adapt them to your schema.
+
+| Your Service | Repo to Fork | Why This One | Adaptation Work |
+|---|---|---|---|
+| **Feature Store** | `feast-dev/feast` (Apache 2.0) | The open-source standard. Online store (Redis), offline store (Parquet/BigQuery), registry, point-in-time correct joins. Used by Shopify, Gojek. | Add your feature definitions (`features.py`). Configure Redis + PostgreSQL as stores. |
+| **Model Registry** | `mlflow/mlflow` (Apache 2.0) | 26K+ stars. Model versioning, stage transitions (Staging→Production), artifact storage, experiment tracking. | Replace your SQLite registry with MLflow tracking server. Point artifact store to MinIO/S3. |
+| **Drift Detection** | `evidentlyai/evidently` (Apache 2.0) | Production drift detection: PSI, KS-test, data quality. Generates HTML reports. | Schedule `evidently` to compare reference vs production feature distributions. Pipe alerts to Prometheus. |
+| **API Gateway** | `Kong/kong` (Apache 2.0) | Plugin architecture: rate limiting, JWT auth, request transformation, bot detection. Used by Razorpay. | Configure `kong.yml` with your routes, rate limits, JWT plugin. Point upstream to your Risk Scorer. |
+| **Audit / Tamper Chain** | `hyperledger/aries` (Apache 2.0) | Overkill for full blockchain, but steal their **append-only log + hash chain** implementation. | Strip to PostgreSQL + SHA-256 chain. No distributed consensus needed. |
+| **Case Management UI** | `appsmithorg/appsmith` (Apache 2.0) | Low-code internal tool builder. Your ops team can build case review UIs without React coding. | Connect to your `cases` PostgreSQL table. Build review queue, action buttons, metrics dashboard. |
+| **Observability Stack** | `prometheus/prometheus` + `grafana/grafana` (Apache 2.0) | Industry standard. Prometheus scrapes metrics, Grafana dashboards. | Import dashboard JSONs (provided below). Configure `prometheus.yml` to scrape all 10 services. |
+| **Notification Service** | `knadh/listmonk` (AGPL-3.0) | High-performance email/SMS campaign manager. REST API, template engine, analytics. | Use for merchant alerts, OTP notifications, case assignment emails. |
+| **Bounded Agent Runtime** | `e2b-dev/E2B` (Apache 2.0) | Sandboxed code execution environment. Perfect for running agent actions in isolated, time-boxed containers. | Configure allowlist of API calls. Kill sandbox after 30s or on policy violation. |
+
+**Command for your agents:**
+```bash
+# Day 1: Clone all strategic dependencies
+mkdir -p third_party && cd third_party
+git clone https://github.com/feast-dev/feast.git
+git clone https://github.com/mlflow/mlflow.git
+git clone https://github.com/evidentlyai/evidently.git
+git clone https://github.com/Kong/kong.git
+git clone https://github.com/prometheus/prometheus.git
+git clone https://github.com/grafana/grafana.git
+git clone https://github.com/knadh/listmonk.git
+git clone https://github.com/e2b-dev/E2B.git
+git clone https://github.com/appsmithorg/appsmith.git
+```
+
+---
+
+## 2. Research Papers to Reference (Academic Credibility)
+
+Your pitch needs citations. These papers back your architectural decisions and differentiate you from "I trained an XGBoost model" entrants.
+
+| Paper | Key Insight | Where to Cite |
+|---|---|---|
+| **"E-Commerce Fraud Detection Based on Machine Learning Techniques: Systematic Literature Review"** (Big Data Mining and Analytics, 2024)  | Systematic review of 170+ fraud detection papers. Confirms: ensemble methods outperform single classifiers, SMOTE/ADASYN essential for imbalanced data, feature engineering > algorithm choice. | Methodology section: "Our approach aligns with the systematic review findings that ensemble methods and resampling strategies are critical for imbalanced fraud detection." |
+| **"Modeling and Optimization of Deep and Machine Learning Methods for Credit Card Fraud Risk Management"** (Mathematics, 2026)  | Formalizes cost-sensitive threshold optimization: `τ* = C_FP / (C_FP + C_FN)`. Shows that when missed fraud costs 10× false alert cost, optimal threshold drops to ~9%. | Threshold Manager section: "We implement the decision-theoretic cost-sensitive threshold rule from [citation], dynamically optimizing per merchant risk appetite." |
+| **"Building Trust in Agentic Commerce"** (Liminal, 2025)  | Three-pillar framework: Authentication (agent identity), Authorization (bounded scopes), Verification (audit + explainability). | Agent Gateway pitch: "Our bounded agent implements the three-pillar trust framework: verifiable identity, policy-engine authorization, and tamper-evident verification." |
+| **"COD Fraud in Indian E-commerce"** (Pragma, 2025)  | Industry data: selective OTP reduces fraud 78-84% at 4-7% conversion cost. Velocity controls block 89-93% of coordinated fraud. Address validation prevents 42-48% of address-based fraud. | Business case: "Published industry data shows selective OTP verification reduces COD fraud by 78-84% with only 4-7% conversion impact — validating our REVIEW → OTP intervention flow." |
+| **"AI Agent Risks & Guardrails: 2026 Enterprise Security Guide"** (Atlan, 2026)  | 5-layer guardrail stack: Data/Context → Design-time Governance → Runtime Gateways → Identity/Security → Human-in-the-Loop. Gartner predicts 40% of CIOs will demand guardian agents by 2028. | Security architecture: "Our 5-layer defense model maps directly to the 2026 enterprise guardrail framework, with runtime agent gateways and human-in-the-loop approval for high-cost actions." |
+
+**Download strategy:** Your agents can access all via your college library (IEEE Xplore, ScienceDirect, ACM Digital Library). The Pragma and Liminal articles are free web resources.
+
+---
+
+## 3. Patent / Prior Art Landscape (Competitive Intelligence)
+
+You need to know what's already patented so you don't claim obvious inventions and so you can position your differentiation.
+
+| Patent / Filing | Holder | What It Covers | Your Differentiation |
+|---|---|---|---|
+| **US20240012345A1** — "System and method for real-time fraud risk scoring in payment networks" | Visa/Mastercard ecosystem | Real-time transaction scoring using behavioral biometrics + device fingerprinting. | You score **pre-delivery RTO risk**, not payment authorization fraud. Different domain, different features. |
+| **US20230187654B2** — "Geocoding-based delivery risk assessment" | Amazon Logistics | Using geocoding confidence + delivery density to predict failed delivery. | Amazon's is internal, black-box, and tied to their logistics network. Yours is **merchant-facing, explainable, with audit trails and agent integration**. |
+| **WO2024/098765A1** — "Bounded autonomous agent for financial operations" | IBM/Samsung consortium | Agent with policy engine + human approval for financial transactions. | Their patent covers the **concept** of bounded agents. Your implementation is **open-source, with cryptographic audit trails and feature-store integration** — no one has patented that specific combination. |
+| **Razorpay RTO Shield** (Trade Secret, not patent) | Razorpay | Pincode-level RTO prediction, black-box model. | Your differentiation: **address-level granularity, merchant-controlled rules engine, explainable SHAP outputs, and agent safety layer**. |
+
+**Strategic note:** Do NOT try to patent your system during a hackathon. Instead, in your pitch say: *"While existing solutions like Razorpay RTO Shield operate at pincode-level as black boxes, we built an open, explainable, merchant-controlled risk layer with bounded agent integration — a capability no existing patent or product covers."*
+
+---
+
+## 4. Kaggle Dataset Upgrade Path (Real Data Drop-In)
+
+Your synthetic 7K rows won't impress judges. Here's the real dataset your agent noted but couldn't access.
+
+| Dataset | Source | Size | Labels | Drop-in Compatibility |
+|---|---|---|---|---|
+| **"Amazon India Sales Report"** | Kaggle (user-uploaded, public) | ~129,000 orders | `Status` (Delivered/Cancelled/Returned), `Amount`, `Category`, `Qty`, `ship-city`, `ship-state`, `B2B` flag | Direct mapping: `Status=Returned` → `is_returned=1`. `Amount` → `order_amount`. `ship-city/state` → geospatial features. |
+| **"Indian E-commerce Dataset"** | Kaggle | ~50,000 orders | `Order Status`, `Payment Method` (COD/Prepaid), `Product Category`, `Customer Location` | Has explicit COD flag + return status. Smaller but cleaner. |
+| **"Online Retail Dataset"** (UCI ML Repo) | UCI / Kaggle | ~541,000 transactions (UK-based) | `Quantity`, `UnitPrice`, `CustomerID`, `Country`, `InvoiceDate` | No RTO labels, but excellent for **feature engineering patterns** (RFM analysis, customer tenure). |
+
+**How to get it without Kaggle API credentials:**
+1. Go to kaggle.com → Datasets → Search "Amazon India Sales"
+2. Download CSV manually (~15MB)
+3. Place in `data/raw/amazon_india_sales.csv`
+4. Your agent runs `scripts/ingest_kaggle.py` which maps columns to your schema
+
+**Expected lift:** With 129K real orders + proper address parsing + temporal features, PR-AUC should jump from 0.55 to **0.72-0.78** range. That's demo-credible.
+
+---
+
+## 5. Geocoding Provider Architecture (India-Specific)
+
+Your original plan mentioned Nominatim + Google Maps. Here's the production-grade decision matrix.
+
+| Provider | Free Tier | India Accuracy | Rate Limit | Best For |
+|---|---|---|---|---|
+| **Nominatim (self-hosted)** | Unlimited | Urban: excellent. Rural: ~centroid-level. | None if self-hosted | Cost-sensitive, privacy-critical (data stays on your server) |
+| **Mapbox** | 100K/month | Global, urban India strong | 600 req/min | Production default. Best free-tier value. |
+| **HERE Geocoding** | 250K/month | Strong in India (former Nokia Maps) | 500 req/sec | Enterprise option if you need highest accuracy + SLA |
+| **Google Maps** | $200 credit (~28K requests) | Best global coverage | 50 req/sec | Fallback only. Expensive at scale ($5/1K). |
+| **LocationIQ** | 5K/day | Nominatim-compatible, higher limits | 2 req/sec | Budget option, Nominatim API-compatible |
+
+**Recommended architecture for your hackathon:**
+- **Primary:** Mapbox (100K free/month, production-grade, no self-hosting overhead)
+- **Fallback:** Self-hosted Nominatim Docker container (for offline/bulk geocoding of your 157K India Post pincodes)
+- **Validation:** India Post pincode API (free, official) to validate pincode existence before geocoding
+
+**Integration pattern:**
+```
+Address → Pincode Validation (India Post) → Geocode (Mapbox) → 
+Confidence Score → If confidence < 0.7 → Fallback to Nominatim → 
+Store in Feature Store (Redis) + Audit Log
+```
+
+---
+
+## 6. Load Testing Strategy (k6 vs Locust)
+
+You need to prove your system handles load. Here's the decision and patterns.
+
+| Tool | Language | Best For | Your Use Case |
+|---|---|---|---|
+| **k6** | JavaScript (Go engine) | CI/CD gating, high throughput, Prometheus-native | **Primary choice.** Single binary, threshold-based pass/fail (`p(95)<100ms`), integrates with Grafana Cloud. |
+| **Locust** | Python | Complex logic, distributed load, Python ecosystem | **Secondary.** Use if your team needs to compute HMAC signatures or custom auth in test scripts. |
+
+**Recommended: k6** for your hackathon because:
+- Your agents write JavaScript faster than Python for simple HTTP tests
+- Native threshold gating: if p95 latency > 100ms, the CI pipeline fails 
+- Single binary, no Python environment needed on CI runners
+
+**Load patterns to implement:**
+1. **Steady-state:** 100 concurrent users, 5 minutes → baseline metrics
+2. **Ramp:** 0→1000 users over 2 minutes → autoscaling test
+3. **Spike:** 0→5000 users in 30 seconds → circuit breaker test
+4. **Soak:** 100 users for 30 minutes → memory leak detection
+
+**Target thresholds:**
+- `p(50) < 50ms` (median latency)
+- `p(95) < 100ms` (tail latency)
+- `p(99) < 200ms` (worst case)
+- Error rate < 0.1%
+- ML inference latency < 20ms (model-only)
+
+---
+
+## 7. CI/CD Pipeline (GitHub Actions MLOps)
+
+Your agents need a production-grade pipeline, not just `pytest`. Here's the workflow architecture.
+
+**Pipeline stages (`.github/workflows/mlops.yml`):**
+
+| Stage | Trigger | Actions | Gates |
+|---|---|---|---|
+| **CI: Code Quality** | Push/PR | `ruff` lint, `pytest` unit tests, `mypy` type check | Fail on lint error or test failure |
+| **CI: Data Validation** | Push/PR + scheduled (daily) | Schema check, null value detection, distribution drift (Evidently) | Fail if schema changes or drift PSI > 0.1 |
+| **CT: Model Training** | Push to `main` + data update | DVC pull data → train → evaluate → log to MLflow | Fail if PR-AUC < 0.60 on validation |
+| **CT: Model Registry** | Training success | Register model → stage=Staging → run integration tests | Auto-promote to Production if tests pass |
+| **CD: Container Build** | Model promoted | Build Docker image → push to GHCR → tag with model version | Vulnerability scan (Trivy) |
+| **CD: Deploy** | Container built | Blue-green deploy to staging → k6 load test → promote to prod | Fail if k6 thresholds breached |
+| **Monitor** | Continuous | Prometheus scrape → Grafana dashboards → PagerDuty alerts | Auto-rollback if error rate > 1% |
+
+**Key tools to integrate:**
+- **DVC** (Data Version Control): Version your datasets like code 
+- **MLflow Tracking**: Every training run logged with params, metrics, artifacts
+- **Trivy**: Container vulnerability scanning
+- **GitHub Actions Arm64 runners**: 30% cheaper, good for ML training 
+
+---
+
+## 8. Infrastructure-as-Code (Terraform vs Pulumi Decision)
+
+For your hackathon demo, Docker Compose is enough. But judges will ask: *"How does this deploy to production?"* You need an answer.
+
+| Tool | License | Language | Best For | Your Decision |
+|---|---|---|---|---|
+| **Terraform** | BSL 1.1 (commercial restrictions) | HCL | Largest ecosystem (4800+ providers), most hiring pool | **Avoid.** BSL license is a liability for open-source project. |
+| **OpenTofu** | MPL 2.0 (fully open-source) | HCL (Terraform-compatible) | Drop-in Terraform replacement, Linux Foundation governance | **Recommended for production migration.** Zero code changes from Terraform. |
+| **Pulumi** | Apache 2.0 | TypeScript/Python/Go | Real programming languages, unit-testable infrastructure, AI-agent ready (Pulumi Neo) | **Recommended if your team knows Python/TS.** Better for complex logic. |
+
+**Hackathon recommendation:** 
+- **Demo:** Docker Compose (local)
+- **Pitch:** "We designed for cloud-native deployment with OpenTofu IaC — here is the architecture diagram showing VPC, ALB, Auto Scaling Groups, and RDS Multi-AZ."
+
+**Production migration spec (for pitch deck):**
+```
+┌─────────────────────────────────────────┐
+│  AWS VPC (ap-south-1 / Mumbai)         │
+│  ┌─────────┐  ┌─────────┐  ┌────────┐ │
+│  │  Public │  │  Private│  │  Private│ │
+│  │  Subnet │  │  Subnet │  │  Subnet │ │
+│  │  (ALB)  │  │  (EKS)  │  │  (RDS)  │ │
+│  └─────────┘  └─────────┘  └────────┘ │
+│  • Application Load Balancer (WAF)     │
+│  • EKS Cluster (K8s, 3 nodes min)      │
+│  • RDS PostgreSQL (Multi-AZ, encrypted)│
+│  • ElastiCache Redis (cluster mode)    │
+│  • MSK Kafka (3 brokers)               │
+│  • S3 (audit parquet, model artifacts) │
+│  • CloudWatch + Prometheus (metrics)   │
+└─────────────────────────────────────────┘
+```
+
+---
+
+## 9. Cost Model Framework (The Mathematical Business Logic)
+
+Your original doc mentioned cost-optimal threshold but didn't formalize it. Here's the complete framework.
+
+**Variables:**
+- `C_FP` = Cost of false positive (reviewing a good order) = ₹50 (ops time)
+- `C_FN` = Cost of false negative (missing an RTO) = ₹600 (forward shipping + reverse shipping + repackaging + blocked inventory)
+- `C_OTP` = Cost of OTP verification = ₹5 (SMS cost + conversion friction)
+- `C_BLOCK` = Cost of blocking a good order = ₹1000 (lost lifetime value)
+
+**Decision matrix:**
+
+| Decision | Condition | Expected Cost |
+|---|---|---|
+| **ACCEPT** | `p < τ_accept` | `p × C_FN` (accept and hope) |
+| **REVIEW + OTP** | `τ_accept ≤ p < τ_reject` | `C_OTP + (1-p) × C_FP + p × (1-0.82) × C_FN` | *(OTP reduces fraud by 82%)* |
+| **REJECT** | `p ≥ τ_reject` | `(1-p) × C_BLOCK` |
+
+**Optimal thresholds (from [Mathematics 2026 paper]):**
+```
+τ* = C_FP / (C_FP + C_FN) = 50 / (50 + 600) ≈ 0.077
+```
+
+But because you have a **three-way decision** (Accept / Review / Reject), the optimization becomes:
+
+```python
+def optimal_decision(p, c_fp=50, c_fn=600, c_otp=5, c_block=1000, otp_effectiveness=0.82):
+    cost_accept = p * c_fn
+    cost_review = c_otp + (1-p) * c_fp + p * (1-otp_effectiveness) * c_fn
+    cost_reject = (1-p) * c_block
+    
+    return min([
+        ("ACCEPT", cost_accept),
+        ("REVIEW", cost_review),
+        ("REJECT", cost_reject)
+    ], key=lambda x: x[1])
+```
+
+**Business insight for pitch:**
+- At `p = 0.10`: Cost(Accept) = ₹60, Cost(Review) = ₹5 + ₹45 + ₹10.8 = ₹60.8, Cost(Reject) = ₹900 → **ACCEPT**
+- At `p = 0.40`: Cost(Accept) = ₹240, Cost(Review) = ₹5 + ₹30 + ₹43.2 = ₹78.2, Cost(Reject) = ₹600 → **REVIEW**
+- At `p = 0.80`: Cost(Accept) = ₹480, Cost(Review) = ₹5 + ₹10 + ₹86.4 = ₹101.4, Cost(Reject) = ₹200 → **REJECT**
+
+**This is your competitive moat:** You don't just predict risk. You **optimize merchant profit** by choosing the cheapest intervention for each risk level. No other hackathon team will have this math.
+
+---
+
+## Summary: What Your Agents Do Now
+
+| Asset | Action | Time |
+|---|---|---|
+| **Repos** | `git clone` all 9 repos into `third_party/` | 30 min |
+| **Papers** | Download PDFs, place in `docs/research/`, add BibTeX to README | 1 hour |
+| **Kaggle Data** | Manual download → `data/raw/amazon_india_sales.csv` → run `scripts/ingest_kaggle.py` | 2 hours |
+| **Geocoding** | Sign up for Mapbox free tier (100K/month), get API key, test 10 Indian addresses | 1 hour |
+| **k6** | Install binary, write `tests/load/risk_api_load.js` with 4 load patterns | 2 hours |
+| **CI/CD** | Write `.github/workflows/mlops.yml` with 7 stages | 3 hours |
+| **IaC** | Write `infra/opentofu/main.tf` with VPC + EKS + RDS spec (for pitch only, don't deploy) | 4 hours |
+| **Cost Model** | Implement `src/business/cost_optimizer.py` with the three-way decision function | 2 hours |
+
+**Total agent time:** ~16 hours of integration work. All strategic decisions are made above. They just wire things together.
+
+Give this brief to your agents. Tell them: **"Download first, code second. Every component above is production-tested by companies bigger than Razorpay."**   
+
+
+Delivered: docs/ARCHITECTURE_V3.md (~700 lines, living doc) + README pointer. No code touched (only 2 markdown files in git status).
+
+What it does vs the other agent's RFC:
+
+Part I audits their plan: 19 findings, including repo amnesia (their "to-build" list already exists in your src/), decorative Redis/Postgres in compose, train-at-startup smell, the global hash-chain write bottleneck, Kafka/ClickHouse/Feast/Aries/E2B misprescriptions, AGPL license inconsistency, and suspect fabricated patent numbers you should never cite.
+Parts II–VIII scale it up logically: persona×permission matrix, decomposition doctrine (split only on ≥2 of scaling/failure-domain/cadence/compliance — kills 5 of their 10 services with reasons), container view with latency budgets, event topology with DLQ/replay semantics, outbox+Merkle audit v3 (fixes RPO=0 lie), the missing label-feedback subsystem, crypto-shredding for DPDP erasure, intervention-policy engine + /v1/simulate backtester, edge-case catalog (~35 rows, each = required test), retry/timeout matrix, SLO burn-rate alerting, toxiproxy chaos demos.
+Every component/connection has upside/downside/alternatives/revisit-trigger — deferrals are measured triggers, not laziness.
+CD-1..12: the only planned minimal code deltas.
+Your calls needed (§22): track lock, manual Kaggle CSV pull, Mapbox key, deadline date. Want me to start executing CD-1..7 (Phase P0/P1) or iterate on any section first?
+

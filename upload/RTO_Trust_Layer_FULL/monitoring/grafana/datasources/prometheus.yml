@@ -1,0 +1,21 @@
+# Grafana datasource provisioning — auto-loaded on container boot.
+# Ref: https://grafana.com/docs/grafana/latest/administration/provisioning/#data-sources
+#
+# This file makes Grafana pre-configure the Prometheus datasource so the
+# `rto-dashboard.json` panels resolve on first boot instead of showing
+# "Datasource ${DS_PROMETHEUS} was not found".
+apiVersion: 1
+
+# Datasources to insert/update. Grafana matches existing datasources by `name`
+# (and orgId); it will update the matched datasource in place rather than
+# duplicate it.
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: POST

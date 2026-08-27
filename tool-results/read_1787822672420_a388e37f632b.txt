@@ -1,0 +1,737 @@
+     1→import sys
+     2→from pathlib import Path
+     3→
+     4→import pytest
+     5→from fastapi.testclient import TestClient
+     6→
+     7→sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+     8→
+     9→from src.api.breaker import CircuitBreaker  # noqa: E402
+    10→from src.api.routes import create_app  # noqa: E402
+    11→from src.audit.logger import AuditLogger  # noqa: E402
+    12→from src.business.cost_optimizer import (  # noqa: E402
+    13→    DEFAULT_INTERVENTION_WEIGHTS,
+    14→    INTERVENTIONS,
+    15→    bootstrap_cost_ci,
+    16→    calibrate_probabilities,
+    17→    cost_curve_sweep,
+    18→    find_cost_crossover,
+    19→    find_intervention_crossover,
+    20→    intervention_curve_sweep,
+    21→    optimal_decision,
+    22→    optimal_intervention,
+    23→)
+    24→from src.rules.engine import RulesEngine  # noqa: E402
+    25→
+    26→SCORER_H = {"Authorization": "Bearer score-demo-key"}
+    27→ADMIN_H = {"Authorization": "Bearer admin-demo-key"}
+    28→VALID = {
+    29→    "order_id": "SHIP-001",
+    30→    "amount_inr": 899,
+    31→    "category": "Fashion",
+    32→    "customer_id": "CUST-S1",
+    33→}
+    34→
+    35→
+    36→def test_cost_optimizer_matches_decision_theory():
+    37→    """Note: with c_block=1000, REVIEW beats REJECT until ~0.93; the widely-copied
+    38→    blog example claiming REJECT@0.8 contradicts its own arithmetic."""
+    39→    assert optimal_decision(0.10)[0] == "ACCEPT"
+    40→    assert optimal_decision(0.40)[0] == "REVIEW"
+    41→    assert optimal_decision(0.40)[0] == "REVIEW"
+    42→    assert optimal_decision(0.95)[0] == "REJECT"
+    43→    _, costs = optimal_decision(0.5)
+    44→    assert set(costs) == {"ACCEPT", "REVIEW", "REJECT"}
+    45→
+    46→
+    47→def test_calibrate_probabilities_bahnsen_eq6_noop_when_priors_equal():
+    48→    """Bahnsen Eq.(6) recalibration: P*(f|x) = P(f|x)·P_orig/P_und.
+    49→    When no resampling is applied (p_orig == p_und), the ratio is 1.0 and the
+    50→    function is a no-op fast path — probabilities returned unchanged."""
+    51→    p_orig = p_und = 0.23
+    52→    # Scalar input
+    53→    assert calibrate_probabilities(0.5, p_orig, p_und) == 0.5
+    54→    # Sequence input
+    55→    out = calibrate_probabilities([0.1, 0.5, 0.9], p_orig, p_und)
+    56→    assert out == [0.1, 0.5, 0.9]
+    57→
+    58→
+    59→def test_calibrate_probabilities_bahnsen_eq6_rescales_when_undersampled():
+    60→    """If S50 under-sampling inflates the positive prior from 0.05 to 0.50,
+    61→    a model predicting p=0.5 should recalibrate to 0.05 (the original prior)."""
+    62→    p_orig = 0.05
+    63→    p_und = 0.50
+    64→    out = calibrate_probabilities(0.5, p_orig, p_und)
+    65→    assert abs(out - 0.05) < 1e-9
+    66→    # Edge: p_und=0 → division-by-zero guard → returns 0 (not +inf)
+    67→    assert calibrate_probabilities(0.9, 0.05, 0.0) == 0.0
+    68→    # Edge: p_orig=0 → all calibrated probabilities are 0
+    69→    assert calibrate_probabilities([0.5, 0.9], 0.0, 0.5) == [0.0, 0.0]
+    70→    # Edge: clip inputs outside [0, 1] before applying the ratio
+    71→    assert calibrate_probabilities(1.5, 0.5, 0.5) == 1.0  # clipped to 1, ratio=1
+    72→    assert calibrate_probabilities(-0.2, 0.5, 0.5) == 0.0  # clipped to 0, ratio=1
+    73→
+    74→
+    75→def test_cost_curve_sweep_returns_per_threshold_data():
+    76→    """Drummond-Holte cost-curve sweep over a labeled mini-dataset."""
+    77→    y_true = [0, 0, 0, 1, 1, 1]
+    78→    # Include a sample with p=0.95 so the top threshold still flags something
+    79→    # — exercises the boundary case at the sweep's last point.
+    80→    probs = [0.10, 0.20, 0.30, 0.50, 0.70, 0.95]
+    81→    out = cost_curve_sweep(y_true, probs, c_fp=50.0, c_fn=600.0)
+    82→    assert len(out) == 19  # 0.05 → 0.95 step 0.05
+    83→    r = out[0]  # threshold = 0.05 — every sample flagged
+    84→    assert r["threshold"] == 0.05
+    85→    assert set(r.keys()) == {
+    86→        "threshold", "tp", "fp", "fn", "tn", "cost", "precision", "recall"
+    87→    }
+    88→    # At t=0.05: all 6 flagged (3 TP, 3 FP, 0 FN, 0 TN); cost = 6*c_fp = 300
+    89→    assert r["tp"] == 3 and r["fp"] == 3 and r["fn"] == 0 and r["tn"] == 0
+    90→    assert r["cost"] == 300.0
+    91→    assert r["recall"] == 1.0  # 3/3
+    92→    # At t=0.95: only the p=0.95 sample is flagged (>= comparison)
+    93→    r_high = out[-1]
+    94→    assert r_high["threshold"] == 0.95
+    95→    assert r_high["tp"] == 1 and r_high["fp"] == 0 and r_high["fn"] == 2
+    96→    # Cost = 1*50 + 2*600 = 1250
+    97→    assert r_high["cost"] == 1250.0
+    98→    assert r_high["recall"] == round(1 / 3, 4)  # 1/3 → 0.3333
+    99→
+   100→
+   101→def test_bootstrap_cost_ci_returns_band_per_threshold():
+   102→    """≥500 resamples preserving row marginals (Drummond-Holte skill.yaml)."""
+   103→    import random
+   104→    rng = random.Random(42)
+   105→    n = 200
+   106→    y_true = [1 if rng.random() < 0.3 else 0 for _ in range(n)]
+   107→    probs = [rng.random() if y else rng.random() * 0.5 for y, _ in zip(y_true, range(n))]
+   108→    ci = bootstrap_cost_ci(y_true, probs, n_resamples=100, confidence=0.90, seed=7)
+   109→    assert len(ci) == 19
+   110→    for key, band in ci.items():
+   111→        assert "low" in band and "high" in band and "mean" in band
+   112→        assert band["low"] <= band["mean"] <= band["high"]
+   113→        assert band["n_resamples"] == 100
+   114→        assert band["confidence"] == 0.90
+   115→
+   116→
+   117→def test_find_cost_crossover_returns_per_region_winner():
+   118→    inc = [{"threshold": 0.1, "cost": 100}, {"threshold": 0.5, "cost": 200}]
+   119→    cha = [{"threshold": 0.1, "cost": 150}, {"threshold": 0.5, "cost": 150}]
+   120→    out = find_cost_crossover(inc, cha)
+   121→    assert out["crossover_threshold"] == 0.5
+   122→    assert out["max_advantage"] == 50.0  # 200 - 150 at t=0.5
+   123→    assert out["per_region_winner"][0]["winner"] == "incumbent"
+   124→    assert out["per_region_winner"][1]["winner"] == "challenger"
+   125→
+   126→
+   127→def test_rules_engine_block_and_review():
+   128→    e = RulesEngine()
+   129→    blocked = {
+   130→        "order_id": "X",
+   131→        "amount_inr": 60_000,
+   132→        "payment_method": "COD",
+   133→        "prior_orders": 0,
+   134→        "address_quality": "complete",
+   135→    }
+   136→    assert e.evaluate(blocked).rule_id == "RULE-001"
+   137→    review = {
+   138→        "amount_inr": 25_000,
+   139→        "payment_method": "COD",
+   140→        "address_quality": "vague",
+   141→    }
+   142→    assert e.evaluate(review).action == "REVIEW"
+   143→    assert e.evaluate({"amount_inr": 100}) is None
+   144→
+   145→
+   146→def test_audit_hash_chain_tamper_evident(tmp_path):
+   147→    log = AuditLogger(str(tmp_path / "a.jsonl"))
+   148→    ids = [log.log({"n": i, "decision": "ACCEPT"}) for i in range(4)]
+   149→    ok, n, bad = log.verify_chain()
+   150→    assert ok and n == 4 and bad == ""
+   151→    lines = (tmp_path / "a.jsonl").read_text().splitlines()
+   152→    import json
+   153→
+   154→    rec = json.loads(lines[1])
+   155→    rec["probability"] = 0.99
+   156→    lines[1] = json.dumps(rec)
+   157→    (tmp_path / "a.jsonl").write_text("\n".join(lines) + "\n")
+   158→    ok2, n2, bad2 = log.verify_chain()
+   159→    assert not ok2 and bad2 == ids[1]
+   160→
+   161→
+   162→def test_circuit_breaker_opens_and_falls_back():
+   163→    cb = CircuitBreaker(failure_threshold=2)
+   164→    for _ in range(2):
+   165→        cb.record_failure()
+   166→    assert cb.state == "OPEN"
+   167→    assert cb.allow_attempt() is False
+   168→
+   169→
+   170→@pytest.fixture(scope="module")
+   171→def client():
+   172→    import tempfile
+   173→
+   174→    with tempfile.TemporaryDirectory() as td:
+   175→        with TestClient(create_app(audit_path=f"{td}/audit.jsonl")) as c:
+   176→            yield c
+   177→
+   178→
+   179→def test_health_public(client):
+   180→    r = client.get("/health")
+   181→    assert r.status_code == 200
+   182→    body = r.json()
+   183→    assert body["model_loaded"] is True and body["circuit_state"] == "CLOSED"
+   184→
+   185→
+   186→def test_rule_fast_path_blocks_without_model(client):
+   187→    r = client.post(
+   188→        "/risk/score",
+   189→        json={**VALID, "order_id": "SHIP-BIG", "amount_inr": 90_000},
+   190→        headers=SCORER_H,
+   191→    )
+   192→    body = r.json()
+   193→    assert body["decision"] == "REJECT" and body["rule_fired"] == "RULE-001"
+   194→
+   195→
+   196→def test_rules_crud_admin_only(client):
+   197→    assert client.get("/v1/rules", headers=SCORER_H).status_code == 200
+   198→    denied = client.post(
+   199→        "/v1/rules",
+   200→        json={"rule_id": "RULE-DNY", "name": "denied rule", "field": "items",
+   201→              "op": "gt", "value": 999, "action": "BLOCK"},
+   202→        headers=SCORER_H,
+   203→    )
+   204→    assert denied.status_code == 403
+   205→    r = client.post(
+   206→        "/v1/rules",
+   207→        json={"rule_id": "RULE-T90", "name": "test rule", "field": "items",
+   208→              "op": "gt", "value": 500, "action": "REVIEW"},
+   209→        headers=ADMIN_H,
+   210→    )
+   211→    assert r.status_code == 200
+   212→    rules = client.get("/v1/rules", headers=SCORER_H).json()["rules"]
+   213→    assert any(x["rule_id"] == "RULE-T90" for x in rules)
+   214→    assert client.delete("/v1/rules/RULE-T90", headers=ADMIN_H).json()["removed"] is True
+   215→
+   216→
+   217→def test_policy_optimal_endpoint(client):
+   218→    r = client.get("/v1/policy/optimal?probability=0.95", headers=SCORER_H)
+   219→    assert r.status_code == 200 and r.json()["optimal_action"] == "REJECT"
+   220→    r2 = client.get("/v1/policy/optimal?probability=0.05", headers=SCORER_H)
+   221→    assert r2.json()["optimal_action"] == "ACCEPT"
+   222→
+   223→
+   224→def test_chain_verification_endpoint(client):
+   225→    r = client.get("/v1/audit/verify-chain", headers=ADMIN_H)
+   226→    assert r.status_code == 200 and r.json()["intact"] is True
+   227→
+   228→
+   229→def test_degraded_mode_when_model_down(client):
+   230→    class Exploding:
+   231→        def predict_proba(self, _):
+   232→            raise RuntimeError("boom")
+   233→
+   234→    original = client.app.state.core["model"]
+   235→    client.app.state.core["model"] = Exploding()
+   236→    try:
+   237→        for i in range(3):
+   238→            rr = client.post(
+   239→                "/risk/score",
+   240→                json={**VALID, "order_id": f"DEG-{i}"},
+   241→                headers=SCORER_H,
+   242→            )
+   243→            assert rr.json()["degraded"] is True
+   244→            assert rr.json()["decision"] == "REVIEW"
+   245→            # New: degraded path should report its decision_source so the
+   246→            # audit trail and dashboard can explain why REVIEW was chosen.
+   247→            assert rr.json()["decision_source"] == "degraded_review"
+   248→    finally:
+   249→        client.app.state.core["model"] = original
+   250→    assert client.app.state.core["breaker"].state in {"OPEN", "HALF_OPEN"}
+   251→
+   252→
+   253→# ---------------------------------------------------------------------------
+   254→# Day 1 Track C — cost-optimizer is now the decision path (not policy_hint)
+   255→# ---------------------------------------------------------------------------
+   256→
+   257→@pytest.fixture(autouse=False)
+   258→def _reset_breaker(client):
+   259→    """Reset the circuit breaker to CLOSED before cost-optimizer tests.
+   260→
+   261→    The module-scoped ``client`` fixture means earlier tests (notably
+   262→    ``test_degraded_mode_when_model_down``) leave the breaker in OPEN / HALF_OPEN
+   263→    state. Cost-optimizer tests need the model to actually run, so they must
+   264→    start from a clean CLOSED breaker.
+   265→    """
+   266→    client.app.state.core["breaker"].state = "CLOSED"
+   267→    client.app.state.core["breaker"].failures = 0
+   268→    yield
+   269→
+   270→
+   271→def test_decision_uses_cost_optimizer_not_static_thresholds(client, _reset_breaker):
+   272→    """Send an order through /risk/score and verify the returned decision
+   273→    matches ``optimal_decision(p)`` output (NOT the legacy static 0.15/0.60
+   274→    thresholds). Uses a benign order that fires no rules (amount=₹899 COD).
+   275→
+   276→    This is the headline test from Day 1 Track C: before this change, the
+   277→    cost-optimizer was stored as ``policy_hint`` but the actual decision came
+   278→    from ``if proba < 0.15: ACCEPT``. After this change, ``decision`` *is*
+   279→    the cost-optimizer output.
+   280→    """
+   281→    r = client.post(
+   282→        "/risk/score",
+   283→        json={**VALID, "order_id": "COST-OPT-1", "amount_inr": 899},
+   284→        headers=SCORER_H,
+   285→    )
+   286→    assert r.status_code == 200
+   287→    body = r.json()
+   288→    # The benign VALID order fires no rules and no mandate header is sent,
+   289→    # so the cost-optimizer must be the decision source.
+   290→    assert body["decision_source"] == "cost_optimal_bmr"
+   291→    assert body["probability"] is not None
+   292→    expected_decision, expected_costs = optimal_decision(body["probability"])
+   293→    assert body["decision"] == expected_decision
+   294→    # The body's cost_breakdown is computed from the FULL-precision probability
+   295→    # (before rounding to 4 dp for the response), so we compare with tolerance.
+   296→    for action in ("ACCEPT", "REVIEW", "REJECT"):
+   297→        assert abs(body["cost_breakdown"][action] - expected_costs[action]) < 0.5, (
+   298→            f"{action}: body={body['cost_breakdown'][action]} "
+   299→            f"vs expected={expected_costs[action]}"
+   300→        )
+   301→    # policy_hint is kept for backward compat — same string as decision when
+   302→    # the cost-optimizer was the source.
+   303→    assert body["policy_hint"] == expected_decision
+   304→    # New gate_thresholds reports the policy in force, not just static numbers.
+   305→    assert body["gate_thresholds"]["policy"] == "cost_optimal_bmr"
+   306→    # If the legacy static 0.15/0.60 thresholds were still the decision path,
+   307→    # we could distinguish by checking a probability in the (0.15, 0.60) band:
+   308→    # under the OLD code, any p in (0.15, 0.60) → REVIEW; under the NEW code,
+   309→    # the cost-optimizer decides ACCEPT/REVIEW/REJECT by argmin of cost. For
+   310→    # p where the cost-optimizer says ACCEPT, the static code would say REVIEW
+   311→    # — that's the discriminator. We assert the contract holds for whatever
+   312→    # probability the model actually emitted on this order.
+   313→
+   314→
+   315→def test_decision_uses_cost_optimizer_with_review_rule_gate(client, _reset_breaker):
+   316→    """When a REVIEW rule fires (high-value + vague + COD) and the
+   317→    cost-optimizer says ACCEPT, the decision must be REVIEW (rule gate).
+   318→    This verifies the cost-optimizer is in the decision path AND the rules
+   319→    REVIEW gate still takes precedence over ACCEPT."""
+   320→    r = client.post(
+   321→        "/risk/score",
+   322→        json={
+   323→            **VALID,
+   324→            "order_id": "COST-OPT-2",
+   325→            "amount_inr": 25_000,        # > 20k threshold for RULE-002
+   326→            "address_quality": "vague",  # + COD → RULE-002 REVIEW fires
+   327→            "payment_method": "COD",
+   328→        },
+   329→        headers=SCORER_H,
+   330→    )
+   331→    assert r.status_code == 200
+   332→    body = r.json()
+   333→    assert body["rule_fired"] == "RULE-002"
+   334→    # RULE-002 is a REVIEW rule, not BLOCK — so the cost-optimizer still runs.
+   335→    assert body["probability"] is not None
+   336→    # If the cost-optimizer alone would say ACCEPT, the rule gate forces REVIEW.
+   337→    expected_decision, _ = optimal_decision(body["probability"])
+   338→    if expected_decision == "ACCEPT":
+   339→        assert body["decision"] == "REVIEW"
+   340→        assert body["decision_source"] == "cost_optimal_bmr_review_rule"
+   341→    else:
+   342→        # If the cost-optimizer already said REVIEW/REJECT, that stands.
+   343→        assert body["decision"] == expected_decision
+   344→        assert body["decision_source"] == "cost_optimal_bmr"
+   345→
+   346→
+   347→def test_cost_curves_endpoint_returns_valid_structure(client, _reset_breaker):
+   348→    """GET /v1/policy/cost-curves returns 200 with thresholds, curves, and
+   349→    optimal_threshold. Uses a small n_resamples to keep the test fast."""
+   350→    r = client.get(
+   351→        "/v1/policy/cost-curves?n_resamples=20",
+   352→        headers=SCORER_H,
+   353→    )
+   354→    assert r.status_code == 200, r.text
+   355→    body = r.json()
+   356→    # Required top-level fields per Day 1 Track C spec.
+   357→    assert "thresholds" in body
+   358→    assert "curves" in body
+   359→    assert "bootstrap_ci" in body
+   360→    assert "optimal_threshold" in body
+   361→    # Thresholds are a sweep from 0.05 to 0.95 (19 points, step 0.05).
+   362→    assert len(body["thresholds"]) == 19
+   363→    assert body["thresholds"][0] == 0.05
+   364→    assert body["thresholds"][-1] == 0.95
+   365→    # Each curve row has the documented fields.
+   366→    row = body["curves"][0]
+   367→    for field in ("threshold", "tp", "fp", "fn", "tn", "cost", "precision", "recall"):
+   368→        assert field in row, f"missing field {field} in curve row"
+   369→    # Optimal threshold is one of the sweep points.
+   370→    assert body["optimal_threshold"] in body["thresholds"]
+   371→    # Bootstrap CI has one entry per threshold (keyed by str(threshold)).
+   372→    assert len(body["bootstrap_ci"]) == len(body["thresholds"])
+   373→    # Cost-model provenance is reported for audit / pitch deck.
+   374→    assert "cost_model" in body
+   375→    assert "Bahnsen" in body["cost_model"]["source_paper"]
+   376→    assert "Drummond" in body["cost_model"]["curve_paper"]
+   377→
+   378→
+   379→def test_cost_curves_endpoint_503_when_model_unloaded(client):
+   380→    """If the model isn't loaded (e.g. circuit breaker OPEN or startup
+   381→    warmup failed), the endpoint returns 503 with a clear error."""
+   382→    original_model = client.app.state.core.get("model")
+   383→    original_cc = client.app.state.core.get("cost_curve")
+   384→    client.app.state.core["model"] = None
+   385→    client.app.state.core["cost_curve"] = None
+   386→    try:
+   387→        r = client.get("/v1/policy/cost-curves", headers=SCORER_H)
+   388→        assert r.status_code == 503
+   389→        assert "unavailable" in r.json()["detail"].lower()
+   390→    finally:
+   391→        client.app.state.core["model"] = original_model
+   392→        client.app.state.core["cost_curve"] = original_cc
+   393→
+   394→
+   395→# ---------------------------------------------------------------------------
+   396→# Day 4 Track N — V3 §11.6 5-way intervention policy (Bahnsen Eq.(5))
+   397→# ---------------------------------------------------------------------------
+   398→# The 5-way intervention layer extends Track C's 3-way optimal_decision() with
+   399→# the full intervention set {ship, otp_verify, partial_cod, address_check,
+   400→# hold}. Per Bahnsen 2013 BMR Eq.(5), the FN cost is the per-transaction
+   401→# amount (NOT a constant), and per-intervention effectiveness rates come from
+   402→# the Pragma 2025 RTO-mitigation benchmark (OTP 0.82, partial COD 0.65,
+   403→# address check 0.45). The argmin over the 5 interventions gives the
+   404→# cost-optimal next-step recommendation surfaced in /risk/score's
+   405→# ``intervention`` field.
+   406→#
+   407→# Key cost-model property with DEFAULT weights: otp_verify dominates the
+   408→# "soft" interventions for any p×amt ≥ 6 INR (because c_otp=5 is cheap AND
+   409→# eff_otp=0.82 is the highest effectiveness). For p×amt < 6 INR, ship wins
+   410→# (the OTP fee exceeds the residual RTO loss). Hold/partial_cod/address_check
+   411→# become optimal when their weights are re-tuned (e.g. higher c_otp in a
+   412→# market where SMS is expensive, or lower c_hold + residual ship rate when
+   413→# human review is cheap). The tests below verify both the default-weight
+   414→# behaviour AND the re-tuned crossover so the cost-model's truthful answer is
+   415→# documented — the argmin is a function of (p, amt, weights), not a constant.
+   416→# ---------------------------------------------------------------------------
+   417→
+   418→
+   419→def test_optimal_intervention_ship_at_low_p():
+   420→    """At very low p × low amount, the per-amount FN cost is smaller than the
+   421→    OTP verification fee, so ship (baseline, no intervention) wins.
+   422→
+   423→    Math: ship = p·amt; otp_verify = c_otp + (1 − eff_otp)·p·amt.
+   424→    Ship wins iff p·amt < c_otp / eff_otp = 5 / 0.82 ≈ 6.10 INR.
+   425→    Use p=0.01, amt=600 → p·amt = 6 → ship wins (boundary case).
+   426→    """
+   427→    intervention, costs = optimal_intervention(0.01, 600)
+   428→    assert intervention == "ship", (
+   429→        f"expected ship at p=0.01 amt=600 (p*amt=6 < 6.10 threshold), "
+   430→        f"got {intervention} with costs {costs}"
+   431→    )
+   432→    # Full 5-way breakdown present
+   433→    assert set(costs.keys()) == set(INTERVENTIONS)
+   434→    # Ship's cost equals p*amt (Bahnsen Eq.(5): FN = amount)
+   435→    assert abs(costs["ship"] - 0.01 * 600) < 0.01
+   436→
+   437→
+   438→def test_optimal_intervention_otp_at_medium_p():
+   439→    """At medium p × medium amount, the OTP fee is small relative to the
+   440→    residual RTO loss, so otp_verify wins.
+   441→
+   442→    Use p=0.4, amt=12400 → p·amt = 4960 INR.
+   443→    otp_verify cost = 5 + 0.18·4960 = 5 + 892.8 = 897.8 INR — far below ship
+   444→    (4960) and below partial_cod / address_check / hold. argmin = otp_verify.
+   445→    """
+   446→    intervention, costs = optimal_intervention(0.4, 12400)
+   447→    assert intervention == "otp_verify", (
+   448→        f"expected otp_verify at p=0.4 amt=12400, got {intervention}: {costs}"
+   449→    )
+   450→    # Verify the OTP cost math (Bahnsen Eq.(5) per-amount FN).
+   451→    expected_otp = 5.0 + (1 - 0.82) * 0.4 * 12400
+   452→    assert abs(costs["otp_verify"] - expected_otp) < 0.05
+   453→    # Verify ship cost = full amount at risk
+   454→    assert abs(costs["ship"] - 0.4 * 12400) < 0.05
+   455→
+   456→
+   457→def test_optimal_intervention_at_high_p():
+   458→    """At high p × high amount, the cost-model's truthful answer with DEFAULT
+   459→    weights is otp_verify (because OTP effectiveness 0.82 > hold's residual
+   460→    ship rate 0.30 — OTP catches more RTOs than manual review). Hold becomes
+   461→    optimal only when its weights are re-tuned (lower c_hold + lower residual
+   462→    ship rate) — the test below verifies BOTH cases:
+   463→
+   464→    (a) Default weights → otp_verify wins at p=0.9 amt=52000.
+   465→    (b) Re-tuned weights (c_hold=1, residual_ship_rate=0.01) → hold wins.
+   466→    """
+   467→    # (a) Default weights: otp_verify dominates (this is the cost-model's
+   468→    # truthful answer — hold's residual 30% ship rate is worse than OTP's
+   469→    # 18% residual risk at the default fee levels).
+   470→    intervention, costs = optimal_intervention(0.9, 52000)
+   471→    assert intervention == "otp_verify", (
+   472→        f"with default weights at p=0.9 amt=52000, expected otp_verify "
+   473→        f"(eff_otp=0.82 > eff_hold=0.70), got {intervention}: {costs}"
+   474→    )
+   475→    # Sanity: ship's cost = 0.9*52000 = 46800 (full amount at risk)
+   476→    assert abs(costs["ship"] - 46800) < 1.0
+   477→
+   478→    # (b) Re-tuned weights: if a market has very cheap manual review (c_hold=1)
+   479→    # AND a much lower residual ship rate (0.01 vs the default 0.30 — e.g. a
+   480→    # high-touch ops team that blocks 99% of held orders), hold wins.
+   481→    intervention, costs = optimal_intervention(
+   482→        0.9, 52000,
+   483→        weights={
+   484→            "c_hold": 1.0,
+   485→            "c_hold_residual_ship_rate": 0.01,
+   486→            # Keep other weights at defaults
+   487→            "c_otp": 5.0,
+   488→            "c_otp_effectiveness": 0.82,
+   489→            "c_partial_cod": 10.0,
+   490→            "c_partial_cod_effectiveness": 0.65,
+   491→            "c_address_check": 3.0,
+   492→            "c_address_check_effectiveness": 0.45,
+   493→        },
+   494→    )
+   495→    assert intervention == "hold", (
+   496→        f"with re-tuned weights (cheap hold + low residual ship rate), "
+   497→        f"expected hold at p=0.9 amt=52000, got {intervention}: {costs}"
+   498→    )
+   499→
+   500→
+   501→def test_per_amount_fn_cost_changes_optimal_intervention():
+   502→    """Bahnsen Eq.(5) headline: per-transaction FN cost = amount. At the SAME
+   503→    probability, a low-amount order → ship (OTP fee exceeds residual loss),
+   504→    while a high-amount order → otp_verify (residual loss dwarfs the OTP fee).
+   505→
+   506→    Use p=0.4 (40% RTO probability) and vary the amount:
+   507→    - amt=15  → p*amt=6.0  → ship wins (boundary: p*amt < 6.10 INR)
+   508→    - amt=100 → p*amt=40   → otp_verify wins
+   509→    """
+   510→    # Low amount: ship wins (OTP fee > residual loss)
+   511→    i_low, c_low = optimal_intervention(0.4, 15)
+   512→    assert i_low == "ship", (
+   513→        f"at p=0.4 amt=15 (p*amt=6), expected ship, got {i_low}: {c_low}"
+   514→    )
+   515→    # High amount: otp_verify wins (residual loss dwarfs OTP fee)
+   516→    i_high, c_high = optimal_intervention(0.4, 100)
+   517→    assert i_high == "otp_verify", (
+   518→        f"at p=0.4 amt=100 (p*amt=40), expected otp_verify, got {i_high}: {c_high}"
+   519→    )
+   520→
+   521→
+   522→def test_optimal_decision_per_amount_fn_cost_flag():
+   523→    """Day 4 Track N — optimal_decision() now accepts an optional amount_inr
+   524→    that overrides the constant c_fn with the per-transaction amount
+   525→    (Bahnsen Eq.(5)). At the same probability, a low-amount order may ACCEPT
+   526→    while a high-amount order REJECTs — this is the headline of the Bahnsen
+   527→    2013 paper (FN cost ≠ constant).
+   528→    """
+   529→    p = 0.4
+   530→    # Low amount: c_fn = 600 (constant fallback) → REVIEW
+   531→    # Same p with amount=600 (Bahnsen Eq.(5)): cost_accept = 0.4 * 600 = 240
+   532→    # vs cost_review = 5 + 0.6*50 + 0.4*0.18*600 = 5+30+43.2 = 78.2 → REVIEW
+   533→    d_const, c_const = optimal_decision(p)  # constant c_fn=600
+   534→    d_amt_low, c_low = optimal_decision(p, amount_inr=600)
+   535→    # The constant path and the per-amount path should agree when amount == c_fn
+   536→    assert d_const == d_amt_low, (
+   537→        f"constant c_fn=600 vs amount_inr=600 should give same decision: "
+   538→        f"{d_const} vs {d_amt_low}"
+   539→    )
+   540→    # Same p with amount=52000 (Bahnsen Eq.(5)): cost_accept = 0.4*52000 = 20800
+   541→    # vs cost_reject = 0.6*1000 = 600 → REJECT wins (block is cheaper than ship)
+   542→    d_amt_high, c_high = optimal_decision(p, amount_inr=52000)
+   543→    assert d_amt_high == "REJECT", (
+   544→        f"at p=0.4 amt=52000 (per-amount FN cost), expected REJECT, "
+   545→        f"got {d_amt_high}: {c_high}"
+   546→    )
+   547→    # The per-amount FN cost produces a DIFFERENT decision than the constant
+   548→    # c_fn=600 default — the headline of the Bahnsen 2013 paper.
+   549→    assert d_amt_low != d_amt_high, (
+   550→        "per-amount FN cost should change the decision at the same probability "
+   551→        "(Bahnsen Eq.(5) headline: FN cost ≠ constant)"
+   552→    )
+   553→
+   554→
+   555→def test_intervention_curve_sweep_returns_per_threshold_data():
+   556→    """intervention_curve_sweep produces one row per threshold with the
+   557→    cost-optimal intervention + the full 5-way cost breakdown."""
+   558→    sweep = intervention_curve_sweep(12400.0)
+   559→    assert len(sweep) == 19  # 0.05 → 0.95 step 0.05 (matches cost_curve_sweep)
+   560→    r = sweep[0]
+   561→    assert set(r.keys()) == {"threshold", "intervention", "costs"}
+   562→    assert r["threshold"] == 0.05
+   563→    assert r["intervention"] in INTERVENTIONS
+   564→    # Each row's costs is the full 5-way breakdown
+   565→    assert set(r["costs"].keys()) == set(INTERVENTIONS)
+   566→
+   567→
+   568→def test_find_intervention_crossover_returns_regions():
+   569→    """find_intervention_crossover collapses the per-threshold sweep into
+   570→    contiguous regions where the same intervention is optimal, plus the
+   571→    crossover thresholds where the intervention changes.
+   572→    """
+   573→    # Use a low amount so ship wins at low p (then crosses to otp_verify)
+   574→    sweep = intervention_curve_sweep(100.0)
+   575→    co = find_intervention_crossover(sweep)
+   576→    assert "crossover_thresholds" in co
+   577→    assert "per_region_intervention" in co
+   578→    assert "regions" in co
+   579→    # At amount=100, ship wins at p=0.05 (p*amt=5 < 6.1 threshold), then
+   580→    # crosses to otp_verify at p=0.10 (p*amt=10 > 6.1 threshold).
+   581→    assert co["crossover_thresholds"] == [0.10], (
+   582→        f"expected crossover at 0.10 (ship → otp_verify) for amt=100, "
+   583→        f"got {co['crossover_thresholds']}"
+   584→    )
+   585→    # Regions: [0.05, 0.05] ship → [0.10, 0.95] otp_verify
+   586→    assert len(co["regions"]) == 2
+   587→    assert co["regions"][0]["intervention"] == "ship"
+   588→    assert co["regions"][0]["low_threshold"] == 0.05
+   589→    assert co["regions"][0]["high_threshold"] == 0.05
+   590→    assert co["regions"][1]["intervention"] == "otp_verify"
+   591→    assert co["regions"][1]["low_threshold"] == 0.10
+   592→    assert co["regions"][1]["high_threshold"] == 0.95
+   593→
+   594→
+   595→def test_intervention_costs_in_response(client, _reset_breaker):
+   596→    """POST /risk/score response includes the new Day 4 Track N fields:
+   597→    ``intervention`` (the cost-optimal 5-way recommendation) +
+   598→    ``intervention_costs`` (the full 5-way cost breakdown) +
+   599→    ``intervention_weights`` (the cost-model provenance).
+   600→    """
+   601→    r = client.post(
+   602→        "/risk/score",
+   603→        json={**VALID, "order_id": "INTVN-1", "amount_inr": 899},
+   604→        headers=SCORER_H,
+   605→    )
+   606→    assert r.status_code == 200
+   607→    body = r.json()
+   608→    # The new Track N fields are present
+   609→    assert "intervention" in body
+   610→    assert "intervention_costs" in body
+   611→    assert "intervention_weights" in body
+   612→    # intervention is one of the 5 valid interventions
+   613→    assert body["intervention"] in INTERVENTIONS, (
+   614→        f"intervention must be one of {INTERVENTIONS}, got {body['intervention']}"
+   615→    )
+   616→    # intervention_costs is the full 5-way breakdown
+   617→    assert set(body["intervention_costs"].keys()) == set(INTERVENTIONS)
+   618→    # intervention_weights exposes the cost model
+   619→    assert body["intervention_weights"] == DEFAULT_INTERVENTION_WEIGHTS
+   620→    # Cross-check: the intervention in the response matches the argmin of
+   621→    # intervention_costs (consistency between the field and the breakdown).
+   622→    expected = min(body["intervention_costs"], key=lambda k: body["intervention_costs"][k])
+   623→    assert body["intervention"] == expected, (
+   624→        f"response intervention={body['intervention']} but argmin of "
+   625→        f"intervention_costs={expected} (costs={body['intervention_costs']})"
+   626→    )
+   627→
+   628→
+   629→def test_intervention_response_reflects_per_amount_fn_cost(client, _reset_breaker):
+   630→    """For a high-amount order, the per-amount FN cost (Bahnsen Eq.(5)) makes
+   631→    otp_verify strongly optimal — the OTP fee (₹5) is dwarfed by the residual
+   632→    RTO loss avoided. The intervention field surfaces the cost-optimal
+   633→    next-step recommendation the operator should execute.
+   634→
+   635→    Uses amount_inr=45000 — below the RULE-001 BLOCK threshold (50000) so the
+   636→    cost-optimizer runs and the intervention field is populated.
+   637→    """
+   638→    # High-amount order: otp_verify is the dominant cost-optimal intervention
+   639→    # (residual RTO loss dwarfs the OTP fee).
+   640→    r = client.post(
+   641→        "/risk/score",
+   642→        json={**VALID, "order_id": "INTVN-2", "amount_inr": 45000},
+   643→        headers=SCORER_H,
+   644→    )
+   645→    assert r.status_code == 200
+   646→    body = r.json()
+   647→    # The model ran (no rule BLOCK fired) — intervention is populated.
+   648→    assert body["intervention"] is not None, (
+   649→        f"intervention should be populated for non-BLOCK decision, got None. "
+   650→        f"decision_source={body.get('decision_source')}, rule_fired={body.get('rule_fired')}"
+   651→    )
+   652→    # At amount=45000, otp_verify dominates for any p*amt ≥ 6 INR.
+   653→    assert body["intervention"] == "otp_verify", (
+   654→        f"high-amount order (₹45000) should recommend otp_verify, got "
+   655→        f"{body['intervention']}: {body['intervention_costs']}"
+   656→    )
+   657→    # Verify the cost math: ship's cost = p * amount (Bahnsen Eq.(5))
+   658→    p = body["probability"]
+   659→    if p is not None:
+   660→        ship_cost = p * 45000
+   661→        assert abs(body["intervention_costs"]["ship"] - ship_cost) < 5.0, (
+   662→            f"ship cost should equal p*amount (Bahnsen Eq.(5)), got "
+   663→            f"{body['intervention_costs']['ship']} vs {ship_cost}"
+   664→        )
+   665→
+   666→
+   667→def test_cost_curves_endpoint_returns_intervention_curves(client, _reset_breaker):
+   668→    """GET /v1/policy/cost-curves now also returns the Day 4 Track N 5-way
+   669→    intervention sweep + crossover — the dashboard renders these alongside
+   670→    the 3-way threshold sweep.
+   671→    """
+   672→    r = client.get(
+   673→        "/v1/policy/cost-curves?n_resamples=20",
+   674→        headers=SCORER_H,
+   675→    )
+   676→    assert r.status_code == 200, r.text
+   677→    body = r.json()
+   678→    # New Track N fields present
+   679→    assert "intervention_curves" in body
+   680→    assert "intervention_crossover" in body
+   681→    assert "intervention_amount_inr" in body
+   682→    assert "intervention_weights" in body
+   683→    # intervention_curves has one row per threshold (19 points)
+   684→    assert len(body["intervention_curves"]) == 19
+   685→    row = body["intervention_curves"][0]
+   686→    assert set(row.keys()) == {"threshold", "intervention", "costs"}
+   687→    assert row["intervention"] in INTERVENTIONS
+   688→    assert set(row["costs"].keys()) == set(INTERVENTIONS)
+   689→    # intervention_crossover has the documented sub-fields
+   690→    co = body["intervention_crossover"]
+   691→    assert "crossover_thresholds" in co
+   692→    assert "per_region_intervention" in co
+   693→    assert "regions" in co
+   694→    # Cost model now reports the intervention paper provenance
+   695→    assert "intervention_paper" in body["cost_model"]
+   696→    assert "Bahnsen" in body["cost_model"]["intervention_paper"]
+   697→
+   698→
+   699→def test_cost_curves_endpoint_amount_inr_param(client, _reset_breaker):
+   700→    """The ``amount_inr`` query param overrides the default representative
+   701→    order value so the dashboard can render the 5-way intervention curves for
+   702→    any order-value bracket. At amount=100 (low), ship wins at low p."""
+   703→    r = client.get(
+   704→        "/v1/policy/cost-curves?n_resamples=20&amount_inr=100",
+   705→        headers=SCORER_H,
+   706→    )
+   707→    assert r.status_code == 200, r.text
+   708→    body = r.json()
+   709→    # The override is reflected in the response
+   710→    assert body["intervention_amount_inr"] == 100.0
+   711→    # At amount=100 + threshold=0.05 (p*amt=5 < 6.10), ship wins
+   712→    row_low = body["intervention_curves"][0]
+   713→    assert row_low["threshold"] == 0.05
+   714→    assert row_low["intervention"] == "ship", (
+   715→        f"at amt=100, p=0.05 → ship should win (p*amt=5 < 6.10), got "
+   716→        f"{row_low['intervention']}"
+   717→    )
+   718→    # The crossover (ship → otp_verify) is at p=0.10 (p*amt=10 > 6.10)
+   719→    co = body["intervention_crossover"]
+   720→    assert 0.10 in co["crossover_thresholds"], (
+   721→        f"expected crossover at 0.10 for amt=100, got {co['crossover_thresholds']}"
+   722→    )
+   723→
+   724→
+   725→def test_cost_curves_endpoint_422_on_bad_amount_inr(client):
+   726→    """amount_inr outside [1, 1_000_000] returns 422."""
+   727→    r = client.get(
+   728→        "/v1/policy/cost-curves?amount_inr=0",
+   729→        headers=SCORER_H,
+   730→    )
+   731→    assert r.status_code == 422
+   732→    r2 = client.get(
+   733→        "/v1/policy/cost-curves?amount_inr=2000000",
+   734→        headers=SCORER_H,
+   735→    )
+   736→    assert r2.status_code == 422
+   737→

@@ -1,0 +1,783 @@
+     1→"""Tests for the Redis Streams streaming backbone (Track F Day 2).
+     2→
+     3→Closes §A item 18 + driver G2 + §D item P7. The 4 tests below split into:
+     4→
+     5→* ``test_stream_producer_noop_without_redis`` — guaranteed-pass fast test
+     6→  (no Redis fixture). ``StreamProducer(None).publish()`` returns None +
+     7→  doesn't crash. This is the contract that lets the 63 existing tests pass
+     8→  without a Redis fixture.
+     9→
+    10→* ``test_stream_producer_publishes_when_redis_available`` — SKIPPED unless
+    11→  ``REDIS_URL`` is set + the redis-py package is installed. Produces one
+    12→  message to ``risk.scores``, reads it back via ``XREAD`` (consumer-group
+    13→  semantics verified in the consumer test below).
+    14→
+    15→* ``test_risk_score_endpoint_publishes_to_streams`` — mocks the
+    16→  StreamProducer via monkeypatch on ``src.api.routes.StreamProducer``, hits
+    17→  POST /risk/score, and asserts the API called ``publish`` with the 3
+    18→  stream names + canonical prediction_id (the same UUID appears in the
+    19→  response body's ``prediction_id`` + in the ``cases.created`` publish's
+    20→  ``case_id`` source-of-truth correlation).
+    21→
+    22→* ``test_consumer_processes_message`` — SKIPPED unless ``REDIS_URL`` is set.
+    23→  Produces a message to ``risk.scores``, runs ``StreamConsumer.consume``
+    24→  in a thread with a 1-poll timeout, asserts the handler was called with
+    25→  the right fields.
+    26→
+    27→The Redis-path tests (2 of 4) are skipped in the sandbox + in CI without
+    28→a Redis service container — mirroring the test_db.py skip pattern.
+    29→"""
+    30→from __future__ import annotations
+    31→
+    32→import sys
+    33→import threading
+    34→import time
+    35→from pathlib import Path
+    36→from unittest.mock import MagicMock
+    37→
+    38→import pytest
+    39→from fastapi.testclient import TestClient
+    40→
+    41→sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    42→
+    43→from src.api.routes import create_app  # noqa: E402
+    44→from src.stream.producer import (  # noqa: E402
+    45→    STREAM_AUDIT_RECORDS,
+    46→    STREAM_CASES_CREATED,
+    47→    STREAM_MODEL_DRIFT,
+    48→    STREAM_NOTIFICATIONS,
+    49→    STREAM_RISK_SCORES,
+    50→    StreamProducer,
+    51→)
+    52→from src.stream.processor import StreamProcessor  # noqa: E402
+    53→
+    54→# --- Test fixtures ------------------------------------------------------
+    55→
+    56→VALID = {
+    57→    "order_id": "STR-T1",
+    58→    "amount_inr": 899,
+    59→    "category": "Fashion",
+    60→    "customer_id": "CUST-9",
+    61→}
+    62→SCORER = {"Authorization": "Bearer score-demo-key"}
+    63→ADMIN = {"Authorization": "Bearer admin-demo-key"}
+    64→
+    65→# These tests skip if REDIS_URL isn't set OR the redis package isn't
+    66→# importable. Same skip pattern as tests/test_db.py.
+    67→_REDIS_URL = "redis://localhost:6379/15"  # /15 = test-only DB index
+    68→_REDIS_AVAILABLE = False
+    69→try:
+    70→    import redis  # type: ignore[import-not-found]  # noqa: F401
+    71→
+    72→    _REDIS_AVAILABLE = True
+    73→except ImportError:
+    74→    _REDIS_AVAILABLE = False
+    75→
+    76→skip_no_redis = pytest.mark.skipif(
+    77→    not _REDIS_AVAILABLE,
+    78→    reason="redis package not installed (or REDIS_URL unset) — run "
+    79→    "`pip install redis>=5.0` + start `docker compose up redis` to enable",
+    80→)
+    81→
+    82→
+    83→def _skip_if_redis_unreachable():
+    84→    """At test runtime, ping Redis; skip if no connection (CI without a
+    85→    redis service container). Module-level import is fine; we just don't
+    86→    want to fail in environments where redis-py installed but no server.
+    87→    """
+    88→    if not _REDIS_AVAILABLE:
+    89→        return True
+    90→    try:
+    91→        import redis  # type: ignore[import-not-found]
+    92→
+    93→        r = redis.from_url(_REDIS_URL)
+    94→        r.ping()
+    95→        return False
+    96→    except Exception:
+    97→        return True
+    98→
+    99→
+   100→# --- Test 1: StreamProducer noop contract ---------------------------------
+   101→
+   102→
+   103→def test_stream_producer_noop_without_redis():
+   104→    """``StreamProducer(None).publish()`` returns None silently.
+   105→
+   106→    This is the contract that lets the 63 existing tests pass without a
+   107→    Redis fixture — the API constructs ``StreamProducer(None)`` (because
+   108→    ``settings.redis_url`` is None in test mode) + calls ``publish`` three
+   109→    times per request; each returns None + doesn't crash.
+   110→    """
+   111→    p = StreamProducer(None)
+   112→    assert p.redis_url is None
+   113→    # publish returns None for any stream + fields
+   114→    assert p.publish(STREAM_RISK_SCORES, {"prediction_id": "p1"}) is None
+   115→    assert p.publish(STREAM_AUDIT_RECORDS, {"audit_id": "a1"}) is None
+   116→    assert p.publish(STREAM_CASES_CREATED, {"case_id": "c1"}) is None
+   117→    assert p.publish(STREAM_MODEL_DRIFT, {"reason": "duplicate"}) is None
+   118→    assert p.publish(STREAM_NOTIFICATIONS, {"msg": "hi"}) is None
+   119→    # close() is safe to call even with no client
+   120→    p.close()
+   121→    p.close()  # idempotent
+   122→
+   123→
+   124→def test_stream_producer_field_coercion():
+   125→    """publish() never raises on non-string field values.
+   126→
+   127→    The fire-and-forget contract means even a bad field type (float, None,
+   128→    bool) shouldn't crash the API. StreamProducer coerces to str. With
+   129→    REDIS_URL unset, this is a noop — but the coercion path runs regardless
+   130→    (it's just before the no-op client).
+   131→    """
+   132→    p = StreamProducer(None)
+   133→    # None, float, bool, int values — all coerce without raising.
+   134→    assert p.publish(
+   135→        STREAM_RISK_SCORES,
+   136→        {
+   137→            "prediction_id": "p1",
+   138→            "score": 0.8123,  # float
+   139→            "is_flagged": True,  # bool
+   140→            "count": 5,  # int
+   141→            "note": None,  # None → ""
+   142→        },
+   143→    ) is None
+   144→    p.close()
+   145→
+   146→
+   147→# --- Test 2: Real-Redis producer end-to-end (skipped without Redis) --------
+   148→
+   149→
+   150→@skip_no_redis
+   151→def test_stream_producer_publishes_when_redis_available():
+   152→    """XADD a message to ``risk.scores``, XREAD it back, verify fields."""
+   153→    if _skip_if_redis_unreachable():
+   154→        pytest.skip("Redis not reachable at " + _REDIS_URL)
+   155→    import redis  # type: ignore[import-not-found]
+   156→
+   157→    # Clean the stream so the test is isolated. (DEL is O(n) on the stream
+   158→    # but our test produces 1-2 messages.)
+   159→    raw_client = redis.from_url(_REDIS_URL, decode_responses=True)
+   160→    raw_client.delete(STREAM_RISK_SCORES)
+   161→    try:
+   162→        p = StreamProducer(_REDIS_URL)
+   163→        msg_id = p.publish(
+   164→            STREAM_RISK_SCORES,
+   165→            {
+   166→                "prediction_id": "p-redis-1",
+   167→                "order_id": "ORD-REDIS-1",
+   168→                "decision": "ACCEPT",
+   169→                "score": "0.123",
+   170→                "ts": "2026-01-01T00:00:00+00:00",
+   171→            },
+   172→        )
+   173→        assert msg_id is not None, "publish should return a Redis message ID"
+   174→        # XREAD returns [(stream, [(msg_id, fields_dict)])]
+   175→        resp = raw_client.xread({STREAM_RISK_SCORES: "0"}, count=10)
+   176→        assert resp, "expected at least one message in the stream"
+   177→        stream_name, messages = resp[0]
+   178→        assert stream_name == STREAM_RISK_SCORES
+   179→        assert len(messages) >= 1
+   180→        _, fields = messages[-1]  # the message we just added
+   181→        assert fields["prediction_id"] == "p-redis-1"
+   182→        assert fields["order_id"] == "ORD-REDIS-1"
+   183→        assert fields["decision"] == "ACCEPT"
+   184→        p.close()
+   185→    finally:
+   186→        raw_client.delete(STREAM_RISK_SCORES)
+   187→
+   188→
+   189→# --- Test 3: API endpoint publishes to streams (mock-based) ----------------
+   190→
+   191→
+   192→def test_risk_score_endpoint_publishes_to_streams(monkeypatch):
+   193→    """POST /risk/score → assert StreamProducer.publish was called with the
+   194→    3 stream names + canonical prediction_id.
+   195→
+   196→    Uses monkeypatch on ``src.api.routes.StreamProducer`` so when
+   197→    ``create_app()`` instantiates the producer, it gets a Mock-class
+   198→    instance whose ``publish`` is a MagicMock. The handler still calls
+   199→    ``publish`` three times per request (risk.scores, audit.records,
+   200→    cases.created-on-REVIEW); we capture the calls + assert structure.
+   201→    """
+   202→    # Create the mock class BEFORE importing create_app so the patch
+   203→    # is in place when create_app() resolves the name at call time.
+   204→    # The mock instance's ``publish`` is a MagicMock that returns a fake
+   205→    # message ID (so the fire-and-forget path looks successful).
+   206→    captured_publish_calls: list[tuple] = []
+   207→
+   208→    class _MockProducer:
+   209→        def __init__(self, redis_url=None):
+   210→            self.redis_url = redis_url
+   211→            self.client = None  # mirroring the real shape
+   212→            self.publish = MagicMock(side_effect=self._capture_publish)
+   213→
+   214→        def _capture_publish(self, stream, fields):
+   215→            captured_publish_calls.append((stream, dict(fields)))
+   216→            return f"mock-msg-id-{len(captured_publish_calls)}"
+   217→
+   218→        def close(self):
+   219→            pass
+   220→
+   221→    # Patch the name as imported into routes.py. The import line was:
+   222→    #   from src.stream.producer import (... StreamProducer)
+   223→    # so the name lives in the ``src.api.routes`` module namespace.
+   224→    from src.api import routes as routes_mod
+   225→
+   226→    monkeypatch.setattr(routes_mod, "StreamProducer", _MockProducer)
+   227→
+   228→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   229→        # Accept decision — should NOT trigger cases.created publish.
+   230→        r1 = client.post("/risk/score", json=VALID, headers=SCORER)
+   231→        assert r1.status_code == 200
+   232→        body1 = r1.json()
+   233→        # Find this request's publishes by prediction_id (other tests in the
+   234→        # module might share the mock, but TestClient-with-context ensures
+   235→        # isolation — the create_app call instantiated a fresh mock).
+   236→        pid1 = body1["prediction_id"]
+   237→        p1_calls = [
+   238→            (s, f) for s, f in captured_publish_calls if f.get("prediction_id") == pid1
+   239→        ]
+   240→        streams_published_1 = {s for s, _ in p1_calls}
+   241→        # risk.scores + audit.records always published.
+   242→        assert STREAM_RISK_SCORES in streams_published_1
+   243→        assert STREAM_AUDIT_RECORDS in streams_published_1
+   244→        # ACCEPT (or REJECT) — NOT REVIEW — so cases.created should be absent.
+   245→        # (We can't assert the exact decision because the model is live; but
+   246→        # we CAN assert that IF decision != REVIEW, cases.created wasn't
+   247→        # called for this prediction_id.)
+   248→        if body1["decision"] != "REVIEW":
+   249→            assert STREAM_CASES_CREATED not in streams_published_1, (
+   250→                "cases.created should only fire on REVIEW, got decision="
+   251→                f"{body1['decision']}"
+   252→            )
+   253→        else:
+   254→            # REVIEW → cases.created published with case_id from the response.
+   255→            assert STREAM_CASES_CREATED in streams_published_1
+   256→            cases_call = next(
+   257→                f for s, f in p1_calls if s == STREAM_CASES_CREATED
+   258→            )
+   259→            assert cases_call["case_id"] == body1["case_id"]
+   260→            assert cases_call["prediction_id"] == pid1
+   261→
+   262→        # Force a REVIEW decision by adding a REVIEW rule. The rules engine
+   263→        # is empty by default; we add a rule that always fires (priority 1,
+   264→        # REVIEW action) and then assert cases.created was published.
+   265→        captured_publish_calls.clear()
+   266→        rules_post = client.post(
+   267→            "/v1/rules",
+   268→            json={
+   269→                "rule_id": "force-review-str",
+   270→                "name": "Track F test rule",
+   271→                "field": "amount_inr",
+   272→                "op": "gt",
+   273→                "value": 0,  # always true for VALID amount
+   274→                "action": "REVIEW",
+   275→                "priority": 1,
+   276→            },
+   277→            headers=ADMIN,
+   278→        )
+   279→        assert rules_post.status_code == 200
+   280→        # POST a fresh order — REVIEW rule will fire + force decision=REVIEW
+   281→        # (the cost-optimizer might pick ACCEPT but the REVIEW rule gates
+   282→        # it to REVIEW; the decision_source becomes cost_optimal_bmr_review_rule).
+   283→        review_payload = {**VALID, "order_id": "STR-REVIEW-1"}
+   284→        r2 = client.post("/risk/score", json=review_payload, headers=SCORER)
+   285→        assert r2.status_code == 200
+   286→        body2 = r2.json()
+   287→        assert body2["decision"] == "REVIEW", (
+   288→            "REVIEW rule should force decision=REVIEW; got "
+   289→            f"{body2['decision']} (source={body2['decision_source']})"
+   290→        )
+   291→        pid2 = body2["prediction_id"]
+   292→        p2_calls = [
+   293→            (s, f) for s, f in captured_publish_calls if f.get("prediction_id") == pid2
+   294→        ]
+   295→        streams_published_2 = {s for s, _ in p2_calls}
+   296→        assert STREAM_RISK_SCORES in streams_published_2
+   297→        assert STREAM_AUDIT_RECORDS in streams_published_2
+   298→        assert STREAM_CASES_CREATED in streams_published_2
+   299→        cases_call = next(
+   300→            f for s, f in p2_calls if s == STREAM_CASES_CREATED
+   301→        )
+   302→        assert cases_call["case_id"] == body2["case_id"]
+   303→        assert cases_call["prediction_id"] == pid2
+   304→        assert cases_call["order_id"] == "STR-REVIEW-1"
+   305→        # Canonical prediction_id correlation: the risk.scores publish
+   306→        # uses the SAME prediction_id as the cases.created publish (this is
+   307→        # the whole point of generating the UUID once — Track B's old
+   308→        # "pending" placeholder broke this correlation).
+   309→        risk_call = next(
+   310→            f for s, f in p2_calls if s == STREAM_RISK_SCORES
+   311→        )
+   312→        assert risk_call["prediction_id"] == pid2
+   313→        # Verify a few key fields on the risk.scores publish.
+   314→        assert risk_call["order_id"] == "STR-REVIEW-1"
+   315→        assert risk_call["decision"] == "REVIEW"
+   316→        assert risk_call["decision_source"] == body2["decision_source"]
+   317→
+   318→
+   319→# --- Test 4: Consumer end-to-end (skipped without Redis) ------------------
+   320→
+   321→
+   322→@skip_no_redis
+   323→def test_consumer_processes_message():
+   324→    """Produce a message, run consumer in a thread, assert handler called."""
+   325→    if _skip_if_redis_unreachable():
+   326→        pytest.skip("Redis not reachable at " + _REDIS_URL)
+   327→    import redis  # type: ignore[import-not-found]
+   328→
+   329→    from src.stream.consumer import StreamConsumer
+   330→
+   331→    raw = redis.from_url(_REDIS_URL, decode_responses=True)
+   332→    # Clean the stream + the consumer group from any prior run.
+   333→    raw.delete(STREAM_RISK_SCORES)
+   334→    try:
+   335→        raw.delete("rto:stream:hll:orders:0")  # processor HLL (if any)
+   336→    except Exception:
+   337→        pass
+   338→
+   339→    received: list[tuple[str, dict]] = []
+   340→
+   341→    def handler(stream: str, fields: dict) -> None:
+   342→        received.append((stream, dict(fields)))
+   343→
+   344→    consumer = StreamConsumer(_REDIS_URL, group="test-group", consumer="test-consumer")
+   345→
+   346→    # Run the consumer in a daemon thread; stop it after a short poll.
+   347→    def _run():
+   348→        # block_ms=500 + count limit; the consumer will exit via _stop
+   349→        # signal handler — but in tests we can't SIGTERM a thread, so we
+   350→        # use a short block + check a stop flag via the consumer's _stop.
+   351→        try:
+   352→            client = consumer._connect()
+   353→            consumer._ensure_group(STREAM_RISK_SCORES)
+   354→            # One-shot read instead of the infinite loop.
+   355→            resp = client.xreadgroup(
+   356→                groupname="test-group",
+   357→                consumername="test-consumer",
+   358→                streamcounts={STREAM_RISK_SCORES: ">"},
+   359→                count=10,
+   360→                block=500,
+   361→            )
+   362→            if resp:
+   363→                for stream, messages in resp:
+   364→                    for msg_id, fields in messages:
+   365→                        try:
+   366→                            handler(stream, dict(fields) if fields else {})
+   367→                            client.xack(stream, "test-group", msg_id)
+   368→                        except Exception:
+   369→                            pass
+   370→        except Exception:
+   371→            pass
+   372→
+   373→    # Produce the message BEFORE starting the consumer so XREADGROUP
+   374→    # has something to deliver on the first poll.
+   375→    producer = StreamProducer(_REDIS_URL)
+   376→    msg_id = producer.publish(
+   377→        STREAM_RISK_SCORES,
+   378→        {
+   379→            "prediction_id": "p-cons-1",
+   380→            "order_id": "ORD-CONS-1",
+   381→            "decision": "REVIEW",
+   382→            "score": "0.555",
+   383→            "ts": "2026-01-02T00:00:00+00:00",
+   384→        },
+   385→    )
+   386→    assert msg_id is not None
+   387→    producer.close()
+   388→
+   389→    t = threading.Thread(target=_run, daemon=True)
+   390→    t.start()
+   391→    t.join(timeout=3.0)
+   392→    assert not t.is_alive(), "consumer thread should have exited after one poll"
+   393→
+   394→    assert len(received) >= 1, "consumer handler should have been called once"
+   395→    stream, fields = received[0]
+   396→    assert stream == STREAM_RISK_SCORES
+   397→    assert fields["prediction_id"] == "p-cons-1"
+   398→    assert fields["order_id"] == "ORD-CONS-1"
+   399→    assert fields["decision"] == "REVIEW"
+   400→
+   401→    consumer.close()
+   402→    raw.delete(STREAM_RISK_SCORES)
+   403→
+   404→
+   405→# --- Test 5: Smoke-test the stream-processor anomaly detection ------------
+   406→
+   407→
+   408→def test_stream_processor_detects_duplicate_order_id():
+   409→    """Unit-test the processor's anomaly detection without Redis.
+   410→
+   411→    Feeds two messages with the same order_id through
+   412→    ``_handle_message`` + asserts that the producer.publish was called
+   413→    with ``anomaly_reason=duplicate_order_id`` on the second message.
+   414→    The processor's HLL call will fail (no Redis) but it's best-effort
+   415→    (logged, not raised) so the test is robust.
+   416→    """
+   417→    proc = StreamProcessor.__new__(StreamProcessor)  # bypass __init__ (no Redis)
+   418→    # Minimal stub of the instance attributes _handle_message touches.
+   419→    proc.redis_url = None
+   420→    proc.consumer_name = "test-processor"
+   421→    proc.client = None
+   422→    proc._stop = False
+   423→    proc._group_ensured = False
+   424→    proc._window = []
+   425→    # Use a real deque for trim_window.
+   426→    from collections import deque
+   427→
+   428→    proc._window = deque()
+   429→    proc._seen_order_ids = {}
+   430→    # 11-d Track T: new state for the 4th detector (HLL cardinality-spike)
+   431→    # + the dict-fallback flag. Set up so the bypass-__init__ test path
+   432→    # doesn't AttributeError on the new attributes.
+   433→    proc._seen_cap_warned = False
+   434→    proc._hll_cardinality_history = {}
+   435→    proc._last_minute_bucket = None
+   436→    proc._baseline_rate = None
+   437→    proc._baseline_score_mean = None
+   438→    proc._baseline_score_std = None
+   439→    proc.WINDOW_SECONDS = 60
+   440→    proc.BASELINE_SEED = 30
+   441→    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+   442→    proc.RATE_SPIKE_MULTIPLIER = 3.0
+   443→    proc.SCORE_DRIFT_SIGMA = 2.0
+   444→    proc.HLL_SPIKE_FACTOR = 3.0
+   445→    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+   446→    proc.SEEN_ORDER_IDS_CAP = 10000
+   447→    proc.GROUP = "test-processors"
+   448→
+   449→    # Mock producer to capture model.drift publishes.
+   450→    drift_calls: list[dict] = []
+   451→
+   452→    class _MockProd:
+   453→        def publish(self, stream, fields):
+   454→            drift_calls.append({"stream": stream, "fields": dict(fields)})
+   455→            return "mock-drift-id"
+   456→
+   457→        def close(self):
+   458→            pass
+   459→
+   460→    proc.producer = _MockProd()
+   461→
+   462→    # _connect is called from _hll_add_order + _hll_count_orders. We
+   463→    # monkey-patch to return None (skip HLL path entirely).
+   464→    proc._connect = lambda: None  # type: ignore[assignment]
+   465→    proc._hll_add_order = lambda oid, bucket: None  # type: ignore[assignment]
+   466→    proc._hll_count_orders = lambda bucket: None  # type: ignore[assignment]
+   467→
+   468→    # Feed 2 messages with same order_id; second is the duplicate.
+   469→    fields1 = {
+   470→        "prediction_id": "p1",
+   471→        "order_id": "ORD-DUP-1",
+   472→        "score": "0.500",
+   473→        "ts": "2026-01-03T00:00:00+00:00",
+   474→    }
+   475→    fields2 = {
+   476→        "prediction_id": "p2",
+   477→        "order_id": "ORD-DUP-1",  # same order_id → duplicate
+   478→        "score": "0.500",
+   479→        "ts": "2026-01-03T00:00:01+00:00",
+   480→    }
+   481→    proc._handle_message(STREAM_RISK_SCORES, fields1)
+   482→    # First message: no anomaly (order_id not seen before).
+   483→    assert len(drift_calls) == 0
+   484→    proc._handle_message(STREAM_RISK_SCORES, fields2)
+   485→    # Second message: duplicate_order_id anomaly → model.drift publish.
+   486→    assert len(drift_calls) == 1
+   487→    drift = drift_calls[0]
+   488→    assert drift["stream"] == STREAM_MODEL_DRIFT
+   489→    assert drift["fields"]["anomaly_reason"] == "duplicate_order_id"
+   490→    assert drift["fields"]["order_id"] == "ORD-DUP-1"
+   491→    assert drift["fields"]["prediction_id"] == "p2"
+   492→
+   493→
+   494→# --- Test 6: 4th detector — HLL cardinality-spike (Track T 11-d) ----------
+   495→
+   496→
+   497→def test_stream_processor_detects_hll_cardinality_spike():
+   498→    """Unit-test the 4th anomaly detector (HLL cardinality-spike) without
+   499→    Redis. The detector compares the current minute's HLL PFCOUNT to the
+   500→    rolling average of the last 10 completed minutes + emits an
+   501→    ``hll_cardinality_spike`` anomaly when current > 3x avg.
+   502→
+   503→    Simulates 1 quiet minute (PFCOUNT=5) then a burst minute (PFCOUNT=20).
+   504→    The quiet minute is snapshotted into ``_hll_cardinality_history`` when
+   505→    the minute rolls over; the burst minute's first message then triggers
+   506→    the spike detector.
+   507→
+   508→    Why this matters: the in-memory ``_seen_order_ids`` dict can only see
+   509→    ONE process's order_ids. The HLL aggregates across all stream-processor
+   510→    replicas — the spike detector catches the "merchant bot burst"
+   511→    signature that fans out across processes.
+   512→    """
+   513→    proc = StreamProcessor.__new__(StreamProcessor)  # bypass __init__
+   514→    proc.redis_url = None
+   515→    proc.consumer_name = "test-processor-hll"
+   516→    proc.client = None
+   517→    proc._stop = False
+   518→    proc._group_ensured = False
+   519→    from collections import deque
+   520→
+   521→    proc._window = deque()
+   522→    proc._seen_order_ids = {}
+   523→    proc._seen_cap_warned = False
+   524→    proc._hll_cardinality_history = {}
+   525→    proc._last_minute_bucket = None
+   526→    proc._baseline_rate = None
+   527→    proc._baseline_score_mean = None
+   528→    proc._baseline_score_std = None
+   529→    proc.WINDOW_SECONDS = 600  # wide so messages don't trim mid-test
+   530→    proc.BASELINE_SEED = 30
+   531→    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+   532→    proc.RATE_SPIKE_MULTIPLIER = 3.0
+   533→    proc.SCORE_DRIFT_SIGMA = 2.0
+   534→    proc.HLL_SPIKE_FACTOR = 3.0
+   535→    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+   536→    proc.SEEN_ORDER_IDS_CAP = 10000
+   537→    proc.GROUP = "test-processors"
+   538→
+   539→    drift_calls: list[dict] = []
+   540→
+   541→    class _MockProd:
+   542→        def publish(self, stream, fields):
+   543→            drift_calls.append({"stream": stream, "fields": dict(fields)})
+   544→            return "mock-drift-id"
+   545→
+   546→        def close(self):
+   547→            pass
+   548→
+   549→    proc.producer = _MockProd()
+   550→    proc._connect = lambda: None  # type: ignore[assignment]
+   551→    proc._hll_add_order = lambda oid, bucket: None  # type: ignore[assignment]
+   552→
+   553→    # Control the HLL count deterministically. The quiet minute bucket
+   554→    # returns 5; the burst minute bucket returns 20 (which is 4x the
+   555→    # baseline 5, well above the 3x spike_factor).
+   556→    quiet_minute = 1_700_000_000 // 60  # arbitrary stable bucket index
+   557→    burst_minute = quiet_minute + 1
+   558→    hll_counts = {quiet_minute: 5, burst_minute: 20}
+   559→
+   560→    def _mock_hll_count(bucket):
+   561→        return hll_counts.get(bucket, 0)
+   562→
+   563→    proc._hll_count_orders = _mock_hll_count  # type: ignore[assignment]
+   564→
+   565→    # Seed the history: simulate that the quiet minute already completed +
+   566→    # its PFCOUNT was snapshotted. This avoids needing two real minute
+   567→    # boundaries (which would slow the test).
+   568→    proc._hll_cardinality_history = {quiet_minute: 5}
+   569→
+   570→    # Now feed a message in the burst minute. The HLL count for the burst
+   571→    # minute is 20 (set above) — 20 > 5 * 3.0 = 15, so the detector fires.
+   572→    fields = {
+   573→        "prediction_id": "p-hll-spike-1",
+   574→        "order_id": "ORD-SPIKE-1",
+   575→        "score": "0.500",
+   576→        "ts": "2026-01-03T00:01:00+00:00",
+   577→    }
+   578→    # Patch time.time to land in the burst minute. _handle_message calls
+   579→    # time.time() once for `now` — we use a monkeypatched module.
+   580→    import src.stream.processor as proc_mod
+   581→
+   582→    orig_time = proc_mod.time
+   583→    proc_mod.time = type("T", (), {"time": lambda s: burst_minute * 60 + 5})()
+   584→    try:
+   585→        proc._handle_message(STREAM_RISK_SCORES, fields)
+   586→    finally:
+   587→        proc_mod.time = orig_time
+   588→
+   589→    # Assert the spike detector fired.
+   590→    spike_calls = [
+   591→        d for d in drift_calls
+   592→        if d["fields"]["anomaly_reason"] == "hll_cardinality_spike"
+   593→    ]
+   594→    assert len(spike_calls) == 1, (
+   595→        f"expected 1 hll_cardinality_spike publish; got "
+   596→        f"{[d['fields']['anomaly_reason'] for d in drift_calls]}"
+   597→    )
+   598→    sp = spike_calls[0]
+   599→    assert sp["stream"] == STREAM_MODEL_DRIFT
+   600→    assert sp["fields"]["current_minute_count"] == "20"
+   601→    assert sp["fields"]["baseline_avg_count"] == "5.00"
+   602→    assert sp["fields"]["spike_factor"] == "3.0"
+   603→    assert sp["fields"]["lookback_minutes"] == "10"
+   604→
+   605→
+   606→def test_stream_processor_hll_spike_no_false_positive_below_factor():
+   607→    """The 4th detector does NOT fire when current ≤ spike_factor x avg.
+   608→
+   609→    Quiet minute = 5, current minute = 14 (14 < 5 * 3 = 15) — no anomaly.
+   610→    """
+   611→    proc = StreamProcessor.__new__(StreamProcessor)
+   612→    proc.redis_url = None
+   613→    proc.consumer_name = "test-processor-hll-neg"
+   614→    proc.client = None
+   615→    proc._stop = False
+   616→    proc._group_ensured = False
+   617→    from collections import deque
+   618→
+   619→    proc._window = deque()
+   620→    proc._seen_order_ids = {}
+   621→    proc._seen_cap_warned = False
+   622→    proc._hll_cardinality_history = {}
+   623→    proc._last_minute_bucket = None
+   624→    proc._baseline_rate = None
+   625→    proc._baseline_score_mean = None
+   626→    proc._baseline_score_std = None
+   627→    proc.WINDOW_SECONDS = 600
+   628→    proc.BASELINE_SEED = 30
+   629→    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+   630→    proc.RATE_SPIKE_MULTIPLIER = 3.0
+   631→    proc.SCORE_DRIFT_SIGMA = 2.0
+   632→    proc.HLL_SPIKE_FACTOR = 3.0
+   633→    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+   634→    proc.SEEN_ORDER_IDS_CAP = 10000
+   635→    proc.GROUP = "test-processors"
+   636→
+   637→    drift_calls: list[dict] = []
+   638→
+   639→    class _MockProd:
+   640→        def publish(self, stream, fields):
+   641→            drift_calls.append({"stream": stream, "fields": dict(fields)})
+   642→            return "mock-drift-id"
+   643→
+   644→        def close(self):
+   645→            pass
+   646→
+   647→    proc.producer = _MockProd()
+   648→    proc._connect = lambda: None  # type: ignore[assignment]
+   649→    proc._hll_add_order = lambda oid, bucket: None  # type: ignore[assignment]
+   650→
+   651→    quiet_minute = 1_700_000_000 // 60
+   652→    burst_minute = quiet_minute + 1
+   653→    hll_counts = {quiet_minute: 5, burst_minute: 14}  # 14 < 5*3=15 → no fire
+   654→    proc._hll_count_orders = lambda b: hll_counts.get(b, 0)  # type: ignore[assignment]
+   655→    proc._hll_cardinality_history = {quiet_minute: 5}
+   656→
+   657→    fields = {
+   658→        "prediction_id": "p-hll-neg-1",
+   659→        "order_id": "ORD-NO-SPIKE-1",
+   660→        "score": "0.500",
+   661→        "ts": "2026-01-03T00:01:00+00:00",
+   662→    }
+   663→    import src.stream.processor as proc_mod
+   664→
+   665→    orig_time = proc_mod.time
+   666→    proc_mod.time = type("T", (), {"time": lambda s: burst_minute * 60 + 5})()
+   667→    try:
+   668→        proc._handle_message(STREAM_RISK_SCORES, fields)
+   669→    finally:
+   670→        proc_mod.time = orig_time
+   671→
+   672→    spike_calls = [
+   673→        d for d in drift_calls
+   674→        if d["fields"]["anomaly_reason"] == "hll_cardinality_spike"
+   675→    ]
+   676→    assert len(spike_calls) == 0, (
+   677→        "no spike should fire when current (14) ≤ avg*factor (15); got: "
+   678→        + str([d["fields"]["anomaly_reason"] for d in drift_calls])
+   679→    )
+   680→
+   681→
+   682→def test_stream_processor_seen_order_ids_cap_falls_back_to_hll(capsys):
+   683→    """When ``_seen_order_ids`` hits SEEN_ORDER_IDS_CAP, the dict stops
+   684→    growing + a one-shot warning is logged. The HLL takes over for the
+   685→    cardinality signal.
+   686→
+   687→    Sets the cap to 2 + feeds 3 distinct order_ids — the 3rd is NOT added
+   688→    + a stderr warning is emitted. Duplicate detection continues to work
+   689→    for the existing 2 entries.
+   690→    """
+   691→    proc = StreamProcessor.__new__(StreamProcessor)
+   692→    proc.redis_url = None
+   693→    proc.consumer_name = "test-processor-cap"
+   694→    proc.client = None
+   695→    proc._stop = False
+   696→    proc._group_ensured = False
+   697→    from collections import deque
+   698→
+   699→    proc._window = deque()
+   700→    proc._seen_order_ids = {}
+   701→    proc._seen_cap_warned = False
+   702→    proc._hll_cardinality_history = {}
+   703→    proc._last_minute_bucket = None
+   704→    proc._baseline_rate = None
+   705→    proc._baseline_score_mean = None
+   706→    proc._baseline_score_std = None
+   707→    proc.WINDOW_SECONDS = 600
+   708→    proc.BASELINE_SEED = 30
+   709→    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+   710→    proc.RATE_SPIKE_MULTIPLIER = 3.0
+   711→    proc.SCORE_DRIFT_SIGMA = 2.0
+   712→    proc.HLL_SPIKE_FACTOR = 3.0
+   713→    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+   714→    proc.SEEN_ORDER_IDS_CAP = 2  # tight cap → fallback trips on 3rd message
+   715→    proc.GROUP = "test-processors"
+   716→
+   717→    drift_calls: list[dict] = []
+   718→
+   719→    class _MockProd:
+   720→        def publish(self, stream, fields):
+   721→            drift_calls.append({"stream": stream, "fields": dict(fields)})
+   722→            return "mock-drift-id"
+   723→
+   724→        def close(self):
+   725→            pass
+   726→
+   727→    proc.producer = _MockProd()
+   728→    proc._connect = lambda: None  # type: ignore[assignment]
+   729→    proc._hll_add_order = lambda oid, bucket: None  # type: ignore[assignment]
+   730→    proc._hll_count_orders = lambda bucket: None  # type: ignore[assignment]
+   731→
+   732→    # Feed 3 distinct order_ids. The 3rd is the duplicate of the 1st? No —
+   733→    # 3 distinct ones (ORD-A, ORD-B, ORD-C). The cap is 2, so the 3rd
+   734→    # trips the fallback (not added to the dict).
+   735→    fields_a = {
+   736→        "prediction_id": "p-a",
+   737→        "order_id": "ORD-A",
+   738→        "score": "0.500",
+   739→        "ts": "2026-01-03T00:00:00+00:00",
+   740→    }
+   741→    fields_b = {
+   742→        "prediction_id": "p-b",
+   743→        "order_id": "ORD-B",
+   744→        "score": "0.500",
+   745→        "ts": "2026-01-03T00:00:01+00:00",
+   746→    }
+   747→    fields_c = {
+   748→        "prediction_id": "p-c",
+   749→        "order_id": "ORD-C",  # 3rd distinct → trips cap fallback
+   750→        "score": "0.500",
+   751→        "ts": "2026-01-03T00:00:02+00:00",
+   752→    }
+   753→    proc._handle_message(STREAM_RISK_SCORES, fields_a)
+   754→    proc._handle_message(STREAM_RISK_SCORES, fields_b)
+   755→    # Before the 3rd: dict has 2 entries (at cap), no warning yet.
+   756→    assert len(proc._seen_order_ids) == 2
+   757→    assert proc._seen_cap_warned is False
+   758→    proc._handle_message(STREAM_RISK_SCORES, fields_c)
+   759→    # After the 3rd: dict STILL has 2 entries (3rd not added), warning
+   760→    # fired exactly once.
+   761→    assert len(proc._seen_order_ids) == 2, (
+   762→        "dict should NOT have grown past the cap; the 3rd order_id should "
+   763→        "have been dropped (HLL takes over for cardinality)"
+   764→    )
+   765→    assert "ORD-C" not in proc._seen_order_ids
+   766→    assert proc._seen_cap_warned is True
+   767→    # Stderr should contain the one-shot warning.
+   768→    err = capsys.readouterr().err
+   769→    assert "_seen_order_ids cap reached" in err
+   770→    assert "falling back to HLL for cardinality" in err
+   771→    # No drift publishes fired (these are 3 distinct order_ids, no spike).
+   772→    assert len(drift_calls) == 0
+   773→    # Duplicate detection still works for the existing 2 entries — feed
+   774→    # ORD-A again → duplicate_order_id anomaly fires.
+   775→    proc._handle_message(
+   776→        STREAM_RISK_SCORES,
+   777→        {**fields_a, "prediction_id": "p-a-dup"},
+   778→    )
+   779→    assert any(
+   780→        d["fields"]["anomaly_reason"] == "duplicate_order_id"
+   781→        for d in drift_calls
+   782→    ), "duplicate detection should still work for entries within the cap"
+   783→

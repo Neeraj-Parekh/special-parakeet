@@ -1,4 +1,4 @@
-# Research — the 5 pitch papers
+# Research — the 5 pitch papers (2 peer-reviewed w/ DOIs, 3 industry briefs w/ URLs)
 
 > These are the **executive-pitch citations** — blog/industry sources
 > chosen for the 5-minute video and the README, NOT the engineering
@@ -13,6 +13,15 @@
 > control plane). Per V3 §21 claims ledger: every claim carries a
 > status (MEASURED > CITED > ASSUMED > OMITTED). These 5 are CITED
 > or ASSUMPTION-industry — not MEASURED in the repo.
+>
+> **Citation-type split (Track T 11-d honesty fix):** of the 5 pitch
+> papers, **2 are peer-reviewed journal articles with DOIs**
+> (Papers 1 + 2) and **3 are vendor industry briefs cited by URL**
+> (Papers 3 + 4 + 5 — Liminal, Pragma, Atlan). The earlier framing
+> implied all 5 carried DOIs; this was inflated. Each paper's table
+> below now has an explicit **Citation type** row so the reader can
+> tell peer-reviewed evidence from industry-reported numbers at a
+> glance. The anti-fabrication policy (last section) is unchanged.
 
 ---
 
@@ -24,6 +33,7 @@
 | Venue | *Big Data Mining and Analytics* (Tsinghua University Press / IEEE) |
 | Year | 2024 |
 | Link | https://doi.org/10.26599/BDMA.2024.9020015 (volume 7, issue 3) |
+| Citation type | **Peer-reviewed — DOI: 10.26599/BDMA.2024.9020015** (Tsinghua/IEEE journal; indexed in Crossref) |
 | Status | CITED |
 
 ### Summary
@@ -63,6 +73,7 @@ tuning.
 | Venue | *Mathematics* (MDPI) |
 | Year | 2026 |
 | Link | https://doi.org/10.3390/math14010021 (volume 14, issue 1) |
+| Citation type | **Peer-reviewed — DOI: 10.3390/math14010021** (MDPI open-access journal; indexed in Crossref) |
 | Status | CITED — directly informs the Threshold Manager |
 
 ### Summary
@@ -103,6 +114,7 @@ address_check, hold}` with per-transaction-amount FN cost).
 | Venue | Liminal (industry analyst brief) |
 | Year | 2025 |
 | Link | https://www.liminal.co/insights/building-trust-in-agentic-commerce (registration-gated) |
+| Citation type | **Industry brief — URL: https://www.liminal.co/insights/building-trust-in-agentic-commerce** (vendor analyst note; no DOI; not peer-reviewed) |
 | Status | CITED-industry — V3 §21 marks as PUBLIC-MARKETING-derived |
 
 ### Summary
@@ -157,6 +169,7 @@ natural upgrade.
 | Venue | Pragma (industry brief) |
 | Year | 2025 |
 | Link | https://www.pragma.in/blog/cod-fraud-indian-ecommerce (free, registration-gated for download) |
+| Citation type | **Industry brief — URL: https://www.pragma.in/blog/cod-fraud-indian-ecommerce** (vendor blog; no DOI; not peer-reviewed) |
 | Status | ASSUMPTION-industry — per V3 §21, the 78-84% / 4-7% / 89-93% / 42-48% numbers are UNVERIFIED until a primary source (logistics whitepaper) is found |
 
 ### Summary
@@ -215,6 +228,7 @@ RTO-catch rate exceeds its friction cost.
 | Venue | Atlan (data-management vendor) |
 | Year | 2026 |
 | Link | https://www.atlan.com/ai-agent-risks-guardrails (free, registration-gated for full PDF) |
+| Citation type | **Industry brief — URL: https://www.atlan.com/ai-agent-risks-guardrails** (vendor marketing; no DOI; not peer-reviewed) |
 | Status | CITED-industry — V3 §21 marks as PUBLIC-MARKETING-derived |
 
 ### Summary
@@ -267,7 +281,7 @@ pitch + docs carries a status:
 | Address validation prevents 42-48% of COD returns (Paper 4) | UNVERIFIED-industry |
 | Gartner predicts 40% of CIOs demand guardian agents by 2028 (Paper 5) | PUBLIC-MARKETING-derived — phrase as "industry analysts predict…" |
 | E1/E2/E3 PR-AUC numbers (0.524 / 0.550 / 0.545) | **MEASURED** (repo) — citable, reproducible via `./verify.sh` |
-| 93/93 tests pass | **MEASURED** (repo) |
+| 141/149 tests pass | **MEASURED** (repo) — 141 passed + 8 skipped (Postgres+Redis path; full suite w/ Docker services = 149). Final count locked by Track V 11-g. |
 | Patent numbers US20240012345A1, US20230187654B2, WO2024/098765A1 | **SUSPECT-FABRICATED** — DO NOT CITE in pitch deck (per V3 §21) |
 
 Rule: **measured > cited > assumed > omitted.**

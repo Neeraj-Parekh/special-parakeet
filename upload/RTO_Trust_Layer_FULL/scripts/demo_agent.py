@@ -12,6 +12,12 @@ recommendation: "design mandates as scoped, task-bound, attenuating
 credentials rather than standing broad authority" — no single agent-payment
 protocol covers all 5 threat dimensions (D1-D5), but a mandate-bounded agent
 is the operational mitigation for D2 (transaction authorization).
+
+Track P (Task 11-a) — ``ALLOWED_ACTIONS`` is now defined in
+``src/api/agent_allowlist.py`` (the production module imported by
+``src/api/routes.py`` for server-side enforcement, Mission 3). This demo
+script imports it from there so the allowlist has ONE source of truth; the
+``BoundedAgent`` class stays here (it's the demo client).
 """
 from __future__ import annotations
 
@@ -23,50 +29,19 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.api.agent_allowlist import ALLOWED_ACTIONS  # noqa: E402
 from src.api.mandates import issue_mandate  # noqa: E402
 from src.api.routes import create_app  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# Agent allowlist — prompt-razor §5 lines 1003-1050 (BoundedAgent class).
-# Day 1 Track D (V3 §13) added 3 UPI Circle / delegated-payment actions per
-# NPCI OC-201B (8 Oct 2025). The 4 original COD-order actions are unchanged.
-# Per user's 5 Missions: "Agent can only call N APIs. Any other intent
-# returns 'Action not permitted.'" — enforced below in ``BoundedAgent.dispatch``.
-# Per user's 6 demo moments #5: high-cost actions (``requires_approval=True``)
-# do NOT execute — the agent creates a case in the review queue and responds
-# "I cannot perform this action. I have requested human approval."
+# ``ALLOWED_ACTIONS`` is imported from ``src.api.agent_allowlist`` — the
+# production module that ``src/api/routes.py`` (Subagent 11-routes) also
+# imports for server-side action gating. Keeping one source of truth means
+# a future change to the allowlist lands in BOTH the demo client + the
+# production gate without a coordinated two-file edit. The dict shape is
+# documented in the agent_allowlist module docstring; see that file for the
+# 7-action allowlist + the ``check_agent_action`` enforcement function.
 # ---------------------------------------------------------------------------
-ALLOWED_ACTIONS: dict[str, dict] = {
-    # --- Original 4 COD-order actions (prompt-razor §5) ---
-    "score_order": {"cost": 0, "requires_approval": False},
-    "request_otp": {"cost": 1, "requires_approval": False},
-    "flag_review": {"cost": 2, "requires_approval": False},
-    "block_order": {"cost": 10, "requires_approval": True},
-    # --- UPI Circle / delegated payments (NPCI OC-201B, 8 Oct 2025) ---
-    "upi_circle_delegated_pay": {
-        "cost": 5,
-        "requires_approval": True,  # explicit user action per OC-201B §3
-        "hard_caps": {
-            "max_per_txn": 5000,    # OC-201B: ₹5,000 per transaction
-            "max_per_month": 15000,  # OC-201B: ₹15,000 per delegation/month
-            "cooling_24h": 5000,    # OC-201B: 24h ₹5,000 cumulative cooling
-            "max_devices": 5,       # OC-201B: max 5 IoT/software per user
-        },
-    },
-    "validate_device_id": {
-        # OC-201B §3.7 Issuer Bank duty — per-txn device validation. No
-        # approval needed (read-only check against the mandate's allowlist).
-        "cost": 1,
-        "requires_approval": False,
-    },
-    "revoke_delegation_on_inactivity": {
-        # OC-201B: auto-revoke after 6 months inactivity or on tampering.
-        # Auto-triggered — no human approval needed (this is the safety net).
-        "cost": 2,
-        "requires_approval": False,
-        "auto_trigger_days": 180,
-    },
-}
 
 
 class BoundedAgent:

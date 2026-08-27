@@ -103,63 +103,57 @@ def test_merkle_root_padding_to_power_of_two():
 
 
 def test_merkle_proof_reconstructs_root():
-    """The Merkle proof for leaf at position P, when combined with the
-    leaf hash, must reconstruct the same root as MerkleSealer._merkle_root
-    over the whole leaf list. This is the inclusion-proof invariant."""
-    leaves = [hashlib.sha256(f"leaf-{i}".encode()).hexdigest() for i in range(7)]
+    """The Merkle proof for a leaf at position P, when combined with the
+    leaf hash, must reconstruct the same root as ``MerkleSealer._merkle_root``
+    over the whole leaf list. This is the inclusion-proof invariant
+    (RFC 6962 §2.1.1).
+
+    T1.3 FIX: the prior version of this test had an ``or True`` tautology
+    at its final assert — it tried both ``sha256(leaf + sibling)`` and
+    ``sha256(sibling + leaf)`` at each level but ALWAYS picked the right-
+    side form regardless of the leaf's parity, so for odd indices (where
+    the sibling is on the LEFT) the reconstruction silently broke + the
+    ``or True`` papered over the bug. The proof BUILDER in
+    ``MerkleSealer._build_proof_path`` was already correct (it emits the
+    sibling's position explicitly); only the test's reconstruction was
+    buggy. This rewrite routes through the shared static helper +
+    honors each step's ``position`` field so the proof builder is
+    exercised for BOTH even and odd leaf indices.
+
+    Coverage:
+      * 5 leaves (odd → exercises the RFC 6962 padding case: pad to 8
+        with the last leaf's hash repeated).
+      * 4 positions: 0 (even), 1 (odd), 2 (even), 4 (odd, last). Each
+        has a different sibling-position pattern across tree levels —
+        together they cover every left/right bookkeeping branch.
+    """
+    leaves = [hashlib.sha256(f"leaf-{i}".encode()).hexdigest() for i in range(5)]
     root = MerkleSealer._merkle_root(leaves)
-    # Build the proof for position 3 the same way the sealer's proof()
-    # method does (mirror the tree descent).
-    size = 1
-    while size < len(leaves):
-        size *= 2
-    level = leaves + [leaves[-1]] * (size - len(leaves))
-    idx = 3
-    proof = []
-    while len(level) > 1:
-        sib = idx ^ 1
-        proof.append(level[sib])
-        nxt = []
-        for i in range(0, len(level), 2):
-            nxt.append(hashlib.sha256((level[i] + level[i + 1]).encode()).hexdigest())
-        level = nxt
-        idx //= 2
-    # Reconstruct root from leaf + proof.
-    h = leaves[3]
-    for sibling in proof:
-        # Whether sibling is left or right depends on the leaf's current
-        # parity — at each level, if the leaf was an even index, the
-        # sibling is on the right (parent = h(sibling); else left).
-        # For simplicity in this invariant test, we test BOTH orders
-        # and accept whichever matches the root (the sealer's proof
-        # builder records the position explicitly; here we just check
-        # the math is correct).
-        try_right = hashlib.sha256((h + sibling).encode()).hexdigest()
-        try_left = hashlib.sha256((sibling + h).encode()).hexdigest()
-        # One of these is the parent at the next level. We pick the
-        # correct one based on the original index — but for this
-        # invariant test, just check that AT LEAST ONE path reconstructs
-        # the root (the proof builder's correctness is what the test
-        # verifies, not the position bookkeeping).
-        if try_right == root or try_left == root:
-            h = try_right if try_right == root else try_left
-            break
-        # Pick the one with the higher probability of being right (even
-        # index → sibling on right).
-        h = try_right  # placeholder; the assert below catches a mismatch
-    assert h == root or any(
-        # The root is at the top — verify by reconstructing the full tree
-        # via the sealer's static method (which is what the proof builder
-        # trusts).
-        hashlib.sha256((leaves[3] + proof[0]).encode()).hexdigest() == root
-        or True  # invariant holds because _merkle_root already verified above
-        for _ in [0]
-    ), "proof reconstruction failed"
-    # The strong invariant: the sealer's _merkle_root over the same
-    # leaves equals the reconstructed root from any leaf + its proof.
-    # We've already verified _merkle_root above; the proof builder uses
-    # the same padding rule, so the root MUST match.
-    assert root == MerkleSealer._merkle_root(leaves)
+    # Sanity: 5 leaves pad to 8 (3 duplicates of the last leaf).
+    assert root == MerkleSealer._merkle_root(
+        leaves + [leaves[-1]] * 3
+    ), "padding rule mismatch — _merkle_root must use last-leaf-repeat"
+
+    for position in (0, 1, 2, 4):
+        proof_path = MerkleSealer._build_proof_path(leaves, position)
+        # Proof length must be ceil(log2(padded_size)) = 3 (padded to 8).
+        assert len(proof_path) == 3, (
+            f"position {position}: expected 3 proof steps (8-leaf padded "
+            f"tree → log2(8) levels), got {len(proof_path)}"
+        )
+        # Reconstruct root from leaf hash + proof path. The sibling's
+        # position field tells us the order: "right" → parent = H(leaf + sib),
+        # "left" → parent = H(sib + leaf). This is the RFC 6962 invariant.
+        h = leaves[position]
+        for step in proof_path:
+            if step["position"] == "right":
+                h = hashlib.sha256((h + step["hash"]).encode()).hexdigest()
+            else:  # "left"
+                h = hashlib.sha256((step["hash"] + h).encode()).hexdigest()
+        assert h == root, (
+            f"position {position} proof failed to reconstruct root: "
+            f"got {h}, want {root}. Proof path was: {proof_path}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -395,14 +389,112 @@ def test_dual_control_same_key_rejected():
 
 
 def test_dual_control_two_different_keys_succeeds():
-    """Two DIFFERENT valid admin-scope keys → 200. The audit record
-    carries BOTH signature digests (admin_signature_1_digest +
-    admin_signature_2_digest), not the raw keys (redaction posture
-    matches customer_id)."""
+    """Two DIFFERENT valid admin-scope keys → 200 with a real HMAC chain
+    (T1.1). signature_2 = HMAC(admin2_key, signature_1 + canonical_body +
+    timestamp). The audit record carries admin_signature_1_digest (SHA-256
+    of admin1's raw key) + admin_signature_2_hmac_chain (truncated HMAC)
+    + dual_control_chain_verified=True — NOT the raw keys (redaction
+    posture matches customer_id).
+
+    T1.1 UPDATE — the prior test passed admin_signature_2 as a raw
+    admin API key (the legacy pre-T1.1 form). The new HMAC-chain design
+    requires admin_signature_2 to be the HMAC output computed with
+    admin2's API key. The test now computes that HMAC client-side +
+    sends it in admin_signature_2; the server recomputes + verifies.
+    """
+    import hmac
+    import hashlib
+    import json
     import os
+    import time
 
     # Set a second admin key via env var so default_keys() picks it up.
     # The settings cache must be cleared so the new key is loaded.
+    old = os.environ.get("RTO_ADMIN_KEYS")
+    os.environ["RTO_ADMIN_KEYS"] = "admin-demo-key,admin-second-key"
+    from src.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+            scored = client.post("/risk/score", json=VALID, headers=SCORER).json()
+            pid = scored["prediction_id"]
+            # T1.1 — compute the real HMAC chain client-side. signature_2
+            # = HMAC(admin2_key, signature_1 + canonical_body + timestamp).
+            admin1_key = "admin-demo-key"
+            admin2_key = "admin-second-key"
+            decision = "REVIEW"
+            notes = "dual-control test"
+            ts = int(time.time())
+            canonical_body = json.dumps(
+                {
+                    "prediction_id": pid,
+                    "decision": decision,
+                    "notes": notes,
+                },
+                sort_keys=True,
+            )
+            chained_msg = f"{admin1_key}|{canonical_body}|{ts}"
+            sig2 = hmac.new(
+                admin2_key.encode(),
+                chained_msg.encode(),
+                hashlib.sha256,
+            ).hexdigest()
+            r = client.post(
+                f"/risk/{pid}/override",
+                json={
+                    "decision": decision,
+                    "notes": notes,
+                    "admin_signature_1": admin1_key,
+                    "admin_signature_2": sig2,
+                    "timestamp": ts,
+                },
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["dual_control"] is True
+            assert body["signatures_required"] == 2
+            assert body["signatures_provided"] == 2
+            assert body["new_decision"] == "REVIEW"
+            # T1.1 — the chain-verified flag + timestamp are surfaced.
+            assert body["dual_control_chain_verified"] is True
+            assert body["dual_control_timestamp"] == ts
+            # The audit trail must record the new T1.1 fields.
+            audit_id = body["audit_id"]
+            rec = client.get(f"/audit/{audit_id}", headers=ADMIN).json()
+            assert "admin_signature_1_digest" in rec
+            # T1.1 — admin_signature_2 is now an HMAC output (not a raw
+            # key); the audit stores admin_signature_2_hmac_chain +
+            # dual_control_chain_verified instead of
+            # admin_signature_2_digest.
+            assert "admin_signature_2_hmac_chain" in rec
+            assert rec["admin_signature_1_digest"].startswith("adm_")
+            assert rec["admin_signature_2_hmac_chain"].startswith("hmac_")
+            assert rec["dual_control_chain_verified"] is True
+            assert rec["dual_control_timestamp"] == ts
+            assert (
+                rec["admin_signature_1_digest"]
+                != rec["admin_signature_2_hmac_chain"]
+            ), "admin1 digest + admin2 HMAC must differ in shape + value"
+            # The override_form field records which path was taken.
+            assert rec["request"]["override_form"] == "dual_control_v3_12_1"
+    finally:
+        # Restore env + clear cache so other tests get the default keys.
+        if old is None:
+            os.environ.pop("RTO_ADMIN_KEYS", None)
+        else:
+            os.environ["RTO_ADMIN_KEYS"] = old
+        get_settings.cache_clear()
+
+
+def test_dual_control_hmac_chain_rejects_tampered_signature_2():
+    """T1.1 — a tampered signature_2 (not the expected HMAC) must 403.
+    Sends admin_signature_1=admin1_key + admin_signature_2=garbage (not
+    the HMAC computed with admin2_key). The server iterates admin keys,
+    finds no match → 403 "dual_control HMAC chain verification failed".
+    """
+    import os
+
     old = os.environ.get("RTO_ADMIN_KEYS")
     os.environ["RTO_ADMIN_KEYS"] = "admin-demo-key,admin-second-key"
     from src.config import get_settings
@@ -416,32 +508,15 @@ def test_dual_control_two_different_keys_succeeds():
                 f"/risk/{pid}/override",
                 json={
                     "decision": "REVIEW",
-                    "notes": "dual-control test",
+                    "notes": "tamper attempt",
                     "admin_signature_1": "admin-demo-key",
-                    "admin_signature_2": "admin-second-key",
+                    "admin_signature_2": "not-a-valid-hmac-hex-string",
+                    "timestamp": int(__import__("time").time()),
                 },
             )
-            assert r.status_code == 200, r.text
-            body = r.json()
-            assert body["dual_control"] is True
-            assert body["signatures_required"] == 2
-            assert body["signatures_provided"] == 2
-            assert body["new_decision"] == "REVIEW"
-            # The audit trail must record both signature digests.
-            audit_id = body["audit_id"]
-            rec = client.get(f"/audit/{audit_id}", headers=ADMIN).json()
-            assert "admin_signature_1_digest" in rec
-            assert "admin_signature_2_digest" in rec
-            assert rec["admin_signature_1_digest"].startswith("adm_")
-            assert rec["admin_signature_2_digest"].startswith("adm_")
-            assert (
-                rec["admin_signature_1_digest"]
-                != rec["admin_signature_2_digest"]
-            ), "the two admin keys must produce different digests"
-            # The override_form field records which path was taken.
-            assert rec["request"]["override_form"] == "dual_control_v3_12_1"
+            assert r.status_code == 403, r.text
+            assert "HMAC chain verification failed" in r.json()["detail"]
     finally:
-        # Restore env + clear cache so other tests get the default keys.
         if old is None:
             os.environ.pop("RTO_ADMIN_KEYS", None)
         else:

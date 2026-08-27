@@ -21,6 +21,14 @@ user_id validation by the issuer (this server). Source papers:
 Backward-compat: ``cod_order`` mandates (the original HMAC system agent 1-b built)
 continue to work with the same 3-argument signature. UPI Circle mandates opt in via
 ``mandate_type="upi_circle_delegation"`` and the new keyword-only fields.
+
+Track P (Task 11-a) — the UPI Circle cumulative counters (₹15,000/month cap,
+₹5,000 24h cooling, 6-month inactivity auto-revoke) are now PERSISTED in
+Postgres via the ``mandate_counters`` + ``mandate_counter_events`` tables (see
+``alembic/versions/003_mandate_counters.py``). The caps survive process restarts,
+multi-worker deployments, and redeploy events. When ``DATABASE_URL`` is unset
+(file-mode / test path), the in-memory dicts remain the source of truth so the
+22 existing tests in ``tests/test_mandates.py`` continue to pass unchanged.
 """
 from __future__ import annotations
 
@@ -28,25 +36,196 @@ import hashlib
 import hmac
 import json
 import os
+import threading
 import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# In-memory UPI Circle cumulative counters (Track E, Day 2 → Postgres).
+# In-memory UPI Circle cumulative counters — file-mode fallback (Track P).
 # Keyed by mandate ``sub`` (the salted customer_ref digest prefix that uniquely
 # identifies a mandate). These track:
 #   * monthly cumulative spend per mandate (₹15,000 cap per OC-201B)
 #   * 24-hour rolling txn log per mandate (₹5,000 cooling per OC-201B)
 #   * last-activity timestamp per mandate (6-month auto-revoke per OC-201B)
-# A real Postgres-backed implementation (Track E Day 2) would persist these in a
-# ``mandate_counters`` table keyed by mandate_id, with TTL prune jobs for the 24h
-# cooling window. The in-memory version is fine for demo + single-process test runs.
+#
+# Track P (Task 11-a) — when ``DATABASE_URL`` is set, ``verify_mandate()`` reads
+# + writes the persisted ``mandate_counters`` / ``mandate_counter_events`` rows
+# instead of these dicts; the dicts remain the source of truth only for the
+# file-mode / test path (no Postgres available). ``reset_upi_counters()`` wipes
+# BOTH surfaces so test isolation holds regardless of which mode the suite runs in.
 # ---------------------------------------------------------------------------
 _cumulative_monthly: dict[str, float] = {}
 _cumulative_24h: dict[str, list[tuple[float, float]]] = {}
 _last_activity: dict[str, float] = {}
+
+
+# ---------------------------------------------------------------------------
+# Module-level lazy Postgres connection for the mandate counters path (Track P).
+# Pattern mirrors ``src/audit/logger.py``: open ONE persistent psycopg connection
+# per process (the mandate verify path is not the write-hot path; a pool would
+# add latency for no benefit at this scale). Lazily constructed on first call to
+# ``_get_counters_conn()`` so the import is side-effect-free — file-mode tests
+# that never set ``DATABASE_URL`` never touch psycopg.
+# ---------------------------------------------------------------------------
+_counters_conn_lock = threading.Lock()
+_counters_conn: Any = None  # psycopg.Connection | None
+
+
+def _get_counters_conn() -> Any:
+    """Return a lazy shared psycopg connection for the mandate counters path.
+
+    Returns ``None`` when:
+      * ``DATABASE_URL`` is unset (file-mode / test path), or
+      * it does not point at a Postgres DSN (defensive — same logic as
+        ``src.config.Settings.is_postgres``), or
+      * psycopg is not importable (shouldn't happen — requirements.txt pins it;
+        the ``try/except ImportError`` is a defensive guard for stripped test
+        envs where the package was yanked).
+
+    The connection is opened once and cached on the module; subsequent calls
+    return the cached connection. ``reset_upi_counters()`` does NOT close it —
+    connection lifecycle is the process's responsibility, not the test's. The
+    cache is keyed off ``DATABASE_URL`` at first-read time; if the env var
+    changes mid-process (tests that mutate it), call ``_reset_counters_conn()``
+    to clear the cache.
+    """
+    global _counters_conn
+    if _counters_conn is not None:
+        return _counters_conn
+    db_url = os.environ.get("DATABASE_URL", "").strip()
+    if not db_url or not db_url.startswith(
+        ("postgresql://", "postgres://", "postgresql+psycopg://")
+    ):
+        return None
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover — defensive; psycopg is in requirements
+        return None
+    with _counters_conn_lock:
+        if _counters_conn is None:
+            _counters_conn = psycopg.connect(db_url, autocommit=False)
+        return _counters_conn
+
+
+def _reset_counters_conn() -> None:
+    """Test helper — drop the cached counters connection.
+
+    Call between tests that mutate ``DATABASE_URL`` so the next
+    ``_get_counters_conn()`` call re-reads the env var and reopens. Not part
+    of the public API; only ``reset_upi_counters()`` should call this.
+    """
+    global _counters_conn
+    if _counters_conn is not None:
+        try:
+            _counters_conn.close()
+        except Exception:
+            pass
+    _counters_conn = None
+
+
+def _read_db_counters(mandate_sub: str, now: float) -> tuple[float, float, list[tuple[float, float]]]:
+    """Read persisted UPI Circle counters for a mandate from Postgres.
+
+    Returns ``(cumulative_monthly, last_activity_ts, recent_24h_events)`` where:
+      * ``cumulative_monthly`` is the running monthly cap counter (0.0 if the
+        mandate has no row yet — fresh mandate).
+      * ``last_activity_ts`` is the unix epoch of the last txn (or ``-inf`` if
+        no row — the caller falls back to the mandate's ``iat``).
+      * ``recent_24h_events`` is the rolling 24h txn list ``[(ts, amount), ...]``
+        reconstructed from ``mandate_counter_events`` rows with ``ts > now-86400``.
+
+    On ANY DB error (table missing, connection lost, partial-failure mid-query),
+    this returns ``(0.0, -1.0, [])`` and the caller falls through to the in-memory
+    dicts. NEVER raise — the verify path must degrade to the in-memory fallback
+    rather than fail the request.
+    """
+    sentinel = (0.0, -1.0, [])
+    conn = _get_counters_conn()
+    if conn is None:
+        return sentinel
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT cumulative_monthly, last_activity_ts "
+                "FROM mandate_counters WHERE mandate_sub = %s",
+                (mandate_sub,),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                cumulative_monthly = float(row[0] or 0.0)
+                last_activity_ts = float(row[1]) if row[1] is not None else -1.0
+            else:
+                cumulative_monthly = 0.0
+                last_activity_ts = -1.0
+            # Rolling 24h window — filter on the (mandate_sub, ts) index.
+            cur.execute(
+                "SELECT ts, amount_inr FROM mandate_counter_events "
+                "WHERE mandate_sub = %s AND ts > %s ORDER BY ts ASC",
+                (mandate_sub, now - 86400),
+            )
+            recent_24h = [(float(r[0]), float(r[1])) for r in cur.fetchall()]
+        return cumulative_monthly, last_activity_ts, recent_24h
+    except Exception:
+        # Degrade to in-memory fallback. The verify path will use the dicts;
+        # the cap is enforced within the process (real but not cross-restart).
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return sentinel
+
+
+def _write_db_counters(
+    mandate_sub: str,
+    *,
+    new_cumulative_monthly: float,
+    last_activity_ts: float,
+    txn_ts: float,
+    txn_amount: float,
+) -> None:
+    """Persist the updated UPI Circle counters + append the 24h event to Postgres.
+
+    UPSERTs the per-mandate ``mandate_counters`` row (single row per ``sub``)
+    and appends a row to ``mandate_counter_events`` for the 24h rolling window.
+    Both writes are in the same transaction so the cumulative counter + the
+    cooling-window event log advance atomically (a crash mid-write leaves the
+    prior state intact, not a half-updated counter).
+
+    On ANY DB error this swallows the exception and rolls back — the verify
+    path has ALREADY updated the in-memory dicts by the time this is called,
+    so the request succeeds even if the persistence layer fails. A future
+    improvement is to surface the failure to the audit logger so ops sees it
+    (the silent-fall-back is the safe-but-debuggable trade-off).
+    """
+    conn = _get_counters_conn()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mandate_counters "
+                "(mandate_sub, cumulative_monthly, last_activity_ts, updated_at) "
+                "VALUES (%s, %s, %s, NOW()) "
+                "ON CONFLICT (mandate_sub) DO UPDATE SET "
+                "cumulative_monthly = EXCLUDED.cumulative_monthly, "
+                "last_activity_ts = EXCLUDED.last_activity_ts, "
+                "updated_at = NOW()",
+                (mandate_sub, new_cumulative_monthly, last_activity_ts),
+            )
+            cur.execute(
+                "INSERT INTO mandate_counter_events "
+                "(mandate_sub, ts, amount_inr, created_at) "
+                "VALUES (%s, %s, %s, NOW())",
+                (mandate_sub, txn_ts, txn_amount),
+            )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def _secret() -> bytes:
@@ -199,11 +378,42 @@ def verify_mandate(
         now = time.time()
 
         if mtype == "upi_circle_delegation":
+            # --- Track P (Task 11-a) — read persisted counters from DB when  ---
+            # --- available; fall back to in-memory dicts in file mode.       ---
+            # ``_read_db_counters`` returns (0.0, -1.0, []) sentinel when no
+            # Postgres connection is configured OR when the query fails — the
+            # sentinel ``last_activity_ts = -1.0`` is the "no row / use iat"
+            # signal. We use the DB values when ``db_last_activity >= 0``,
+            # otherwise the in-memory dicts (file mode / test path).
+            db_cumulative, db_last_activity, db_recent_24h = _read_db_counters(mid, now)
+            if db_last_activity >= 0:
+                cumulative_monthly = db_cumulative
+                # DB is the source of truth in prod. If the row exists but
+                # last_activity_ts is NULL (mandate never spent), fall back to
+                # the mandate's iat — same baseline as the in-memory path.
+                last_act = (
+                    db_last_activity
+                    if db_last_activity > 0
+                    else payload.get("iat", now)
+                )
+                # ``db_recent_24h`` is already filtered to ts > now-86400 by
+                # the DB query — no need to re-prune.
+                recent = db_recent_24h
+                _cumulative_monthly[mid] = cumulative_monthly
+                _cumulative_24h[mid] = list(recent)
+                _last_activity[mid] = last_act
+            else:
+                cumulative_monthly = _cumulative_monthly.get(mid, 0.0)
+                last_act = _last_activity.get(mid, payload.get("iat", now))
+                recent = _cumulative_24h.get(mid, [])
+                # Prune txns older than 24h (rolling window).
+                recent = [(ts, amt) for ts, amt in recent if now - ts < 86400]
+                _cumulative_24h[mid] = recent
+
             # 1. OC-201B §3.8: 6-month inactivity auto-revoke. Baseline last
             #    activity is the mandate's iat (so a freshly-issued mandate
             #    passes); once a txn lands, _last_activity is updated.
             inactivity_days = int(payload.get("inactivity_revoke_days", 180))
-            last_act = _last_activity.get(mid, payload.get("iat", now))
             if now - last_act > inactivity_days * 86400:
                 return MandateVerdict.EXPIRED, {
                     **payload,
@@ -220,7 +430,7 @@ def verify_mandate(
 
             # 3. OC-201B: monthly cumulative cap (default ₹15,000).
             max_per_month = float(payload.get("max_per_month_inr", 15000.0))
-            projected = _cumulative_monthly.get(mid, 0.0) + float(amount_inr)
+            projected = cumulative_monthly + float(amount_inr)
             if projected > max_per_month:
                 return MandateVerdict.BREACH, {
                     **payload,
@@ -252,10 +462,6 @@ def verify_mandate(
             #    principle; the cooling gate is a fraud-control circuit
             #    breaker, not a hard cap.
             cooling_24h = float(payload.get("cooling_24h_inr", 5000.0))
-            recent = _cumulative_24h.get(mid, [])
-            # Prune txns older than 24h (rolling window).
-            recent = [(ts, amt) for ts, amt in recent if now - ts < 86400]
-            _cumulative_24h[mid] = recent
             for _ts, amt in recent:
                 if amt >= cooling_24h:
                     return MandateVerdict.REVIEW, {
@@ -264,9 +470,23 @@ def verify_mandate(
                     }
 
             # All checks passed — record the txn for cumulative tracking.
-            _cumulative_monthly[mid] = _cumulative_monthly.get(mid, 0.0) + float(amount_inr)
+            # Update BOTH the in-memory dicts (cheap, file-mode source of
+            # truth + shadow for ops introspection) AND the DB counters
+            # (cross-restart persistence, Track P). On a VALID verdict only —
+            # BREACH/REVIEW/EXPIRED do not advance the counters (a rejected
+            # txn does not consume the monthly cap; a REVIEW txn does not
+            # re-trigger the cooling window).
+            new_cumulative = cumulative_monthly + float(amount_inr)
+            _cumulative_monthly[mid] = new_cumulative
             _cumulative_24h.setdefault(mid, []).append((now, float(amount_inr)))
             _last_activity[mid] = now
+            _write_db_counters(
+                mid,
+                new_cumulative_monthly=new_cumulative,
+                last_activity_ts=now,
+                txn_ts=now,
+                txn_amount=float(amount_inr),
+            )
             return MandateVerdict.VALID, {**payload, "verdict_reason": "ok"}
 
         # --- cod_order (legacy) path ---
@@ -292,15 +512,43 @@ def decode_mandate(token: str) -> dict:
 
 
 def reset_upi_counters() -> None:
-    """Test helper — wipe the in-memory UPI Circle cumulative counters.
+    """Test helper — wipe the UPI Circle cumulative counters.
 
-    Call between tests so the monthly/cooling/inactivity state from one test
-    doesn't bleed into the next. Track E Day 2 will replace this with a
-    Postgres truncate + transactional rollback.
+    Wipes BOTH surfaces so test isolation holds regardless of mode:
+      * in-memory dicts (file-mode / test path) — always cleared.
+      * Postgres ``mandate_counters`` + ``mandate_counter_events`` tables
+        (Track P, prod path) — TRUNCATED when ``DATABASE_URL`` is set.
+      * cached module-level psycopg connection — closed + cleared so the
+        next ``_get_counters_conn()`` call re-reads ``DATABASE_URL`` (handles
+        tests that flip the env var between cases).
+
+    Track E Day 2 will replace this with a Postgres truncate + transactional
+    rollback; this implementation already does the truncate so a future Track
+    E refactor just removes the in-memory fallback.
     """
     _cumulative_monthly.clear()
     _cumulative_24h.clear()
     _last_activity.clear()
+    # Close + drop the cached connection so DATABASE_URL changes between
+    # tests are picked up. Re-opening is cheap (lazy on next verify call).
+    _reset_counters_conn()
+    conn = _get_counters_conn()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            # Events first (no FK to counters, but order is still safer).
+            cur.execute("TRUNCATE TABLE mandate_counter_events")
+            cur.execute("DELETE FROM mandate_counters")
+        conn.commit()
+    except Exception:
+        # The tables may not exist (migration not run yet — e.g. CI without
+        # DATABASE_URL fixture). Silently fall through; the in-memory dicts
+        # are the test's source of truth in that case.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def simulate_inactivity(token: str, days: int) -> None:
@@ -309,6 +557,11 @@ def simulate_inactivity(token: str, days: int) -> None:
     Used to drive the OC-201B 6-month inactivity auto-revoke path without
     having to actually sleep 180 days. Mutates module state for the mandate
     identified by the token's ``sub``. No-op if the token is invalid.
+
+    Track P — also persists the backdated timestamp to the
+    ``mandate_counters`` row so the auto-revoke check fires in Postgres mode
+    too (the DB row is the source of truth there; in-memory mutation alone
+    would be invisible to the next ``verify_mandate`` call).
     """
     try:
         payload = decode_mandate(token)
@@ -317,4 +570,28 @@ def simulate_inactivity(token: str, days: int) -> None:
     mid = payload.get("sub", "")
     if not mid:
         return
-    _last_activity[mid] = time.time() - (int(days) * 86400)
+    backdated_ts = time.time() - (int(days) * 86400)
+    _last_activity[mid] = backdated_ts
+    # Persist to the mandate_counters row so the inactivity check fires in
+    # Postgres mode. UPSERT — the mandate may not have a row yet (fresh
+    # mandate with no prior txn).
+    conn = _get_counters_conn()
+    if conn is None:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO mandate_counters "
+                "(mandate_sub, cumulative_monthly, last_activity_ts, updated_at) "
+                "VALUES (%s, 0, %s, NOW()) "
+                "ON CONFLICT (mandate_sub) DO UPDATE SET "
+                "last_activity_ts = EXCLUDED.last_activity_ts, "
+                "updated_at = NOW()",
+                (mid, backdated_ts),
+            )
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass

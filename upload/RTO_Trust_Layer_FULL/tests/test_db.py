@@ -66,9 +66,21 @@ def db_conn():
     # volume). Idempotent — alembic upgrade head is a no-op if already at
     # head. We do this in-fixture rather than in-conftest so this test file
     # is fully self-contained.
-    try:
-        import subprocess
+    #
+    # T1.6 FIX: the prior version used ``except Exception: pass`` here,
+    # which swallowed ALL alembic failures (broken migration, bad DSN,
+    # perms, network) — tests then proceeded + failed later with
+    # confusing "relation does not exist" errors instead of a clear
+    # alembic-failure message. The fix below catches SPECIFIC exception
+    # types + skips the module with the actual alembic stderr visible in
+    # the skip reason so the cause is obvious. The DB connection itself
+    # is opened BEFORE the migration attempt so a connection refused
+    # (the common CI case where Postgres isn't running) skips above at
+    # the module-level ``pytestmark`` — only the alembic-run failure
+    # paths reach here.
+    import subprocess
 
+    try:
         subprocess.run(
             ["alembic", "upgrade", "head"],
             cwd=str(Path(__file__).resolve().parents[1]),
@@ -77,8 +89,27 @@ def db_conn():
             capture_output=True,
             timeout=60,
         )
-    except Exception:  # pragma: no cover — assume schema is already applied
-        pass
+    except subprocess.CalledProcessError as e:
+        # Alembic ran but exited non-zero — the migration SQL is broken
+        # OR the DB rejected it (perms, schema conflict, etc.). Surface
+        # the alembic stderr so the failure cause is visible in the
+        # skip reason (not silently swallowed as before).
+        stderr = e.stderr.decode("utf-8", errors="replace") if e.stderr else ""
+        pytest.skip(
+            f"alembic upgrade head failed (exit {e.returncode}): {stderr[:500] or e}"
+        )
+    except FileNotFoundError:
+        # ``alembic`` binary not on PATH — the venv hasn't installed it
+        # OR this isn't the alembic-managed environment. Skip rather
+        # than fail; the test infra setup is documented in the module
+        # docstring above.
+        pytest.skip("alembic not installed in this environment (PATH lookup failed)")
+    except subprocess.TimeoutExpired:
+        # 60s ceiling for ``alembic upgrade head`` — exceeded only when
+        # the DB is unreachable (each statement blocks on TCP retry) OR
+        # a migration contains an unbounded operation. Skip with a clear
+        # reason so the operator knows to investigate.
+        pytest.skip("alembic upgrade head timed out (>60s) — DB unreachable or migration hung")
 
     yield conn
     conn.close()

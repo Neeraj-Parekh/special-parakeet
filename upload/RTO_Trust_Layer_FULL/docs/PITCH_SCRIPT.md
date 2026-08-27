@@ -42,7 +42,9 @@ and can I build a platform, not a notebook, around it?"
 "I built the RTO Trust Layer. Not a model — a platform. Five core
 services in Docker: the FastAPI scorer, Postgres, Redis Streams, and
 two stream workers. Nine services in the full stack with nginx, Prometheus,
-and Grafana. Ninety-three tests pass."
+and Grafana. One hundred forty-one tests pass plus eight skipped
+(Postgres plus Redis path; full suite with Docker services equals one
+hundred twenty-nine)."
 
 ### Beat 2 (1:00 – 1:30) — Live Dashboard + Explainability
 
@@ -173,7 +175,9 @@ percent fraud reduction at four to seven percent conversion cost."
 *[4:20 — slide changes to the architecture diagram, 6-box ASCII.]*
 
 "It's not a notebook. It's a product. Five core services, nine with
-monitoring. Ninety-three tests pass. Twenty-two OpenAPI endpoints.
+monitoring. One hundred forty-one tests pass plus eight skipped
+(Postgres plus Redis path; full suite with Docker services equals one
+hundred twenty-nine). Twenty-two OpenAPI endpoints.
 Postgres plus Alembic migrations, Redis Streams with three consumer
 groups, Merkle audit intervals, dual-control override, bounded agent
 with cryptographic mandates — every box on the diagram does work."

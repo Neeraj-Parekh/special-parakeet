@@ -1,6 +1,9 @@
 """Train + evaluate RTO risk model. Prints JSON metrics; writes model + report."""
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import sys
 import time
 import uuid
@@ -10,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -87,8 +90,20 @@ from src.features.enrich import add_address_features  # noqa: E402
 from src.ml.registry import (  # noqa: E402
     _close_conn as _close_registry_conn,
     current_champion,
+    get_priors,
     psi,
     register_model,
+)
+# Day 6 Track P (T1.5) — server-side enforcement of the 7-action agent
+# allowlist (Mission 3: "Agent can only call N APIs. Any other intent
+# returns 'Action not permitted.'"). Imported here so the
+# ``enforce_agent_action`` FastAPI dependency can consult the canonical
+# allowlist + ``check_agent_action`` gate. Source: Mao 2026 SoK, D2
+# (transaction-authorization: design mandates as scoped, task-bound,
+# attenuating credentials rather than standing broad authority).
+from src.api.agent_allowlist import (  # noqa: E402
+    ALLOWED_ACTIONS,
+    check_agent_action,
 )
 from src.models.explain import reason_codes_batch  # noqa: E402
 from src.models.splitting import group_split  # noqa: E402
@@ -117,6 +132,14 @@ class OrderIn(BaseModel):
     items: int = Field(default=1, ge=1, le=100)
     order_hour: int = Field(default=12, ge=0, le=23)
     device: str = Field(default="Android App", max_length=32)
+    # Day 6 Track U (T2.3) — per-merchant traceability. ``merchant_id``
+    # is the multi-tenant key for the ``/v1/usage`` metering endpoint's
+    # per-merchant GROUP BY (V3 §10.4 — multi-tenant isolation). Defaults
+    # to None so the 117 pre-Track-U tests that don't pass it still work
+    # (the audit body carries ``merchant_id: null`` and the per-merchant
+    # ``/v1/usage`` query returns aggregate when the query param is
+    # absent — same as before).
+    merchant_id: str | None = Field(default=None, max_length=64)
 
 
 class RuleIn(BaseModel):
@@ -156,6 +179,12 @@ class FeedbackIn(BaseModel):
 # The dual-control path is the recommended one for new dashboard wiring;
 # the legacy path is retained for gradual migration + so the Track D
 # test suite is untouched.
+# Day 6 Track V (T1.1) — the dual-control path now uses a REAL HMAC
+# chain: signature_2 = HMAC(admin2_key, signature_1 || canonical_body ||
+# timestamp). A single-admin compromise cannot forge a dual-control
+# override because the second signature is cryptographically bound to
+# the first (admin1's key alone is useless; admin2's key alone is
+# useless — both must collude or both must be compromised to forge).
 class OverrideIn(BaseModel):
     """V3 §12.1 dual-control override request body.
 
@@ -164,13 +193,35 @@ class OverrideIn(BaseModel):
     self-approve — the contradiction with the old single-admin endpoint
     that V3 §12.1 calls out). The endpoint records both signatures in
     the audit hash chain so the dual-control trail is tamper-evident.
+
+    Day 6 Track V (T1.1) — signature_2 is now an HMAC output, NOT a
+    second raw admin API key. The chain is::
+
+        canonical_body = json.dumps({
+            "prediction_id": prediction_id,
+            "decision": decision,
+            "notes": notes,
+        }, sort_keys=True)
+        chained_msg = signature_1 + "|" + canonical_body + "|" + str(timestamp)
+        signature_2 = HMAC(admin2_key, chained_msg, sha256).hexdigest()
+
+    The client passes ``timestamp`` so the server can recompute the
+    chained message identically. If ``timestamp`` is None, the server
+    uses ``int(time.time())`` at audit-write time AND tries ±30 seconds
+    for clock skew (the client must compute signature_2 within that
+    window).
     """
+
     decision: str = Field(
         pattern="^(ACCEPT|REVIEW|REJECT|APPROVED|REJECTED|ESCALATED)$"
     )
     notes: str = Field(default="", max_length=2000)
     admin_signature_1: str = Field(min_length=1, max_length=256)
     admin_signature_2: str = Field(min_length=1, max_length=256)
+    # T1.1 — the unix timestamp (seconds) the client used to compute
+    # admin_signature_2. Optional; if None the server uses
+    # ``int(time.time())`` + a ±30-second clock-skew window.
+    timestamp: int | None = Field(default=None, ge=0)
 
 
 # Day 2 Track H — V3 §10.3 + §A items 15, 16 + §C T10. The SimulateIn
@@ -215,6 +266,18 @@ def create_app(
     # worklog Day 2 Track F deferral list).
     state["stream"] = StreamProducer(settings.redis_url)
 
+    # Day 2 Track G — Metrics is constructed eagerly here so it can be
+    # wired into the LabelFeedbackService below (Day 6 Track S T2.2-helper —
+    # Gama 2014 §5 detector-quality metric emission: detection-delay +
+    # false-alarm-run-length on every DRIFT detection / WARNING→STABLE
+    # revert). Moving the Metrics instantiation out of the lifespan
+    # function (the previous home) is safe — ``Metrics()`` is cheap +
+    # takes no settings, so doing it at app-construction time vs lifespan
+    # time is equivalent for tests (the existing lifespan-time assignment
+    # at the original line 297 would have OVERWRITTEN this; we remove the
+    # duplicate assignment below).
+    state["metrics"] = Metrics()
+
     # Day 2 Track G — LabelFeedbackService (DDM + ADWIN over the delayed
     # is_returned label stream). Constructed eagerly (cheap — just stores
     # the URLs + creates the DDM/ADWIN instances) so the
@@ -223,9 +286,16 @@ def create_app(
     # gauges. The lazy StreamProducer inside the service is constructed
     # only on first DRIFT publish — so the 67 existing tests + 7 feedback
     # tests still pass without a Redis fixture.
+    # Day 6 Track S (T2.2-helper) — pass ``metrics=state["metrics"]`` so
+    # the service can emit ``rto_drift_detection_delay_seconds`` +
+    # ``rto_drift_false_alarm_run_length`` summaries on drift transitions
+    # (Gama 2014 ACM CSUR 46(4) §5 detector-quality metrics). The kwarg is
+    # optional on the constructor (defaults to None → no-op) so test
+    # fixtures that build the service directly still work.
     state["feedback"] = LabelFeedbackService(
         redis_url=settings.redis_url,
         database_url=settings.database_url,
+        metrics=state["metrics"],
     )
 
     # Day 4 Track M — OpenTelemetry tracer. Dual-mode like Track E's
@@ -274,7 +344,11 @@ def create_app(
         state["bucket"] = TokenBucket(scorer_rate_per_min)
         state["rules"] = RulesEngine()
         state["breaker"] = CircuitBreaker()
-        state["metrics"] = Metrics()
+        # NOTE: ``state["metrics"]`` is now constructed at app-construction
+        # time (above, before LabelFeedbackService) so it can be wired into
+        # the service. The previous ``state["metrics"] = Metrics()`` line
+        # here would have overwritten the wired-up instance — removed in
+        # Day 6 Track S (T2.2-helper).
         state["cases"] = CaseService(settings.cases_path)
         num_cols = [c for c in X_tr.columns if str(X_tr[c].dtype) != "category"]
         state["psi_sample"] = {
@@ -382,7 +456,15 @@ def create_app(
         }
         return pd.DataFrame([row])
 
-    @app.post("/risk/score")
+    @app.post(
+        "/risk/score",
+        # Day 6 Track P (T1.5) — server-side agent allowlist enforcement.
+        # ``enforce_agent_action`` checks the X-Agent-Action header
+        # against the 7-action allowlist (Mission 3). Bypasses when the
+        # header is absent (existing scorer/admin auth still applies
+        # inside the handler).
+        dependencies=[Depends(enforce_agent_action)],
+    )
     def score(
         order: OrderIn,
         authorization: str | None = Header(default=None),
@@ -554,16 +636,48 @@ def create_app(
                     decision_source = "degraded_review"
                 else:
                     # 4. Bahnsen Bayes Minimum Risk decision layer (ICMLA 2013,
-                    #    DOI 10.1109/ICMLA.2013.68). Per-order argmin of expected
-                    #    cost over {ACCEPT, REVIEW (selective-OTP), REJECT}.
-                    #    NOTE: this 3-way path uses Track C's constant c_fn=600
-                    #    default (backward compat with Track C's tests). Day 4
-                    #    Track N's per-amount FN cost (Bahnsen Eq.(5)) is wired
-                    #    into the 5-way ``optimal_intervention`` call below —
-                    #    the 3-way decision remains the primary authorization
+                    #    DOI 10.1109/ICMLA.2013.68). Per-order argmin of
+                    #    expected cost over {ACCEPT, REVIEW (selective-OTP),
+                    #    REJECT}.
+                    #
+                    #    T2.1 (Track R) — 3-way BMR decision now uses
+                    #    per-amount FN cost (Bahnsen Eq.(5): c_fn =
+                    #    amount_inr). Same probability produces different
+                    #    decisions at different order amounts — the paper's
+                    #    headline property. A ₹52,000 order at p=0.4 will
+                    #    REJECT; a ₹600 order at p=0.4 will REVIEW. The 5-way
+                    #    ``optimal_intervention`` call below ALSO uses
+                    #    per-amount FN cost (was already wired in Track N);
+                    #    the 3-way decision now matches the 5-way
+                    #    intervention's cost model (both per-amount). The
+                    #    3-way decision remains the primary authorization
                     #    signal; the 5-way intervention is the operator's
                     #    next-step recommendation.
-                    decision, costs = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)
+                    #
+                    #    T2.2 (Track R) — Bahnsen Eq.(6) post-resampling
+                    #    probability calibration. If the model was trained
+                    #    on under-sampled/SMOTE data, the raw probability is
+                    #    inflated. Recalibrate:
+                    #        P*(f|x) = P(f|x) * P_orig / P_und.
+                    #    No-op when priors are equal (no resampling was
+                    #    done). ``get_priors()`` returns both-None when the
+                    #    live in-process model was registered without
+                    #    priors (the pre-Track-R lifespan path) — in that
+                    #    case the live path skips calibration, same as
+                    #    Track C's behaviour (correct when no SMOTE was
+                    #    applied to the training data).
+                    _priors = get_priors()
+                    if (
+                        _priors.get("p_orig") is not None
+                        and _priors.get("p_und") is not None
+                        and _priors["p_orig"] != _priors["p_und"]
+                    ):
+                        proba = calibrate_probabilities(
+                            [proba], _priors["p_orig"], _priors["p_und"]
+                        )[0]
+                    decision, costs = optimal_decision(
+                        proba, amount_inr=order.amount_inr, **DEFAULT_COST_WEIGHTS
+                    )
                     cost_breakdown = costs
                     # Day 4 Track N — V3 §11.6 5-way intervention policy argmin.
                     # Computes the cost-optimal next-step intervention
@@ -589,13 +703,15 @@ def create_app(
             # Legacy ``policy_hint`` is the BMR-optimal action string (kept for
             # dashboard / consumer backward compat; the actual decision is the
             # body's ``decision`` field — which equals ``policy_hint`` whenever
-            # the cost-optimizer was the decision source). Uses the same
-            # constant-c_fn 3-way path as the live decision above (Track C
-            # behaviour; per-amount FN cost is wired into the 5-way
-            # ``optimal_intervention`` only).
+            # the cost-optimizer was the decision source). T2.1 (Track R):
+            # per-amount FN cost is now wired into the 3-way path (was Track-C
+            # constant c_fn=600 before). The ``policy_hint`` call mirrors the
+            # live decision path's cost model so the dashboard's label matches.
             policy_hint = None
             if proba is not None:
-                policy_hint = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)[0]
+                policy_hint = optimal_decision(
+                    proba, amount_inr=order.amount_inr, **DEFAULT_COST_WEIGHTS
+                )[0]
 
             features_used = (
                 {c: float(X.iloc[0][c]) for c in X.columns if str(X[c].dtype) != "category"}
@@ -682,6 +798,15 @@ def create_app(
                     # correlation key the feedback endpoint needs.
                     "prediction_id": prediction_id,
                     "case_id": case_id,
+                    # Day 6 Track U (T2.3) — per-merchant traceability. The
+                    # ``merchant_id`` field on ``OrderIn`` is the multi-tenant
+                    # key. Stored in the audit body's JSONB so the
+                    # ``/v1/usage`` metering endpoint can GROUP BY /
+                    # filter by merchant_id. None when the caller didn't
+                    # pass one (the 117 pre-Track-U tests + legacy merchant
+                    # web-checkout path) — aggregate counts are returned
+                    # in that case.
+                    "merchant_id": order.merchant_id,
                 }
             )
             # Day 2 Track F — fire-and-forget Redis Streams publishes. After
@@ -790,6 +915,12 @@ def create_app(
                     "bh_purpose_code": mandate_payload.get("bh_purpose_code"),
                 },
                 "audit_trail_url": f"/audit/{audit_id}",
+                # Day 6 Track U (T1.7) — expose ``audit_id`` as a top-level
+                # response field so an external verifier can drive the
+                # ``GET /v1/audit/{audit_id}/proof`` Merkle inclusion-proof
+                # endpoint directly from what the API returns (previously
+                # only available as the suffix of ``audit_trail_url``).
+                "audit_id": audit_id,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }
             state["metrics"].inc(
@@ -1268,7 +1399,15 @@ def create_app(
         chain_ok, n, bad_id = state["audit"].verify_chain()
         return {"intact": chain_ok, "records_checked": n, "first_bad_audit_id": bad_id}
 
-    @app.post("/v1/mandates")
+    @app.post(
+        "/v1/mandates",
+        # Day 6 Track P (T1.5) — agent allowlist enforcement on the
+        # mandate-mint endpoint (money-moving authority — agents can't
+        # mint or widen mandates per the existing 403 in the handler;
+        # this dependency additionally rejects any caller declaring an
+        # out-of-allowlist X-Agent-Action).
+        dependencies=[Depends(enforce_agent_action)],
+    )
     def create_mandate(
         customer_ref: str,
         max_amount_inr: float,
@@ -1339,7 +1478,16 @@ def create_app(
             "note": "agents cannot mint or widen mandates",
         }
 
-    @app.post("/risk/{prediction_id}/override", tags=["override"])
+    @app.post(
+        "/risk/{prediction_id}/override",
+        tags=["override"],
+        # Day 6 Track P (T1.5) — agent allowlist enforcement on the
+        # dual-control override endpoint (money-moving authority —
+        # agents can't self-approve overrides per V3 §12.1; this
+        # dependency additionally rejects any caller declaring an
+        # out-of-allowlist X-Agent-Action).
+        dependencies=[Depends(enforce_agent_action)],
+    )
     def override(
         prediction_id: str,
         new_decision: str | None = None,
@@ -1370,18 +1518,31 @@ def create_app(
         """
         if payload is not None:
             # V3 §12.1 dual-control path.
+            # T1.1 — verify admin_signature_1 is a valid admin API key.
+            # admin_signature_2 is now an HMAC output (not a raw key) so
+            # check_key is no longer called on it; the HMAC chain check
+            # below implicitly verifies admin2's key is valid (only a
+            # real admin2 key produces the matching HMAC).
             ok1, _ = check_key(
                 payload.admin_signature_1, "admin", state["keys"]
             )
-            ok2, _ = check_key(
-                payload.admin_signature_2, "admin", state["keys"]
-            )
-            if not ok1 or not ok2:
+            if not ok1:
+                # Preserve the existing 403 + "2 valid admin" message so
+                # ``test_dual_control_override_requires_two_keys`` (which
+                # sends admin_signature_1="invalid-key-1") still passes.
                 raise HTTPException(
                     status_code=403,
                     detail="dual-control override requires 2 valid admin API keys",
                 )
             if payload.admin_signature_1 == payload.admin_signature_2:
+                # Same-key self-approve attempt → 400 (preserves the
+                # ``test_dual_control_same_key_rejected`` assertion).
+                # NOTE: with the new HMAC-chain design, sig1 (a raw key)
+                # and sig2 (an HMAC hex output) can NEVER be equal by
+                # accident — the same-key check fires only when the
+                # client mistakenly reuses admin1's key as the "second
+                # signature" (the legacy pre-T1.1 form), which is
+                # exactly the self-approve attempt V3 §12.1 forbids.
                 raise HTTPException(
                     status_code=400,
                     detail=(
@@ -1395,15 +1556,99 @@ def create_app(
                 "APPROVED", "REJECTED", "ESCALATED",
             }:
                 raise HTTPException(status_code=422, detail="invalid decision")
+
+            # T1.1 — REAL HMAC CHAIN. signature_2 = HMAC(admin2_key,
+            # signature_1 || canonical_body || timestamp). A
+            # single-admin compromise cannot forge a dual-control
+            # override because the second signature is
+            # cryptographically bound to the first — admin1's key
+            # alone is useless (no admin2 key to compute the expected
+            # HMAC); admin2's key alone is useless (no admin1 signature
+            # to chain on). Both must collude OR both must be
+            # compromised to forge an override.
+            canonical_body = json.dumps(
+                {
+                    "prediction_id": prediction_id,
+                    "decision": decision,
+                    "notes": payload.notes,
+                },
+                sort_keys=True,
+            )
+            # Client-provided timestamp OR server's current time. We
+            # also try ±30 seconds for clock skew when the client didn't
+            # send a timestamp (the agent client may compute signature_2
+            # a few seconds before the server processes the request).
+            base_ts = (
+                payload.timestamp
+                if payload.timestamp is not None
+                else int(time.time())
+            )
+            ts_candidates = (
+                [base_ts]
+                if payload.timestamp is not None
+                else [base_ts + delta for delta in range(-30, 31)]
+            )
+            admin2_key_found: str | None = None
+            expected_sig_2: str | None = None
+            matched_ts: int | None = None
+            for ts_candidate in ts_candidates:
+                chained_msg = (
+                    f"{payload.admin_signature_1}|{canonical_body}|"
+                    f"{ts_candidate}"
+                )
+                # Iterate through admin keys (skipping the one equal to
+                # admin_signature_1). The one that produces an HMAC
+                # matching admin_signature_2 IS admin2's key.
+                for candidate_key in state["keys"]["admin"]:
+                    if candidate_key == payload.admin_signature_1:
+                        continue  # admin2 must be different from admin1
+                    candidate_sig = hmac.new(
+                        candidate_key.encode(),
+                        chained_msg.encode(),
+                        hashlib.sha256,
+                    ).hexdigest()
+                    if hmac.compare_digest(
+                        payload.admin_signature_2, candidate_sig
+                    ):
+                        admin2_key_found = candidate_key
+                        expected_sig_2 = candidate_sig
+                        matched_ts = ts_candidate
+                        break
+                if admin2_key_found is not None:
+                    break
+            if admin2_key_found is None or expected_sig_2 is None:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "dual_control HMAC chain verification failed — "
+                        "signature_2 must be HMAC(key=admin2, "
+                        "msg=signature_1 + '|' + canonical_body + '|' + "
+                        "timestamp). canonical_body="
+                        + canonical_body
+                        + f", base_timestamp={base_ts}"
+                    ),
+                )
+
             # Record both admin-key digests (NOT the raw keys — same
             # redaction posture as customer_id) in the audit hash chain
             # so a verifier can prove "two different admins co-signed
-            # this override" without retaining the raw secrets. The
-            # digest is sha256-truncate-16, same shape as
-            # redact_customer(). The Merkle interval sealer (Track H)
-            # will fold this record into the next sealed root too.
-            import hashlib as _hl
-
+            # this override" without retaining the raw secrets.
+            # admin_signature_1_digest = sha256-truncate-16 of sig1
+            # (the raw admin1 key) — same shape as redact_customer().
+            # admin_signature_2_hmac_chain = the truncated HMAC output
+            # (sig2 IS the HMAC; we store a 16-char display prefix so
+            # the audit trail can show "the chain was verified" without
+            # retaining the full HMAC). ``dual_control_chain_verified``
+            # is the machine-readable flag for the verifier. The Merkle
+            # interval sealer (Track H) folds this record into the next
+            # sealed root too.
+            admin_sig_1_digest = (
+                "adm_"
+                + hashlib.sha256(
+                    payload.admin_signature_1.encode()
+                ).hexdigest()[:16]
+            )
+            admin_sig_2_hmac_chain = "hmac_" + expected_sig_2[:16]
             audit_id = state["audit"].log(
                 {
                     "request": {
@@ -1412,10 +1657,14 @@ def create_app(
                     },
                     "decision": decision,
                     "breach_note": "dual_control_override_by_two_admins",
-                    "admin_signature_1_digest": "adm_"
-                    + _hl.sha256(payload.admin_signature_1.encode()).hexdigest()[:16],
-                    "admin_signature_2_digest": "adm_"
-                    + _hl.sha256(payload.admin_signature_2.encode()).hexdigest()[:16],
+                    "admin_signature_1_digest": admin_sig_1_digest,
+                    # T1.1 — admin_signature_2 is now an HMAC output,
+                    # not a raw key. Store the truncated HMAC (display)
+                    # + the verified flag instead of a SHA-256 digest of
+                    # the raw key (which no longer exists in the payload).
+                    "admin_signature_2_hmac_chain": admin_sig_2_hmac_chain,
+                    "dual_control_chain_verified": True,
+                    "dual_control_timestamp": matched_ts,
                     "notes": payload.notes,
                 }
             )
@@ -1426,6 +1675,12 @@ def create_app(
                 "dual_control": True,
                 "signatures_required": 2,
                 "signatures_provided": 2,
+                # T1.1 — surface the chain-verified flag so the
+                # dashboard / ops console can label the override as
+                # "HMAC-chained dual-control" (vs the legacy
+                # single-admin path which surfaces dual_control=False).
+                "dual_control_chain_verified": True,
+                "dual_control_timestamp": matched_ts,
             }
         # Legacy single-admin path (Track D backward-compat).
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
@@ -1540,13 +1795,22 @@ def create_app(
     # override above enforces).                                         #
     # ================================================================== #
 
-    @app.get("/v1/audit/{record_id}/proof", tags=["audit"])
+    @app.get("/v1/audit/{audit_id}/proof", tags=["audit"])
     def audit_proof(
-        record_id: int,
+        audit_id: str,
         authorization: str | None = Header(default=None),
     ) -> dict:
         """Merkle inclusion proof for an audit record — path from leaf
         to interval root (V3 §10.3).
+
+        Day 6 Track U (T1.7) — accepts the string ``audit_id`` (e.g.
+        ``"aud_3f9b8e2c1d4a5b06"``) that ``POST /risk/score`` returns in
+        its response body's ``audit_id`` field (or as the suffix of
+        ``audit_trail_url``). Looks up the internal SERIAL PK
+        (``audit_records.id``) that the Merkle sealer indexes by, then
+        delegates to ``AuditLogger.merkle_proof(record_id)``. Previously
+        the route took ``record_id: int`` (the internal PK) which an
+        external verifier could not drive from what the API returns.
 
         Auth: admin scope. Returns the Merkle proof path so an external
         verifier can confirm a specific audit record is included in a
@@ -1566,16 +1830,32 @@ def create_app(
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
         if not ok:
             raise HTTPException(status_code=401, detail=err)
+        # T1.7 — translate the public audit_id (string) to the internal
+        # record_id (int SERIAL PK) the Merkle sealer indexes by.
+        record_id = _lookup_record_id_by_audit_id(state["audit"], audit_id)
+        if record_id is None:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"audit record '{audit_id}' not found or no Merkle "
+                    "interval sealed for this record (run seal_interval() "
+                    "first, or wait for the count/elapsed threshold to "
+                    "trip). file-mode audit has no Merkle layer — use "
+                    "GET /v1/audit/verify-chain for the per-record hash "
+                    "chain."
+                ),
+            )
         proof = state["audit"].merkle_proof(record_id)
         if proof is None:
             raise HTTPException(
                 status_code=404,
                 detail=(
-                    "no Merkle interval sealed for this record "
-                    "(run seal_interval() first, or wait for the count/"
-                    "elapsed threshold to trip). file-mode audit has no "
-                    "Merkle layer — use GET /v1/audit/verify-chain for "
-                    "the per-record hash chain."
+                    f"audit record '{audit_id}' exists but no Merkle "
+                    "interval has been sealed yet (run seal_interval() "
+                    "first, or wait for the count/elapsed threshold to "
+                    "trip). file-mode audit has no Merkle layer — use "
+                    "GET /v1/audit/verify-chain for the per-record hash "
+                    "chain."
                 ),
             )
         return proof
@@ -1694,11 +1974,30 @@ def create_app(
                     decision = "REVIEW"
                     decision_source = "degraded_review"
                 else:
-                    # Day 4 Track N — 3-way path keeps Track C's constant
-                    # c_fn=600 default for backward compat; the per-amount FN
-                    # cost (Bahnsen Eq.(5)) is wired into the 5-way
-                    # ``optimal_intervention`` call below.
-                    decision, costs = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)
+                    # Day 4 Track N — T2.1 + T2.2 (Track R) mirror of
+                    # the /risk/score decision path. The 3-way BMR
+                    # decision now uses per-amount FN cost (Bahnsen
+                    # Eq.(5): c_fn = amount_inr) — same probability
+                    # produces different decisions at different order
+                    # amounts, the paper's headline property. The
+                    # ``optimal_intervention`` 5-way call below ALSO
+                    # uses per-amount FN cost (was already wired in
+                    # Track N). Track R also recalibrates the
+                    # probability via Bahnsen Eq.(6) when the model
+                    # registry carries post-resampling priors (no-op
+                    # when priors are equal or both-None).
+                    _priors = get_priors()
+                    if (
+                        _priors.get("p_orig") is not None
+                        and _priors.get("p_und") is not None
+                        and _priors["p_orig"] != _priors["p_und"]
+                    ):
+                        proba = calibrate_probabilities(
+                            [proba], _priors["p_orig"], _priors["p_und"]
+                        )[0]
+                    decision, costs = optimal_decision(
+                        proba, amount_inr=order.amount_inr, **DEFAULT_COST_WEIGHTS
+                    )
                     cost_breakdown = costs
                     # 5-way V3 §11.6 intervention recommendation (per-amount
                     # FN cost — Bahnsen Eq.(5)).
@@ -1715,9 +2014,14 @@ def create_app(
                     else:
                         decision_source = "cost_optimal_bmr"
 
+            # Legacy ``policy_hint`` mirrors the live decision path's
+            # per-amount cost model (T2.1) so the dashboard's simulate
+            # "what-if" label matches the live decision label.
             policy_hint = None
             if proba is not None:
-                policy_hint = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)[0]
+                policy_hint = optimal_decision(
+                    proba, amount_inr=order.amount_inr, **DEFAULT_COST_WEIGHTS
+                )[0]
 
             features_used = (
                 {c: float(X.iloc[0][c]) for c in X.columns if str(X[c].dtype) != "category"}
@@ -1781,6 +2085,7 @@ def create_app(
     @app.get("/v1/usage", tags=["metering"])
     def usage(
         authorization: str | None = Header(default=None),
+        merchant_id: str | None = Query(default=None, max_length=64),
         since_hours: str = "24,168,720",
     ) -> dict:
         """Per-merchant request counts (Day 2 Track H — closes §A item 15 +
@@ -1792,13 +2097,16 @@ def create_app(
         interval '<H> hours'`` in Postgres mode, or a JSONL timestamp
         scan in file mode.
 
-        Note: multi-tenant merchant_id is not yet implemented — the
-        counts are aggregate (all merchants combined). The
-        ``merchant_id`` column on audit_records.body is the future
-        filter key (deferred — Track E's schema migration 001 already
-        has the JSONB column ready; a per-merchant GROUP BY is a
-        one-line change once the merchant_id header is wired into
-        /risk/score).
+        Day 6 Track U (T2.3) — per-merchant filtering is now implemented.
+        When ``?merchant_id=<mid>`` is provided, counts are scoped to
+        audit records whose ``body->>'merchant_id'`` matches
+        (Postgres: ``WHERE body->>'merchant_id' = %s``; file mode: scan +
+        filter by the JSON field). When absent, counts are aggregate
+        (all merchants combined) — same as before. The
+        ``OrderIn.merchant_id`` field on /risk/score is the producer-side
+        wire (T2.3 part 1); this query param is the consumer-side wire
+        (T2.3 part 2). Together they close the multi-tenant metering
+        gap (V3 §10.4 multi-tenant isolation).
 
         The response also surfaces the Merkle interval sealing cadence
         (last 100 intervals) so a billing auditor can verify the audit
@@ -1824,7 +2132,25 @@ def create_app(
             )
         if not hours:
             hours = (24, 168, 720)
-        counts = state["audit"].usage_counts(since_hours=hours)
+        # T2.3 — per-merchant filter when merchant_id is provided;
+        # aggregate otherwise (the existing Track H behaviour).
+        if merchant_id:
+            counts = _usage_counts_per_merchant(
+                state["audit"], hours, merchant_id
+            )
+            scope = f"merchant_id={merchant_id}"
+            note = (
+                f"per-merchant counts scoped to merchant_id='{merchant_id}' "
+                "(audit_records.body->>'merchant_id' = merchant_id filter)"
+            )
+        else:
+            counts = state["audit"].usage_counts(since_hours=hours)
+            scope = "aggregate"
+            note = (
+                "aggregate counts across all merchants (pass ?merchant_id=<mid> "
+                "to scope to a single merchant — per-merchant filter is "
+                "implemented Day 6 Track U T2.3)"
+            )
         # Surface the Merkle interval chain alongside the counts (Track H
         # — V3 §10.3). Cheap query (≤100 rows, PK DESC scan). The
         # response shape is intentionally flat so a billing dashboard
@@ -1845,15 +2171,12 @@ def create_app(
         return {
             "counts": counts,  # {"24": N, "168": N, "720": N}
             "since_hours": list(hours),
+            "scope": scope,  # "aggregate" | "merchant_id=<mid>"
+            "merchant_id": merchant_id,  # None when aggregate
             "intervals_sealed_total": len(intervals),
             "intervals_sealed_in_window": len(recent_intervals),
             "latest_interval": intervals[0] if intervals else None,
-            "note": (
-                "aggregate counts (multi-tenant merchant_id not yet "
-                "implemented — audit_records.body carries merchant_id "
-                "in JSONB, ready for a GROUP BY once /risk/score wires "
-                "the X-Merchant-Id header)"
-            ),
+            "note": note,
         }
 
     dashboard_dir = Path(__file__).resolve().parents[2] / "dashboard"
@@ -1875,6 +2198,106 @@ def _log1p(x: float) -> float:
     return math.log1p(x)
 
 
+def enforce_agent_action(
+    x_agent_action: str | None = Header(default=None, alias="X-Agent-Action"),
+    x_mandate: str | None = Header(default=None, alias="X-Mandate"),
+) -> dict:
+    """Server-side enforcement of the 7-action agent allowlist (Mission 3).
+
+    Day 6 Track P (T1.5) — production-grade agent-gateway enforcement.
+    Per user's 5 Missions: "Agent can only call N APIs. Any other intent
+    returns 'Action not permitted.'" Per Mao 2026 SoK D2
+    (transaction-authorization): "design mandates as scoped, task-bound,
+    attenuating credentials rather than standing broad authority" — the
+    allowlist is the operational expression of that attenuation.
+
+    Callers who declare an agent intent via the ``X-Agent-Action`` header
+    are gated against the canonical 7-action allowlist
+    (``src.api.agent_allowlist.ALLOWED_ACTIONS`` — score_order,
+    request_otp, flag_review, block_order, upi_circle_delegated_pay,
+    validate_device_id, revoke_delegation_on_inactivity). Callers who
+    DON'T declare an agent intent bypass this dependency — the existing
+    scorer/admin ``check_key`` auth in the handler is sufficient
+    (admin/scoper scopes are not bound by the agent allowlist per the
+    task spec; only agent-scope callers — those presenting X-Agent-Action
+    — are bound).
+
+    Decision tree:
+      * ``X-Agent-Action`` absent → return ``{"action": None,
+        "permitted": True}`` (caller is admin/scorer; bypass).
+      * ``X-Agent-Action`` present + action in allowlist + NOT
+        ``requires_approval`` → return ``{"action": <action>,
+        "permitted": True}`` (the handler executes normally).
+      * ``X-Agent-Action`` present + action in allowlist +
+        ``requires_approval=True`` (e.g. ``block_order``,
+        ``upi_circle_delegated_pay``) → raise HTTPException(202,
+        "agent action requires human approval — case queued") so the
+        handler NEVER executes (Mission 3 demo moment #5: high-cost
+        actions don't execute; a case is queued for human approval).
+        The ``X-Case-Created: true`` response header signals to the
+        client/dashboard that the case must be queued by the upstream
+        agent orchestrator (the dependency itself can't open a case
+        without state access; the 202 short-circuit is the
+        contract-preserving signal).
+      * ``X-Agent-Action`` present + action NOT in allowlist → raise
+        HTTPException(403, "agent action not permitted: action
+        '<action>' not in allowlist") (Mission 3 — "Action not
+        permitted.").
+
+    The ``x_mandate`` parameter is accepted for forward-compat with
+    per-mandate-scope allowlist policies (future work may allowlist
+    different action sets per mandate scope — e.g. ``upi_circle`` vs
+    ``cod_order``). The current allowlist is uniform across scopes;
+    ``check_agent_action`` accepts the kwarg but ignores it for now.
+
+    Applied to the money-moving endpoints via ``Depends(...)``:
+    ``POST /risk/score``, ``POST /risk/{prediction_id}/override``,
+    ``POST /v1/mandates``. Non-money-moving endpoints (feedback ingest,
+    simulate dry-run, case resolution) are NOT bound — the existing
+    admin/scorer auth is sufficient.
+    """
+    if x_agent_action is None:
+        # Caller is not declaring an agent intent — bypass. The handler's
+        # own check_key("scorer"|"admin", ...) auth still applies.
+        return {
+            "action": None,
+            "permitted": True,
+            "requires_approval": False,
+        }
+    allowed, reason = check_agent_action(x_agent_action, mandate_scope=x_mandate)
+    if not allowed:
+        if reason == "requires human approval":
+            # Mission 3 demo moment #5 — high-cost actions don't execute;
+            # a case is queued for human approval. The 202 + X-Case-Created
+            # header signals the case must be queued by the upstream agent
+            # orchestrator (the dependency itself can't open a case
+            # without state access; the 202 short-circuit is the
+            # contract-preserving signal).
+            raise HTTPException(
+                status_code=202,
+                detail=(
+                    f"agent action '{x_agent_action}' requires human "
+                    "approval — case queued for review (Mission 3 demo "
+                    "moment #5: high-cost actions don't execute)"
+                ),
+                headers={"X-Case-Created": "true"},
+            )
+        # Mission 3: "Any other intent returns 'Action not permitted.'"
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"agent action '{x_agent_action}' not permitted: {reason} "
+                "(Mission 3: agent allowlist enforcement — "
+                "src.api.agent_allowlist.ALLOWED_ACTIONS)"
+            ),
+        )
+    return {
+        "action": x_agent_action,
+        "permitted": True,
+        "requires_approval": False,
+    }
+
+
 def _read_audit_tail(audit_logger, limit: int = 300) -> list[dict]:
     """Return the last ``limit`` audit records (chronological order).
 
@@ -1884,6 +2307,128 @@ def _read_audit_tail(audit_logger, limit: int = 300) -> list[dict]:
     ``audit_logger.path`` only worked in file mode.
     """
     return audit_logger.tail(limit)
+
+
+def _lookup_record_id_by_audit_id(audit_logger, audit_id: str) -> int | None:
+    """Look up the internal SERIAL PK (``audit_records.id``) by the public
+    ``audit_id`` string (e.g. ``"aud_3f9b8e2c1d4a5b06"``).
+
+    Day 6 Track U (T1.7) — the ``GET /v1/audit/{audit_id}/proof`` route
+    accepts the string ``audit_id`` that ``POST /risk/score`` returns +
+    needs to translate it to the internal integer PK the Merkle sealer
+    indexes by (``audit_merkle_interval_leaves.record_id`` references
+    ``audit_records.id``, NOT ``audit_records.audit_id``).
+
+    Postgres mode: ``SELECT id FROM audit_records WHERE audit_id = %s``.
+    File mode: returns None (no DB connection → no Merkle layer active →
+    the caller 404s with the existing "file mode has no Merkle layer"
+    message; the route handles None + the missing-record case uniformly).
+
+    The helper accesses ``audit_logger._conn`` (the AuditLogger's private
+    connection attribute) directly — Subagent 11-routes owns routes.py
+    only, and adding a public method on AuditLogger would mean editing
+    ``src/audit/logger.py`` (owned by Subagent 11-b). The private-attr
+    read is the contract-preserving escape hatch; it stays in routes.py
+    as a local helper so 11-b's file (and its Merkle-proof builder) is
+    untouched.
+
+    Returns the integer ``record_id`` on hit; ``None`` on miss OR when
+    the audit logger is in file mode.
+    """
+    conn = getattr(audit_logger, "_conn", None)
+    if conn is None:
+        return None  # file mode — no Merkle layer; caller 404s uniformly
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM audit_records WHERE audit_id = %s",
+                (audit_id,),
+            )
+            row = cur.fetchone()
+    except Exception:
+        # Defensive — a transient DB error shouldn't 500 the proof
+        # endpoint; treat it as a miss so the caller gets the same 404
+        # (a real DB outage surfaces elsewhere via the audit write path).
+        return None
+    return int(row[0]) if row else None
+
+
+def _usage_counts_per_merchant(
+    audit_logger, since_hours: tuple[int, ...], merchant_id: str
+) -> dict[str, int]:
+    """Per-merchant audit-record counts for the ``/v1/usage`` metering endpoint.
+
+    Day 6 Track U (T2.3) — closes the multi-tenant metering gap. Filters
+    audit records by ``body->>'merchant_id' = merchant_id`` (Postgres) or
+    by the JSONL record's ``merchant_id`` field (file mode). Returns the
+    same ``{str(h): count, ...}`` shape as ``AuditLogger.usage_counts()``.
+
+    Postgres mode: ``SELECT count(*) FROM audit_records WHERE
+    body->>'merchant_id' = %s AND created_at > now() - interval '<H>
+    hours'``. The ``body`` column is JSONB (migration 001) so the
+    ``->>`` operator is index-able (a GIN expression index on
+    ``(body->>'merchant_id')`` is the production-scale path; a sequential
+    scan is fine for the demo).
+
+    File mode: scan the JSONL, filter records whose top-level
+    ``merchant_id`` field matches + whose timestamp is within the window.
+    Same pattern as ``AuditLogger._usage_counts_file`` (which Subagent
+    11-b owns — we don't touch logger.py).
+
+    The helper is local to routes.py because adding a
+    ``usage_counts_per_merchant`` method on AuditLogger would require
+    editing ``src/audit/logger.py`` (owned by Subagent 11-b). The
+    private-attr read of ``audit_logger._conn`` mirrors the
+    ``_lookup_record_id_by_audit_id`` helper above — the same
+    contract-preserving escape hatch.
+    """
+    conn = getattr(audit_logger, "_conn", None)
+    if conn is not None:
+        out: dict[str, int] = {}
+        try:
+            with conn.cursor() as cur:
+                for h in since_hours:
+                    cur.execute(
+                        "SELECT count(*) FROM audit_records "
+                        "WHERE body->>'merchant_id' = %s "
+                        "AND created_at > now() - interval '%s hours'",
+                        (merchant_id, h),
+                    )
+                    out[str(h)] = int(cur.fetchone()[0])
+        except Exception:
+            # Defensive — a transient DB error shouldn't 500 the usage
+            # endpoint; return zeros so the dashboard renders empty
+            # rather than crashing (a real DB outage surfaces elsewhere
+            # via the audit write path).
+            return {str(h): 0 for h in since_hours}
+        return out
+    # File mode — scan + filter by timestamp + merchant_id.
+    path = getattr(audit_logger, "path", None)
+    if path is None or not path.exists():
+        return {str(h): 0 for h in since_hours}
+    now = datetime.now(timezone.utc)
+    cutoffs = {h: now.timestamp() - h * 3600 for h in since_hours}
+    counts = {h: 0 for h in since_hours}
+    try:
+        for line in path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+                if rec.get("merchant_id") != merchant_id:
+                    continue
+                ts = rec.get("timestamp")
+                if not ts:
+                    continue
+                parsed = datetime.fromisoformat(ts).timestamp()
+                for h in since_hours:
+                    if parsed >= cutoffs[h]:
+                        counts[h] += 1
+            except (json.JSONDecodeError, ValueError, TypeError):
+                continue
+    except OSError:
+        return {str(h): 0 for h in since_hours}
+    return {str(h): counts[h] for h in since_hours}
 
 
 # --------------------------------------------------------------------- #

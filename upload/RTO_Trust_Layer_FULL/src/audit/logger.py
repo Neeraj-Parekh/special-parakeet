@@ -145,6 +145,27 @@ class MerkleSealer:
         pending batch is cleared + the next add() starts a fresh
         interval. Idempotent — calling seal() with an empty pending
         list is a no-op.
+
+        ATOMICITY CONTRACT (T1.2): ``seal()`` does NOT call
+        ``self.conn.commit()`` — the caller is responsible for committing
+        the transaction. Two call paths exist:
+
+          1. ``_log_postgres`` → ``add()`` → ``seal()`` (when the count
+             OR time threshold trips mid-INSERT). The caller's outer
+             ``self._conn.commit()`` persists the audit INSERT + the
+             seal's INSERT/UPDATEs together. If ``seal()`` raises, the
+             caller's ``except`` rolls the whole thing back — no orphan
+             audit row without a Merkle interval (the per-record hash
+             chain stays clean).
+          2. ``AuditLogger.seal_interval()`` → ``seal()`` (cron / shutdown
+             hook). That method commits explicitly after ``seal()``
+             returns.
+
+        This contract is what makes Merkle sealing ATOMIC with the audit
+        INSERT — the prior implementation committed the audit INSERT first
+        and called ``sealer.add()`` second, so a seal failure left a
+        committed audit row WITHOUT a Merkle interval (silent tamper-chain
+        break). The new contract ties both writes to ONE transaction.
         """
         if not self._pending or self.conn is None:
             return None
@@ -164,6 +185,12 @@ class MerkleSealer:
         # Insert the interval row + backfill the per-record columns
         # (interval_id + interval_position) so the proof builder can
         # locate a record's interval + leaf index in O(1).
+        #
+        # NOTE: NO self.conn.commit() here — the caller commits (see the
+        # ATOMICITY CONTRACT above). This is the T1.2 fix: committing
+        # here would persist the seal writes BEFORE the audit INSERT in
+        # the _log_postgres path, breaking atomicity the same way the
+        # old code did (just with the order reversed).
         with self.conn.cursor() as cur:
             cur.execute(
                 """
@@ -182,11 +209,10 @@ class MerkleSealer:
                 ),
             )
             interval_id = cur.fetchone()[0]
-            # currval('audit_merkle_intervals_interval_id_seq') is the
-            # just-inserted row's SERIAL value; using it in the UPDATE
-            # avoids passing interval_id back from Python (atomic within
-            # the same transaction). Per-record backfill is O(M) where
-            # M = interval_size (default 1000) — cheap.
+            # Per-record backfill is O(M) where M = interval_size (default
+            # 1000) — cheap. The interval_id returned above is used in
+            # the UPDATE (no need for currval() — we already have it in
+            # Python).
             for pos, (rid, _) in enumerate(self._pending):
                 cur.execute(
                     """
@@ -196,7 +222,6 @@ class MerkleSealer:
                     """,
                     (interval_id, pos, rid),
                 )
-            self.conn.commit()
         self._pending = []
         self._interval_started_at = None
         return {
@@ -235,6 +260,68 @@ class MerkleSealer:
             level = next_level
         return level[0]
 
+    @staticmethod
+    def _build_proof_path(leaves: list[str], position: int) -> list[dict]:
+        """Build a Merkle inclusion proof path from leaf to interval root.
+
+        Pure-Python — no DB queries. Called by ``proof(record_id)`` after
+        the leaves + position are fetched from the audit_records table,
+        AND called directly by the unit tests in
+        ``tests/test_v3_endpoints.py`` so the proof-builder math is
+        exercised WITHOUT a Postgres dependency.
+
+        Returns a list of ``{"position": "left"|"right", "hash": <hex>}``
+        entries, one per tree level from leaf to root. The sibling at
+        each level is at index ``idx ^ 1`` (RFC 6962 §2.1.1):
+
+          * If ``idx`` is even, sibling is at ``idx + 1`` → RIGHT sibling.
+          * If ``idx`` is odd,  sibling is at ``idx - 1`` → LEFT  sibling.
+
+        The position bookkeeping at the ``"right" if sibling_idx > idx
+        else "left"`` line correctly emits both sides — the prior test
+        ``test_merkle_proof_reconstructs_root`` had an ``or True`` tautology
+        because its OWN reconstruction logic always picked
+        ``sha256(leaf + sibling)`` (the right-side form) regardless of
+        position, which silently broke for odd indices where the sibling
+        is on the LEFT. The proof BUILDER here was correct; the test's
+        reconstruction was buggy. T1.3 fixes both by routing through
+        this shared static helper.
+        """
+        if not leaves or position < 0 or position >= len(leaves):
+            return []
+        # Pad to next power of 2 (same rule as _merkle_root).
+        size = 1
+        while size < len(leaves):
+            size *= 2
+        level = leaves + [leaves[-1]] * (size - len(leaves))
+        proof: list[dict] = []
+        idx = position
+        while len(level) > 1:
+            sibling_idx = idx ^ 1  # XOR 1: pairs (0,1), (2,3), ...
+            if sibling_idx < len(level):
+                # Even idx → sibling_idx = idx+1 → sibling is RIGHT.
+                # Odd  idx → sibling_idx = idx-1 → sibling is LEFT.
+                proof.append(
+                    {
+                        "position": "right" if sibling_idx > idx else "left",
+                        "hash": level[sibling_idx],
+                    }
+                )
+            else:
+                # Defensive fallback for an unpadded tree (unreachable
+                # here because we pad above, but kept for safety).
+                proof.append({"position": "right", "hash": level[-1]})
+            # Compute next level (parent hashes).
+            next_level = []
+            for i in range(0, len(level), 2):
+                combined = hashlib.sha256(
+                    (level[i] + level[i + 1 if i + 1 < len(level) else i]).encode()
+                ).hexdigest()
+                next_level.append(combined)
+            level = next_level
+            idx //= 2
+        return proof
+
     def proof(self, record_id: int) -> dict | None:
         """Generate Merkle proof for a record: path from leaf to interval root.
 
@@ -271,37 +358,11 @@ class MerkleSealer:
                 (interval_id,),
             )
             leaves = [r[0] for r in cur.fetchall()]
-        # Build proof: at each tree level, the sibling's hash + whether
-        # it's the left or right child of the parent node. Pad leaves
-        # to a power of 2 (same padding rule as _merkle_root) so the
-        # index arithmetic is consistent.
-        size = 1
-        while size < len(leaves):
-            size *= 2
-        level = leaves + [leaves[-1]] * (size - len(leaves))
-        proof: list[dict] = []
-        idx = position
-        while len(level) > 1:
-            sibling_idx = idx ^ 1  # XOR 1: pairs (0,1), (2,3), ...
-            if sibling_idx < len(level):
-                proof.append(
-                    {
-                        "position": "right" if sibling_idx > idx else "left",
-                        "hash": level[sibling_idx],
-                    }
-                )
-            else:
-                # Padding sibling (RFC 6962-style last-leaf-repeat).
-                proof.append({"position": "right", "hash": level[-1]})
-            # Compute next level (parent hashes).
-            next_level = []
-            for i in range(0, len(level), 2):
-                combined = hashlib.sha256(
-                    (level[i] + level[i + 1 if i + 1 < len(level) else i]).encode()
-                ).hexdigest()
-                next_level.append(combined)
-            level = next_level
-            idx //= 2
+        # Build proof via the shared static helper so the pure-Python
+        # math is testable WITHOUT a Postgres dependency (T1.3 — the
+        # unit tests in test_v3_endpoints.py call _build_proof_path
+        # directly; this method just wraps it with DB hydration).
+        proof = self._build_proof_path(leaves, position)
         # Get the interval's metadata for the chain anchor.
         with self.conn.cursor() as cur:
             cur.execute(
@@ -441,11 +502,31 @@ class AuditLogger:
         partial interval can be sealed without waiting for the count
         threshold. Returns the interval metadata on seal, None if there
         was nothing pending or the logger is in file mode.
+
+        T1.2 ATOMICITY: ``MerkleSealer.seal()`` no longer commits — it
+        writes the interval row + per-record backfill within the caller's
+        transaction. This method (the cron/shutdown call path) is the
+        caller, so it commits explicitly here. If seal() raises, the
+        except below rolls back; the pending list is left intact so the
+        next call can retry.
         """
         if self.sealer is None:
             return None
         with self._lock:
-            return self.sealer.seal()
+            try:
+                result = self.sealer.seal()
+                # Commit only after seal() returned cleanly — the seal
+                # writes (audit_merkle_intervals INSERT + audit_records
+                # UPDATE backfill) are persisted together.
+                self._conn.commit()
+                return result
+            except Exception:
+                # Roll back any partial seal writes; the in-memory
+                # _pending list is preserved because seal() only clears
+                # it on success (after the INSERT/UPDATE loop finishes
+                # without raising).
+                self._conn.rollback()
+                raise
 
     def merkle_proof(self, record_id: int) -> dict | None:
         """Generate Merkle inclusion proof for an audit record (V3 §10.3).
@@ -577,53 +658,75 @@ class AuditLogger:
         prev_hash = self._hydrate_last_hash_postgres()
         raw_hash = self._hash(body, prev=prev_hash)
         with self._lock:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO audit_records
-                      (audit_id, body, raw_hash, prev_hash, created_at,
-                       model_version, mandate_type, bh_purpose_code,
-                       device_id, user_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (
-                        audit_id,
-                        json.dumps(body, default=str),
-                        raw_hash,
-                        prev_hash,
-                        ts,
-                        self.model_version,
-                        payload.get("mandate_type"),
-                        payload.get("bh_purpose_code"),
-                        payload.get("device_id"),
-                        payload.get("user_id"),
-                    ),
-                )
-                # Day 2 Track H — feed the new record to the Merkle
-                # sealer so it tracks pending intervals in real time.
-                # ``sealer.add`` is a no-op if interval_size hasn't been
-                # reached yet (it just appends to the pending list). When
-                # the threshold trips, ``seal()`` runs inline + commits
-                # the interval row + the per-record backfill in the same
-                # transaction (atomic with the audit INSERT above).
-                record_id_row = cur.fetchone()
-                record_id = record_id_row[0] if record_id_row else None
-                self._conn.commit()
-            self._last_hash_cached = raw_hash
-        if record_id is not None and self.sealer is not None:
             try:
-                self.sealer.add(record_id, raw_hash)
-            except Exception as e:  # pragma: no cover — best-effort
-                # Merkle sealing must never break the audit write (the
-                # per-record hash chain is the foundation; Merkle is a
-                # coarser layer that can catch up via seal_interval()
-                # later). Log + continue.
-                print(
-                    f"[audit] merkle sealer.add failed: "
-                    f"{type(e).__name__}: {e}",
-                    file=sys.stderr,
-                )
+                with self._conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO audit_records
+                          (audit_id, body, raw_hash, prev_hash, created_at,
+                           model_version, mandate_type, bh_purpose_code,
+                           device_id, user_id)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            audit_id,
+                            json.dumps(body, default=str),
+                            raw_hash,
+                            prev_hash,
+                            ts,
+                            self.model_version,
+                            payload.get("mandate_type"),
+                            payload.get("bh_purpose_code"),
+                            payload.get("device_id"),
+                            payload.get("user_id"),
+                        ),
+                    )
+                    record_id_row = cur.fetchone()
+                    record_id = record_id_row[0] if record_id_row else None
+                    # Day 2 Track H — T1.2 atomicity fix. Feed the new
+                    # record to the Merkle sealer BEFORE commit so the
+                    # audit INSERT + any inline seal() writes (audit_merkle_
+                    # intervals INSERT + audit_records UPDATE backfill)
+                    # share ONE transaction. Either both commit or both
+                    # roll back — tamper-evidence can never silently break
+                    # (no orphan audit row without a Merkle interval).
+                    #
+                    # ``sealer.add`` is a no-op if interval_size hasn't been
+                    # reached yet (it just appends to the pending list).
+                    # When the threshold trips, ``seal()`` runs inline + the
+                    # interval row + per-record backfill are persisted by
+                    # the same commit() below.
+                    #
+                    # DESIGN CHANGE (T1.2): the prior implementation committed
+                    # the audit INSERT at this point and then called
+                    # ``sealer.add`` AFTER — wrapped in a broad
+                    # ``except Exception: pass`` that swallowed sealer
+                    # failures. That meant a broken Merkle interval was
+                    # invisible: the audit row was committed without its
+                    # tamper-evidence layer. Now ``sealer.add`` is moved
+                    # BEFORE commit; the broad swallow is removed; on
+                    # failure the whole transaction rolls back. Better to
+                    # lose one audit row (caller will see the exception +
+                    # can retry) than have a silently-broken Merkle chain.
+                    if record_id is not None and self.sealer is not None:
+                        self.sealer.add(record_id, raw_hash)
+                # Commit AFTER both audit INSERT + any inline seal writes.
+                # If seal() raised above, control never reaches here —
+                # the except below rolls back + re-raises.
+                self._conn.commit()
+            except Exception:
+                # Roll back the whole transaction — audit INSERT + any
+                # partial Merkle seal writes are discarded. The per-record
+                # hash chain stays clean (no orphan audit row without a
+                # Merkle interval). Re-raise so the caller knows the audit
+                # write failed (the API layer surfaces a 500; the client
+                # can retry with a new audit_id).
+                self._conn.rollback()
+                raise
+            # Only cache the new tip hash AFTER successful commit —
+            # caching on a rolled-back hash would desync the chain.
+            self._last_hash_cached = raw_hash
         return audit_id
 
     def _read_postgres(self, audit_id: str) -> dict | None:

@@ -70,6 +70,7 @@ rather than days.
 from __future__ import annotations
 
 import threading
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -83,6 +84,18 @@ from src.ml.drift import ADWIN, DDM, STATE_NUMERIC
 # decision layer uses, so the error indicator is semantically
 # consistent: "was the prediction right given the decision surface?").
 DEFAULT_RETURN_THRESHOLD = 0.15
+
+
+def _combined_state(ddm_state: str, adwin_state: str) -> str:
+    """Combine DDM + ADWIN states into a single ordinal signal.
+
+    The combined state is the WORST observed across both detectors —
+    DRIFT wins over WARNING wins over STABLE — so a transition into
+    WARNING/DRIFT in EITHER detector is treated as a system-level
+    transition for the Gama §5 detector-quality metric emission.
+    """
+    score = {"STABLE": 0, "WARNING": 1, "DRIFT": 2}
+    return max(ddm_state, adwin_state, key=lambda s: score.get(s, 0))
 
 
 class LabelFeedbackService:
@@ -105,10 +118,20 @@ class LabelFeedbackService:
         redis_url: str | None = None,
         database_url: str | None = None,
         return_threshold: float = DEFAULT_RETURN_THRESHOLD,
+        metrics: Any = None,
     ) -> None:
         self.redis_url = redis_url
         self.database_url = database_url
         self.return_threshold = return_threshold
+        # Day 6 Track S (T2.4) — optional Metrics instance for emitting
+        # the Gama 2014 §5 detector-quality summary metrics
+        # (``rto_drift_detection_delay_seconds`` +
+        # ``rto_drift_false_alarm_run_length``) on drift detection /
+        # false-alarm revert. None in tests (test_feedback.py constructs
+        # the service without a metrics arg) so the observe_summary calls
+        # become no-ops. 11-routes will pass ``state["metrics"]`` in the
+        # production lifespan.
+        self._metrics = metrics
         # Per-detector state — one DDM/ADWIN pair per service instance.
         # (In the live path this is one-per-worker; see "Multi-process
         # safety" in the module docstring.)
@@ -130,6 +153,27 @@ class LabelFeedbackService:
         # count hits ``DRIFT_SIGNAL_RUN_LENGTH``, the consumer fires
         # a retrain_request. Reset on a different reason.
         self._drift_signal_run: dict[str, int] = {}
+        # ------------------------------------------------------------------
+        # Day 6 Track S (T2.4) — Gama 2014 §5 detector-quality metric
+        # tracking. These fields are updated inside ``ingest_label``
+        # alongside the DDM/ADWIN state transitions:
+        #
+        # * ``_window_start_ts`` — wall-clock ts of the first sample in
+        #   the current detection window (reset on DRIFT detection so the
+        #   next window starts fresh). Used for ``delta_ts`` in the
+        #   detection-delay metric (current_ts - first_sample_ts).
+        # * ``_warning_sample_count`` — number of samples accumulated
+        #   while the combined state was in WARNING. Emitted as the
+        #   false-alarm run length when WARNING reverts to STABLE without
+        #   escalating to DRIFT (Gama §5 "ARL_0": Average Run Length
+        #   between false alarms).
+        # * ``_prev_combined_state`` — the combined DDM+ADWIN state from
+        #   the PREVIOUS ingest_label call. Transition detection happens
+        #   by comparing this to the new combined state.
+        # ------------------------------------------------------------------
+        self._window_start_ts: float | None = None
+        self._warning_sample_count: int = 0
+        self._prev_combined_state: str = "STABLE"
 
     # ------------------------------------------------------------------ #
     # Label-side path (called by the /v1/feedback/ingest endpoint)      #
@@ -175,8 +219,65 @@ class LabelFeedbackService:
             error = 1 if ((predicted_p >= thr) != bool(is_returned)) else 0
 
         with self._lock:
+            # Capture the PRE-update state of both detectors so we can
+            # detect transitions (STABLE→WARNING, WARNING→DRIFT,
+            # WARNING→STABLE) for the Gama §5 detector-quality metrics
+            # emitted below. ``self.ddm.state`` reflects the state from
+            # the previous ``update`` call (or the constructor default
+            # ``"STABLE"`` on the very first sample).
+            prev_ddm_state = self.ddm.state
+            prev_adwin_state = self.adwin.state
             ddm_state = self.ddm.update(error)
             adwin_state = self.adwin.update(float(error))
+            now_ts = time.time()
+            # Window-start tracking: the first sample after init or a
+            # reset (DDM.n == 1) marks the start of the current detection
+            # window. ``delta_ts`` in the detection-delay metric is
+            # measured from this point to the DRIFT detection ts.
+            if self._window_start_ts is None:
+                self._window_start_ts = now_ts
+            # Combined state (DDM ∨ ADWIN — DRIFT wins over WARNING wins
+            # over STABLE). Used for transition detection.
+            prev_combined = _combined_state(prev_ddm_state, prev_adwin_state)
+            new_combined = _combined_state(ddm_state, adwin_state)
+            # ----------------------------------------------------------
+            # Gama 2014 §5 detector-quality metric emission
+            # ----------------------------------------------------------
+            # WARNING entered (from STABLE or DRIFT): start a fresh
+            # WARNING run so we can later emit either (a) the run length
+            # if it reverts to STABLE (false alarm) OR (b) absorb it into
+            # the detection-delay metric if it escalates to DRIFT.
+            if new_combined == "WARNING" and prev_combined != "WARNING":
+                self._warning_sample_count = 1
+            elif new_combined == "WARNING" and prev_combined == "WARNING":
+                # Still in WARNING — extend the run length.
+                self._warning_sample_count += 1
+            # DRIFT entered (from WARNING or STABLE or directly): emit
+            # the detection-delay metric. ``delta_ts`` = wall-clock
+            # seconds from the first sample in the current detection
+            # window to the drift detection point — the survey's
+            # "Time to Detection" (MTTD) detector-quality metric.
+            if new_combined == "DRIFT" and prev_combined != "DRIFT":
+                if self._metrics is not None and self._window_start_ts is not None:
+                    delta_ts = max(0.0, now_ts - self._window_start_ts)
+                    self._metrics.observe_summary(
+                        "rto_drift_detection_delay_seconds", delta_ts
+                    )
+            # WARNING reverted to STABLE without escalating to DRIFT —
+            # this is a false alarm. Emit the WARNING run length as the
+            # survey's "Average Run Length between false alarms" (ARL_0)
+            # detector-quality metric. Reset the WARNING accumulator so
+            # the next WARNING run starts from 1.
+            if new_combined == "STABLE" and prev_combined == "WARNING":
+                if self._metrics is not None:
+                    self._metrics.observe_summary(
+                        "rto_drift_false_alarm_run_length",
+                        float(self._warning_sample_count),
+                    )
+                self._warning_sample_count = 0
+            # Publish the new combined state for the next call's
+            # transition detection.
+            self._prev_combined_state = new_combined
             drift_detected = (
                 ddm_state == "DRIFT" or adwin_state == "DRIFT"
             )
@@ -194,6 +295,13 @@ class LabelFeedbackService:
                 # from the new concept".
                 self.ddm.reset()
                 self.adwin.reset()
+                # Reset the Gama §5 trackers so the next detection
+                # window starts fresh. ``_window_start_ts = None``
+                # means the next ingest_label call sets it (first
+                # sample of the new window).
+                self._window_start_ts = None
+                self._warning_sample_count = 0
+                self._prev_combined_state = "STABLE"
             n_processed = self.ddm.n
             ddm_p = self.ddm.p
             adwin_window_len = len(self.adwin.window)

@@ -28,12 +28,26 @@ descriptions):
   the prior-window baseline. This is the streaming-PSI equivalent — Track
   G's DDM/ADWIN detector will consume ``model.drift`` for the formal
   drift-detection decision.
+* ``hll_cardinality_spike`` — current minute's distinct ``order_id``
+  cardinality (per Redis HLL ``PFCOUNT``, CROSS-PROCESS) > 3x rolling
+  average of the last 10 completed minutes. The in-memory
+  ``_seen_order_ids`` dict can only see one process; the HLL aggregates
+  across all replicas. This catches the "merchant bot burst" signature
+  that fans out across processors. Fires the 4th detector's reason on
+  ``model.drift``.
 
 On anomaly, publishes to ``model.drift`` with a structured ``reason`` field
 so the consumer (Track G) can route each reason to the right handler
 (retrain PR vs alert only vs webhook to merchant). Geographic
 impossibility detection (e.g. user_id on two devices > 1000km apart in <60s)
 is a placeholder — the published fields don't carry geo, so we log only.
+
+Memory-safety fallback: when the in-memory ``_seen_order_ids`` dict hits
+``SEEN_ORDER_IDS_CAP`` (default 10_000, env-tunable), we stop adding new
+order_ids + log a one-shot warning. Existing entries stay (so duplicate
+detection continues for the window); the HLL cardinality-spike detector
+takes over for the cross-process burst signal. This bounds per-process
+memory under a flood — the dict can't grow unbounded.
 
 Run as ``python -m src.stream.processor`` (the docker-compose
 ``stream-processor`` service).
@@ -85,6 +99,22 @@ class StreamProcessor:
     # here, but for a single global processor we keep a stable key so the
     # HLL survives restarts.
     HLL_KEY_PREFIX = "rto:stream:hll"
+    # 4th detector — HLL cardinality-spike. If the current minute's distinct
+    # order_id cardinality (per Redis HLL PFCOUNT, cross-process) exceeds
+    # HLL_SPIKE_FACTOR x the rolling average of the last
+    # HLL_SPIKE_LOOKBACK_MIN completed minutes, emit an anomaly. This is
+    # the detector that the in-memory `_seen_order_ids` dict CANNOT provide
+    # — Redis HLL sees across processes, the local dict doesn't.
+    HLL_SPIKE_FACTOR = 3.0
+    HLL_SPIKE_LOOKBACK_MIN = 10
+    # Cap on the in-memory `_seen_order_ids` dict. When the dict hits this
+    # size, we stop adding new order_ids to it (the existing entries stay
+    # for duplicate detection within the window). The HLL takes over for
+    # cardinality — that's the whole point of having both. Tunable via env
+    # so a low-memory worker can shrink it.
+    SEEN_ORDER_IDS_CAP = int(
+        os.environ.get("STREAM_PROCESSOR_SEEN_CAP", "10000")
+    )
 
     def __init__(
         self,
@@ -106,6 +136,19 @@ class StreamProcessor:
         # small windows (the HLL in Redis is the asymptotic backstop for
         # longer-range + cross-process counting).
         self._seen_order_ids: dict[str, float] = {}  # order_id -> first_seen_ts
+        # One-shot flag — when `_seen_order_ids` hits SEEN_ORDER_IDS_CAP,
+        # we log a single warning + stop adding new entries (HLL takes
+        # over for cardinality). Avoids spamming stderr on every message
+        # after the cap.
+        self._seen_cap_warned: bool = False
+        # Per-minute HLL cardinality history — completed minutes only.
+        # minute_bucket (int) -> final PFCOUNT at minute end. Used by the
+        # 4th detector (HLL cardinality-spike) to compute the rolling
+        # average over the last HLL_SPIKE_LOOKBACK_MIN minutes.
+        self._hll_cardinality_history: dict[int, int] = {}
+        # Last minute bucket seen — used to detect minute rollover + snapshot
+        # the just-completed minute's cardinality into history.
+        self._last_minute_bucket: int | None = None
         # Rolling baseline (computed once after BASELINE_SEED messages).
         self._baseline_rate: float | None = None  # msgs/min
         self._baseline_score_mean: float | None = None
@@ -231,7 +274,28 @@ class StreamProcessor:
                 "window_seconds": str(self.WINDOW_SECONDS),
             })
         elif order_id:
-            self._seen_order_ids[order_id] = now
+            # Memory-safety fallback: when the in-memory dict hits
+            # SEEN_ORDER_IDS_CAP, stop adding new entries — the HLL
+            # cardinality-spike detector (below) takes over for the
+            # cross-process burst signal. Existing entries stay so
+            # duplicate detection continues to work for the window.
+            # The cap is intentionally large (10_000 default) so under
+            # normal traffic the dict is the source of truth; only a
+            # flood trips the fallback. The warning logs once per
+            # process lifetime.
+            if len(self._seen_order_ids) >= self.SEEN_ORDER_IDS_CAP:
+                if not self._seen_cap_warned:
+                    print(
+                        f"[processor] _seen_order_ids cap reached "
+                        f"({self.SEEN_ORDER_IDS_CAP}) — falling back to "
+                        f"HLL for cardinality. New order_ids no longer "
+                        f"added to the in-memory duplicate-detection "
+                        f"set (existing entries retained).",
+                        file=sys.stderr,
+                    )
+                    self._seen_cap_warned = True
+            else:
+                self._seen_order_ids[order_id] = now
 
         # 2. Rate spike (msgs/min > RATE_SPIKE_MULTIPLIER x baseline).
         if (
@@ -270,7 +334,58 @@ class StreamProcessor:
                     "sigma": f"{sigma:.2f}",
                 })
 
-        # 4. Geographic impossibility (placeholder — the published fields
+        # 4. HLL cardinality-spike — CROSS-PROCESS burst detector. The
+        # in-memory `_seen_order_ids` dict can only see this process's
+        # order_ids; Redis HLL aggregates across all processors. When
+        # the current minute's distinct-order_id cardinality (PFCOUNT)
+        # exceeds HLL_SPIKE_FACTOR x the rolling average of the last
+        # HLL_SPIKE_LOOKBACK_MIN completed minutes, emit an anomaly.
+        # This catches the "merchant bot burst" signature that the
+        # per-process detectors would miss if traffic fans out across
+        # multiple stream-processor replicas.
+        current_minute = int(now // 60)
+        # Snapshot the just-completed minute's final cardinality into
+        # history when the minute rolls over.
+        if (
+            self._last_minute_bucket is not None
+            and current_minute != self._last_minute_bucket
+        ):
+            prev_count = self._hll_count_orders(self._last_minute_bucket)
+            if prev_count is not None and prev_count > 0:
+                self._hll_cardinality_history[self._last_minute_bucket] = (
+                    prev_count
+                )
+                # Trim to lookback window.
+                cutoff_minute = current_minute - self.HLL_SPIKE_LOOKBACK_MIN
+                expired = [
+                    m
+                    for m in self._hll_cardinality_history
+                    if m < cutoff_minute
+                ]
+                for m in expired:
+                    del self._hll_cardinality_history[m]
+        self._last_minute_bucket = current_minute
+
+        # Compare current minute's running cardinality to the rolling
+        # avg of completed minutes in history. Require at least 1
+        # completed minute of history so the spike doesn't fire on the
+        # very first minute (cold-start false positive).
+        if self._hll_cardinality_history:
+            current_count = self._hll_count_orders(current_minute)
+            if current_count is not None and current_count > 0:
+                history_vals = list(self._hll_cardinality_history.values())
+                avg_count = sum(history_vals) / len(history_vals)
+                if avg_count > 0 and current_count > avg_count * self.HLL_SPIKE_FACTOR:
+                    anomalies.append({
+                        "reason": "hll_cardinality_spike",
+                        "current_minute_count": str(current_count),
+                        "baseline_avg_count": f"{avg_count:.2f}",
+                        "lookback_minutes": str(self.HLL_SPIKE_LOOKBACK_MIN),
+                        "spike_factor": str(self.HLL_SPIKE_FACTOR),
+                        "minute_bucket": str(current_minute),
+                    })
+
+        # 5. Geographic impossibility (placeholder — the published fields
         # don't carry geo, so we can only log it. When Track H/I enrich the
         # stream with user_id/device_id/geo, this becomes a real check.)
         # No-op for now; documented per spec.

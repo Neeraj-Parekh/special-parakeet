@@ -73,16 +73,118 @@ def register_model(
     metrics: dict,
     champion: bool = True,
     registry_path: str = "out/model_registry.json",
+    p_orig: float | None = None,
+    p_und: float | None = None,
 ) -> dict:
     """Register a model version. If ``champion`` is True, atomically demotes
     any existing champion to challenger in the same transaction.
 
     Postgres mode ignores ``registry_path`` (the table is the source of
     truth). File mode uses it.
+
+    Parameters
+    ----------
+    p_orig, p_und : float | None
+        Day 6 Track R — Bahnsen Eq.(6) post-resampling priors. ``p_orig`` is
+        the minority (RTO) prior in the *original* training data BEFORE any
+        resampling; ``p_und`` is the minority prior in the *resampled* training
+        set (i.e. the prior the model was actually trained on). When both are
+        supplied AND differ, the live decision path should call
+        :func:`src.business.cost_optimizer.calibrate_probabilities` to undo
+        the SMOTE / under-sampling inflation per Bahnsen 2013 Eq.(6). When
+        equal (or both None), calibration is a no-op (the
+        ``calibrate_probabilities`` fast path handles the equal case; the
+        ``None`` case lets the caller skip calibration entirely).
+
+        Both values are stored inside the ``metrics`` JSON column (file mode:
+        inside the metrics dict on disk) so existing DB schema + file shape
+        are unchanged. :func:`get_priors` reads them back out.
     """
+    # Fold priors into the metrics dict so existing schema (JSON metrics
+    # column / file-mode metrics blob) is unchanged. Downstream readers
+    # (model card, drift endpoints) treat metrics as opaque JSON.
+    if p_orig is not None or p_und is not None:
+        metrics = {**metrics, "p_orig": p_orig, "p_und": p_und}
     if _settings().is_postgres:
         return _register_model_postgres(version, model_path, metrics, champion)
     return _register_model_file(version, model_path, metrics, champion, registry_path)
+
+
+def get_priors(
+    model_version: str | None = None,
+    registry_path: str = "out/model_registry.json",
+) -> dict:
+    """Return the Bahnsen Eq.(6) priors for the model (champion by default).
+
+    Day 6 Track R (T2.2-helper) — exposes the per-model ``p_orig`` /
+    ``p_und`` stored at registration time so the live decision path
+    (routes.py:566) can call
+    :func:`src.business.cost_optimizer.calibrate_probabilities` to undo
+    SMOTE / under-sampling's inflated minority prior BEFORE the cost-optimal
+    ACCEPT/REVIEW/REJECT fires. This is Bahnsen et al. (ICMLA 2013, DOI
+    10.1109/ICMLA.2013.68) Eq.(6): ``P*(f|x) = P(f|x) · P_orig / P_und``.
+
+    Parameters
+    ----------
+    model_version : str | None
+        Optional version tag. If provided, looks up that specific model's
+        stored priors; if None (default), reads from the current champion.
+    registry_path : str
+        File-mode registry path (ignored in Postgres mode — the table is
+        the source of truth). Mirrors the ``registry_path`` parameter on
+        :func:`current_champion` so tests can pass a tmp_path.
+
+    Returns
+    -------
+    dict
+        ``{"p_orig": float | None, "p_und": float | None}``. Both keys are
+        ``None`` when:
+
+        * no model is registered (champion is None in file mode and the
+          model_registry table is empty in Postgres mode), OR
+        * the model was registered WITHOUT priors (the pre-Track-R
+          registration flow at routes.py:298-303 doesn't pass them, so the
+          in-process model artifact's priors are unknown).
+
+        Callers should treat both-None as a no-op signal — the live path
+        skips calibration (the un-calibrated probability is used as-is, same
+        as Track C's behaviour — correct when no resampling was applied).
+
+    Interface contract for 11-routes
+    --------------------------------
+        priors = get_priors()  # or get_priors(champ["version"])
+        if priors.get("p_orig") is not None and priors.get("p_und") is not None:
+            proba = calibrate_probabilities([proba], priors["p_orig"], priors["p_und"])[0]
+        decision, costs = optimal_decision(proba, amount_inr=order.amount_inr, **DEFAULT_COST_WEIGHTS)
+    """
+    if model_version is not None:
+        m = _get_model_by_version(model_version, registry_path)
+    else:
+        m = current_champion(registry_path)
+    if m is None:
+        return {"p_orig": None, "p_und": None}
+    metrics = m.get("metrics") or {}
+    p_orig = metrics.get("p_orig") if isinstance(metrics, dict) else None
+    p_und = metrics.get("p_und") if isinstance(metrics, dict) else None
+    return {"p_orig": p_orig, "p_und": p_und}
+
+
+def _get_model_by_version(
+    version: str, registry_path: str = "out/model_registry.json"
+) -> dict | None:
+    """Look up a single model entry by its version tag.
+
+    Postgres mode: SELECT on the model_registry table. File mode: linear
+    scan through the registry JSON. Returns None when the version isn't
+    found.
+    """
+    if _settings().is_postgres:
+        return _get_model_postgres(version)
+    reg = load_registry(registry_path)
+    for m in reg.get("models", []):
+        if m.get("version") == version:
+            return m
+    return None
 
 
 def current_champion(registry_path: str = "out/model_registry.json") -> dict | None:
@@ -204,6 +306,53 @@ def _current_champion_postgres() -> dict | None:
     metrics = metrics_raw if isinstance(metrics_raw, dict) else json.loads(metrics_raw)
     return {
         "version": version,
+        "model_path": model_path,
+        "metrics": metrics,
+        "is_champion": is_champ,
+        "is_challenger": is_chall,
+        "traffic_split": float(traffic),
+        "drift_status": drift,
+        "deployed_at": deployed.isoformat() if deployed else None,
+        "promoted_at": promoted.isoformat() if promoted else None,
+    }
+
+
+def _get_model_postgres(version: str) -> dict | None:
+    """Look up a single model entry by version tag (Postgres mode).
+
+    Day 6 Track R (T2.2-helper) — used by :func:`get_priors` to read the
+    stored ``p_orig`` / ``p_und`` priors when the caller asks for a
+    specific version rather than the current champion.
+    """
+    conn = _get_conn()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT version, model_path, metrics, is_champion, is_challenger,
+                   traffic_split, drift_status, deployed_at, promoted_at
+              FROM model_registry
+             WHERE version = %s
+             LIMIT 1
+            """,
+            (version,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    (
+        ver,
+        model_path,
+        metrics_raw,
+        is_champ,
+        is_chall,
+        traffic,
+        drift,
+        deployed,
+        promoted,
+    ) = row
+    metrics = metrics_raw if isinstance(metrics_raw, dict) else json.loads(metrics_raw)
+    return {
+        "version": ver,
         "model_path": model_path,
         "metrics": metrics,
         "is_champion": is_champ,

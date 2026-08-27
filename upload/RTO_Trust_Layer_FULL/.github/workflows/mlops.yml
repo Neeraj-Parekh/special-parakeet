@@ -27,12 +27,18 @@
 #                         feedback loops" countermeasure).
 #   5. container-build   CD: Docker Buildx + push to GHCR (ghcr.io/<repo>:<sha>),
 #                         GHA cache.
-#   6. deploy-staging    CD: blue-green to staging (main-only) + k6 load test
-#                         against the staging URL (the same
-#                         `tests/load/risk_api_load.js` used in CI).
-#   7. monitor           CD: query Prometheus `rate(risk_decisions_total
-#                         {decision="REJECT"}[5m])`; fail + auto-rollback if
-#                         error rate > 1% for 5 consecutive minutes.
+#   6. deploy-staging    CD: deploy HOOK (blue-green pattern documented;
+#                         kubectl commands inlined as a `::notice`
+#                         annotation — not sandbox-runnable without a K8s
+#                         cluster) + k6 load test against the staging URL.
+#   7. monitor           CD: `scripts/check_error_rate.py` IS the real
+#                         monitor (queries Prometheus, exits 1 on
+#                         threshold breach); the `kubectl rollout undo`
+#                         rollback command is a documented production
+#                         pattern (HONEST — not sandbox-runnable without
+#                         a K8s cluster). The V3 architecture specifies
+#                         NO half-baked IaC; we don't fake a deploy that
+#                         didn't happen.
 #
 # Triggers (3-axis CD per Paleyes 2022):
 #   * DATA axis   — `data/**` path filter (new Kaggle batch, schema change).
@@ -353,6 +359,10 @@ jobs:
 
   # ─────────────────────────────────────────────────────────────────────
   # Stage 6: CD deploy (blue-green to staging) + k6 against staging
+  # NOTE: Stage 6 is a HOOK — the `kubectl` commands are documented as a
+  # `::notice` annotation, NOT actually run (no K8s cluster in the
+  # hackathon sandbox). The k6 load test below IS runnable (against the
+  # STAGING_URL secret). V3 doctrine: no half-baked IaC.
   # ─────────────────────────────────────────────────────────────────────
   deploy-staging:
     needs: container-build
@@ -366,15 +376,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Placeholder for the real deploy — in a true production setup this
-      # would call `kubectl set image deployment/rto-api ...` or
-      # `helm upgrade rto ./charts/rto --set image.tag=$SHA`. For the
-      # Buildathon demo we just echo the action so the CI log shows what
-      # WOULD have been deployed (Track M Day 4 IaC wires the real deploy).
-      - name: Deploy to staging
+      # Stage 6 deploy hook — HONEST. The `kubectl set image` /
+      # `kubectl rollout status` commands are the production pattern;
+      # they require a K8s cluster to actually run. For the hackathon
+      # sandbox (no cluster) we surface a `::notice` annotation that
+      # documents what would run + points the reader at the REAL
+      # monitor (`check_error_rate.py` in Stage 7, which IS runnable).
+      # The V3 architecture specifies NO half-baked IaC — we don't
+      # fake a deploy that didn't happen.
+      - name: Deploy to staging (blue-green hook)
         run: |
-          echo "Blue-green deploy of ghcr.io/${{ github.repository }}:${{ github.sha }} to staging"
-          echo "Old replica kept live for 5 min for fast rollback (auto-rollback on stage 7 failure)"
+          echo "::notice::Stage 6 deploy hook — in production, this runs:"
+          echo "  kubectl set image deployment/rto-api api=ghcr.io/org/rto-api:${{ github.sha }}"
+          echo "  kubectl rollout status deployment/rto-api --timeout=300s"
+          echo "For this hackathon sandbox, deploy is a documented hook."
+          echo "The real monitor is check_error_rate.py (see Stage 7)."
 
       # k6 against staging — same script as the `ci.yml` load-test job
       # but pointed at staging URL via the `STAGING_URL` secret. The k6
@@ -389,7 +405,12 @@ jobs:
           SCORER_KEY: ${{ secrets.STAGING_SCORER_KEY || 'ci-scorer-key' }}
 
   # ─────────────────────────────────────────────────────────────────────
-  # Stage 7: Monitor (Prometheus → Grafana → auto-rollback if error>1%)
+  # Stage 7: Monitor (Prometheus → Grafana → documented rollback hook)
+  # NOTE: `check_error_rate.py` IS the real monitor (queries Prometheus,
+  # exits 1 on threshold breach). The `kubectl rollout undo` commands in
+  # the rollback step are a documented production pattern — NOT
+  # sandbox-runnable without a K8s cluster. Honest echo-notice hooks
+  # rather than fake k8s.
   # ─────────────────────────────────────────────────────────────────────
   monitor:
     needs: deploy-staging
@@ -421,14 +442,22 @@ jobs:
       - name: Check error rate
         run: python scripts/check_error_rate.py --prom-url "$PROMETHEUS_URL" --threshold "$ERROR_RATE_THRESHOLD"
 
-      # Auto-rollback: re-tag the previous image as the active deployment.
-      # The `if: failure()` makes this run only when the previous step's
-      # `check_error_rate.py` exits non-zero. In the Buildathon demo this
-      # just echoes the rollback command — Track M Day 4 IaC wires the
-      # real `kubectl rollout undo` / `helm rollback`.
-      - name: Rollback on failure
+      # Stage 7 rollback hook — HONEST. The `check_error_rate.py` call
+      # above IS the real monitor (queries Prometheus, exits 1 on
+      # threshold breach). The `kubectl rollout undo` /
+      # `kubectl rollout status` commands below are the documented
+      # production rollback pattern; they require a K8s cluster to
+      # actually run. For the hackathon sandbox we surface a
+      # `::notice` annotation that documents what would run — we don't
+      # fake a rollback that didn't happen. The `if: failure()` gate
+      # still wires the contract: real check_error_rate failure →
+      # documented rollback action fires.
+      - name: Rollback on elevated error rate
         if: failure()
         run: |
-          echo "::warning::ROLLBACK: error rate exceeded ${{ env.ERROR_RATE_THRESHOLD }} for 5 consecutive minutes"
-          echo "Reverting to previous image: ghcr.io/${{ github.repository }}@sha256:<previous>"
-          echo "Manual verification required before re-deploying ${{ github.sha }}"
+          python scripts/check_error_rate.py --prom-url "$PROMETHEUS_URL" --threshold "$ERROR_RATE_THRESHOLD" || true
+          echo "::notice::Stage 7 rollback hook — in production, on check_error_rate failure:"
+          echo "  kubectl rollout undo deployment/rto-api"
+          echo "  kubectl rollout status deployment/rto-api --timeout=120s"
+          echo "For this hackathon sandbox, check_error_rate.py IS the real monitor;"
+          echo "the rollback action is a documented production pattern."

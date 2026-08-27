@@ -86,6 +86,11 @@ pre{background:#0d1117;border:1px solid var(--edge);border-radius:6px;padding:10
     </div>
     <div class="card" style="margin-top:16px">
       <h2>Threshold × cost explorer <span class="mut">(FN = 12× FP, Drummond-Holte 2006)</span></h2>
+      <div class="resamples-toggle" style="margin: 8px 0 10px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; font-size:12px; color:var(--mut);">
+        <span style="font-weight:600">Bootstrap rigor:</span>
+        <label style="display:inline-flex; align-items:center; gap:4px; margin:0;"><input type="radio" name="resamples" value="100" checked style="width:auto; margin:0 4px 0 0;">Fast (100 resamples, ~0.6s)</label>
+        <label style="display:inline-flex; align-items:center; gap:4px; margin:0;"><input type="radio" name="resamples" value="500" style="width:auto; margin:0 4px 0 0;">Rigorous (500 resamples, ~3-5s, Drummond-Holte §3.6 recommended)</label>
+      </div>
       <div class="bars" id="bars"><div class="mut" id="bars-state" style="height:100%;display:flex;align-items:center;justify-content:center">loading cost curves…</div></div>
       <div class="mut" id="bars-note" style="margin-top:22px">fetching <code>/v1/policy/cost-curves</code>…</div>
     </div>
@@ -104,11 +109,13 @@ function hdr(){return {Authorization:"Bearer "+document.getElementById("kScore")
 function setBarsState(msg){document.getElementById("bars-state").textContent=msg;document.getElementById("bars-state").style.display="flex"}
 function clearBarsState(){document.getElementById("bars-state").style.display="none"}
 async function loadCostCurves(){
-  setBarsState("loading cost curves…");
-  document.getElementById("bars-note").textContent="fetching /v1/policy/cost-curves…";
+  const nResamples=(()=>{const el=document.querySelector('input[name="resamples"]:checked');return el?el.value:"100";})();
+  const isRigorous=nResamples==="500";
+  setBarsState(isRigorous?`Computing ${nResamples} bootstrap resamples… (3-5s, Drummond-Holte §3.6)`:"loading cost curves…");
+  document.getElementById("bars-note").textContent=isRigorous?`fetching /v1/policy/cost-curves?n_resamples=${nResamples} (~3-5s)…`:"fetching /v1/policy/cost-curves…";
   let r;
   try{
-    r=await fetch("/v1/policy/cost-curves?n_resamples=100",{headers:hdr()});
+    r=await fetch(`/v1/policy/cost-curves?n_resamples=${nResamples}`,{headers:hdr()});
   }catch(err){
     setBarsState("Cost curves unavailable — cannot reach server");
     document.getElementById("bars-note").textContent="network error: "+err;
@@ -197,6 +204,10 @@ async function audit(){
 // can press Enter in the scorer-key field to trigger the load.
 document.getElementById("kScore").addEventListener("change",()=>{if(COSTS.length===0)loadCostCurves()});
 document.getElementById("kScore").addEventListener("keydown",e=>{if(e.key==="Enter")loadCostCurves()});
+// Bootstrap-rigor toggle: re-fetch cost curves when the user flips Fast/Rigorous.
+// Rigorous mode (500 resamples) takes 3-5s — the loading state in
+// loadCostCurves already shows the per-resample count while the user waits.
+document.querySelectorAll('input[name="resamples"]').forEach(r=>r.addEventListener("change",()=>{loadCostCurves()}));
 const v=id=>document.getElementById(id).value;
 const esc=s=>String(s).replace(/[<>&"]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;",'"':"&quot;"}[c]));
 </script>

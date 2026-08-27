@@ -293,14 +293,213 @@ def test_feedback_metrics_endpoint_exposes_drift_gauges():
         r = client.get("/metrics")
         assert r.status_code == 200
         text = r.text
+        # T3.4 — all 5 drift Prometheus gauges must be exposed (was only 3).
+        # Source: src/api/routes.py /metrics handler emits all 5 from
+        # ``state["feedback"].current_state()``:
+        #   * rto_drift_ddm_state         (numeric 0/1/2 — STABLE/WARNING/DRIFT)
+        #   * rto_drift_adwin_state       (numeric 0/1/2)
+        #   * rto_drift_samples_processed (int — DDM.n)
+        #   * rto_drift_ddm_p             (float — running error-rate MLE)
+        #   * rto_drift_adwin_window_len  (int — ADWIN's current window size)
         assert "# TYPE rto_drift_ddm_state gauge" in text
         assert "# TYPE rto_drift_adwin_state gauge" in text
         assert "# TYPE rto_drift_samples_processed gauge" in text
+        assert "# TYPE rto_drift_ddm_p gauge" in text, (
+            "rto_drift_ddm_p gauge must be exposed (Track S T2.4) — was missing "
+            "in the original 3-gauge assertion"
+        )
+        assert "# TYPE rto_drift_adwin_window_len gauge" in text, (
+            "rto_drift_adwin_window_len gauge must be exposed (Track S T2.4) — "
+            "was missing in the original 3-gauge assertion"
+        )
         # ddm_n should be 1 (one ingest_label call above).
         # Both gauges should be 0 (STABLE) at this point.
         assert "rto_drift_ddm_state 0" in text
         assert "rto_drift_adwin_state 0" in text
         assert "rto_drift_samples_processed 1" in text
+        # The ddm_p value is a float — pattern: "rto_drift_ddm_p <float>".
+        # With 1 sample (error=0 because prediction_not_found=True), ddm_p=0.
+        # Either way, the gauge line must exist with a numeric value.
+        import re
+        ddm_p_match = re.search(r"^rto_drift_ddm_p (\d+\.?\d*)", text, re.M)
+        assert ddm_p_match is not None, (
+            "rto_drift_ddm_p gauge line must have a float value"
+        )
+        ddm_p_val = float(ddm_p_match.group(1))
+        assert isinstance(ddm_p_val, float), (
+            "rto_drift_ddm_p must be a float (running Bernoulli MLE)"
+        )
+        # adwin_window_len is an int. With 1 sample, window has 1 entry.
+        adwin_win_match = re.search(
+            r"^rto_drift_adwin_window_len (\d+)", text, re.M
+        )
+        assert adwin_win_match is not None, (
+            "rto_drift_adwin_window_len gauge line must have an int value"
+        )
+        adwin_win_val = int(adwin_win_match.group(1))
+        assert isinstance(adwin_win_val, int) and adwin_win_val >= 1, (
+            f"rto_drift_adwin_window_len must be int ≥1 after 1 ingest; "
+            f"got {adwin_win_val}"
+        )
+
+
+def test_feedback_ingest_triggers_drift_and_retrain_notification(monkeypatch):
+    """T3.2 — End-to-end DRIFT path: score an order → post 50+ feedback
+    labels → DDM fires DRIFT → ``retrain_request`` notification published
+    to the ``notifications`` stream.
+
+    Closes the test-coverage gap that ``test_feedback_ingest_endpoint`` left:
+    that test posts 1 label with a nonexistent prediction_id (STABLE).
+    This test drives the full DDM DRIFT detection path through the API
+    + asserts the shadow-retrain notification fires.
+
+    Approach:
+      1. POST /risk/score to get a real ``prediction_id`` + ``predicted_p``
+         (the model's P(RTO) for this order — the audit body stores it so
+         /v1/feedback/ingest can look it up).
+      2. Seed 30 "correct" labels (error=0) so DDM establishes a non-
+         degenerate in-control baseline (p_min + sigma_min). Without this
+         seed, the ``sigma > 0`` guard blocks DRIFT detection.
+      3. Feed up to 50 "wrong" labels (error=1) so DDM's running p+sigma
+         breaches the 3σ control limit + fires DRIFT.
+      4. Assert the response body carries ``drift_detected: True`` +
+         ``ddm_state: "DRIFT"`` (the captured state BEFORE the auto-reset).
+      5. Assert a ``notifications`` stream message was published with
+         ``type: "retrain_request"`` via a mocked StreamProducer.
+
+    Note on /v1/metrics: after DRIFT detection, LabelFeedbackService
+    auto-resets the DDM/ADWIN detectors (Gama 2014 §4: "after adaptation,
+    re-establish the baseline from the new concept"). So the
+    ``rto_drift_ddm_state`` Prometheus gauge returns to 0 (STABLE) by
+    the next /metrics scrape. The durable signal is the captured
+    retrain_request notification (the gauge would only show 2 transiently
+    between the ``ddm.update()`` call + the auto-reset, a window no
+    synchronous /metrics scrape can hit).
+    """
+    captured_publishes: list[tuple[str, dict]] = []
+
+    class _MockProducer:
+        """Captures publish() calls so we can assert the retrain_request
+        notification was emitted to the ``notifications`` stream.
+        Mirrors the mock pattern in test_streaming.py's
+        ``test_risk_score_endpoint_publishes_to_streams``.
+        """
+
+        def __init__(self, redis_url=None):
+            self.redis_url = redis_url
+            self.client = None
+
+        def publish(self, stream, fields):
+            captured_publishes.append((stream, dict(fields)))
+            return f"mock-msg-{len(captured_publishes)}"
+
+        def close(self):
+            pass
+
+    # Patch the SOURCE module so the lazy ``from src.stream.producer
+    # import StreamProducer`` inside ``LabelFeedbackService._trigger_
+    # shadow_retrain`` resolves to our mock.
+    import src.stream.producer as producer_mod
+
+    monkeypatch.setattr(producer_mod, "StreamProducer", _MockProducer)
+
+    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+        # 1. Score an order to get a real prediction_id + predicted_p.
+        r1 = client.post("/risk/score", json=VALID, headers=SCORER)
+        assert r1.status_code == 200, r1.text
+        body1 = r1.json()
+        prediction_id = body1["prediction_id"]
+        predicted_p = body1["probability"]
+        assert predicted_p is not None, (
+            "model should produce a probability for /v1/feedback/ingest to "
+            "look up via the audit tail scan"
+        )
+
+        # 2. Seed 30 "correct" labels (error=0) so DDM establishes a
+        # non-degenerate baseline. error=0 when the prediction's class
+        # matches the label: predicted_p >= 0.15 (model says RTO) AND
+        # is_returned=True (customer returned) → correct; OR predicted_p
+        # < 0.15 (model says safe) AND is_returned=False → correct.
+        # We pick the is_returned value that makes the error=0.
+        correct_is_returned = bool(predicted_p >= 0.15)
+        for _ in range(30):
+            r = client.post(
+                "/v1/feedback/ingest",
+                json={
+                    "prediction_id": prediction_id,
+                    "is_returned": correct_is_returned,
+                },
+                headers=ADMIN,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            assert body["error"] == 0, (
+                f"baseline seed label should produce error=0; got "
+                f"{body['error']} (predicted_p={predicted_p}, "
+                f"is_returned={correct_is_returned})"
+            )
+            assert body["ddm_state"] == "STABLE", (
+                f"baseline seed should keep DDM in STABLE; got "
+                f"{body['ddm_state']}"
+            )
+
+        # 3. Feed up to 50 "wrong" labels (error=1) to drive DDM to DRIFT.
+        # DDM fires DRIFT after ~3 errors past the 30-sample min_n gate (per
+        # the math: p_min=1/31, sigma_min=sqrt(p*(1-p)/31), 3σ threshold
+        # breached at n≈33). We allow 50 to be conservative.
+        wrong_is_returned = not correct_is_returned
+        drift_response = None
+        for _ in range(50):
+            r = client.post(
+                "/v1/feedback/ingest",
+                json={
+                    "prediction_id": prediction_id,
+                    "is_returned": wrong_is_returned,
+                },
+                headers=ADMIN,
+            )
+            assert r.status_code == 200, r.text
+            body = r.json()
+            if body["drift_detected"]:
+                drift_response = body
+                break
+        assert drift_response is not None, (
+            "DRIFT should have fired after ≤50 error labels (DDM 3σ control "
+            "limit breached)"
+        )
+
+        # 4. Assert the response body's drift fields.
+        assert drift_response["ddm_state"] == "DRIFT", (
+            f"response body's ddm_state should be DRIFT (captured before "
+            f"auto-reset); got {drift_response['ddm_state']}"
+        )
+
+        # 5. Assert the retrain_request notification was published to the
+        # ``notifications`` stream.
+        retrain_publishes = [
+            f for s, f in captured_publishes
+            if s == "notifications" and f.get("type") == "retrain_request"
+        ]
+        assert len(retrain_publishes) >= 1, (
+            f"Expected at least 1 retrain_request notification on the "
+            f"notifications stream; got {captured_publishes}"
+        )
+        notif = retrain_publishes[0]
+        assert notif["trigger"] == "drift_detected", (
+            f"notification trigger should be 'drift_detected'; got "
+            f"{notif.get('trigger')}"
+        )
+        assert notif["source"] == "label_feedback", (
+            f"notification source should be 'label_feedback' (vs the "
+            f"anomaly-side path 'stream_anomaly_run:*'); got "
+            f"{notif.get('source')}"
+        )
+        assert notif["prediction_id"] == prediction_id, (
+            "notification should carry the triggering prediction_id"
+        )
+        assert "ddm_state" in notif
+        assert "adwin_state" in notif
+        assert "ts" in notif  # ISO timestamp
 
 
 # ---------------------------------------------------------------------------

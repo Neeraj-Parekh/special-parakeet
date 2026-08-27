@@ -65,8 +65,9 @@ auto-loaded dashboard). Developer docs at `http://localhost:8000/docs`
 
 The Python API runs out of the box on Python 3.12 + `uvicorn
 src.api.routes:create_app --factory --port 8000`. Tests: `./verify.sh`
-(ruff + pytest + train/evaluate). Current status: **93 tests pass, 8
-skipped** (6 Postgres-path + 2 Redis-path; auto-run when `DATABASE_URL` /
+(ruff + pytest + train/evaluate). Current status: **141 tests pass + 8
+skipped (Postgres+Redis path; full suite w/ Docker services = 149)** (6
+Postgres-path + 2 Redis-path; auto-run when `DATABASE_URL` /
 `REDIS_URL` are set).
 
 ---
@@ -119,7 +120,7 @@ Decision precedence (the heart of the system):
 | PR-AUC (synthetic CODScore, E2 features) | **0.5495** | `scripts/evaluate.py`, customer-grouped holdout (leakage=0) |
 | ROC-AUC (E2) | **0.808** | same |
 | Cost-optimal threshold | **0.15** | `docs/cost_table.md`, FN = 12x FP (Bahnsen Eq.1; Drummond-Holte 2006) |
-| Tests passing | **93/93** (+ 8 skipped on infra paths) | `./verify.sh` |
+| Tests passing | **141/149** (+ 8 skipped on Postgres+Redis paths; full suite w/ Docker services = 149) | `./verify.sh` |
 | Endpoints | **22** (OpenAPI 3.1, auto-generated) | `docs/openapi.json` |
 | Docker services (core) | **5** (api, postgres, redis, stream-worker, stream-processor) | `docker-compose.yml` |
 | Docker services (full stack) | **9** (+ nginx, prometheus, grafana, drift-consumer) | `docker-compose --profile full` |

@@ -270,13 +270,20 @@ def _reset_breaker(client):
 
 def test_decision_uses_cost_optimizer_not_static_thresholds(client, _reset_breaker):
     """Send an order through /risk/score and verify the returned decision
-    matches ``optimal_decision(p)`` output (NOT the legacy static 0.15/0.60
-    thresholds). Uses a benign order that fires no rules (amount=₹899 COD).
+    matches ``optimal_decision(p, amount_inr=...)`` output (NOT the legacy
+    static 0.15/0.60 thresholds). Uses a benign order that fires no rules
+    (amount=₹899 COD).
 
     This is the headline test from Day 1 Track C: before this change, the
     cost-optimizer was stored as ``policy_hint`` but the actual decision came
     from ``if proba < 0.15: ACCEPT``. After this change, ``decision`` *is*
     the cost-optimizer output.
+
+    Day 6 Track R (T2.1) — the 3-way BMR decision now uses per-amount FN
+    cost (Bahnsen Eq.(5): c_fn = amount_inr). The test must call
+    ``optimal_decision(p, amount_inr=...)`` with the SAME amount as the
+    order's amount_inr (₹899) for the expected_decision + expected_costs
+    to match what routes.py computes.
     """
     r = client.post(
         "/risk/score",
@@ -289,7 +296,11 @@ def test_decision_uses_cost_optimizer_not_static_thresholds(client, _reset_break
     # so the cost-optimizer must be the decision source.
     assert body["decision_source"] == "cost_optimal_bmr"
     assert body["probability"] is not None
-    expected_decision, expected_costs = optimal_decision(body["probability"])
+    # T2.1 — pass amount_inr so the expected decision mirrors what
+    # routes.py computes (per-amount FN cost — Bahnsen Eq.(5)).
+    expected_decision, expected_costs = optimal_decision(
+        body["probability"], amount_inr=899
+    )
     assert body["decision"] == expected_decision
     # The body's cost_breakdown is computed from the FULL-precision probability
     # (before rounding to 4 dp for the response), so we compare with tolerance.
@@ -334,7 +345,11 @@ def test_decision_uses_cost_optimizer_with_review_rule_gate(client, _reset_break
     # RULE-002 is a REVIEW rule, not BLOCK — so the cost-optimizer still runs.
     assert body["probability"] is not None
     # If the cost-optimizer alone would say ACCEPT, the rule gate forces REVIEW.
-    expected_decision, _ = optimal_decision(body["probability"])
+    # T2.1 — pass amount_inr=25_000 so the expected decision mirrors what
+    # routes.py computes (per-amount FN cost — Bahnsen Eq.(5)).
+    expected_decision, _ = optimal_decision(
+        body["probability"], amount_inr=25_000
+    )
     if expected_decision == "ACCEPT":
         assert body["decision"] == "REVIEW"
         assert body["decision_source"] == "cost_optimal_bmr_review_rule"

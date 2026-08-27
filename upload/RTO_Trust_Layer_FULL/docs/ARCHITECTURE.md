@@ -403,6 +403,15 @@ Triggered on:
 The 7 stages map to TFX Baylor 2017 §3 + the CD + Monitor stages from
 Paleyes 2022 + MLOps-DevOps Integration:
 
+> **Stage 6-7 honesty note (Track T 11-d):** Stage 6-7 are deploy hooks.
+> For the hackathon sandbox, `check_error_rate.py` is the real monitor
+> (queries Prometheus, exits 1 on threshold breach). The `kubectl`
+> deploy/rollback commands are documented production patterns — not
+> sandbox-runnable without a K8s cluster. The V3 architecture specifies
+> NO half-baked IaC; we surface a `::notice` annotation rather than
+> fake a deploy that didn't happen. The k6 load test (Stage 6) and
+> `check_error_rate.py` (Stage 7) ARE real and runnable.
+
 | # | Stage | TFX component | CI script / action | Gate |
 |---|---|---|---|---|
 | 1 | `data-analysis` | `generate_data_statistics` | `scripts/profile_data.py` | emits HTML + JSON profile |
@@ -410,8 +419,8 @@ Paleyes 2022 + MLOps-DevOps Integration:
 | 3 | `model-training` | `Trainer` (warm-start) | `scripts/evaluate.py --feature-set full` | **PR-AUC ≥ 0.60** (Kandula 2021 benchmark AUC 0.73-0.79); model registered as champion in Postgres-backed `model_registry` table (Track E) |
 | 4 | `model-gate` | `gate_model_promotion` | `scripts/canary_gate.py` + `scripts/slice_metrics.py` | **canary PR-AUC + cost-weighted error regression ≤ 5%** vs incumbent; **per-slice regression ≤ 10%** for `merchant_category`, `cod_vs_prepaid`, `pin_code_tier` |
 | 5 | `container-build` | (CD) | `docker/build-push-action@v5` → `ghcr.io/<repo>:<sha>` | image pushed to GHCR after canary gate passes |
-| 6 | `deploy-staging` | (CD) | manual deploy step + k6 against staging | blue-green to staging on `main`; old replica kept live for 5 min for fast rollback |
-| 7 | `monitor` | (CD) | `scripts/check_error_rate.py` | queries Prometheus `rate(risk_decisions_total{decision="REJECT"}[5m])`; **auto-rollback if error > 1%** for 3 consecutive evaluations |
+| 6 | `deploy-staging` | (CD) | documented deploy HOOK + k6 against staging | **Deploy is a documented hook** — `kubectl set image` + `kubectl rollout status` are inlined as a `::notice` annotation in the workflow log; NOT sandbox-runnable without a K8s cluster. The k6 load test IS real (against `STAGING_URL` secret). V3 doctrine: no half-baked IaC. |
+| 7 | `monitor` | (CD) | `scripts/check_error_rate.py` (REAL) + documented rollback hook | `check_error_rate.py` IS the real monitor (queries Prometheus `rate(risk_decisions_total{decision="REJECT"}[5m])`, exits 1 on threshold breach). The `kubectl rollout undo` rollback command is a documented production pattern — NOT sandbox-runnable without a K8s cluster. The `if: failure()` gate still wires the contract: real monitor failure → documented rollback action fires. |
 
 ### Gate override policy (emergency hotfixes)
 

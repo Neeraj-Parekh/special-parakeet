@@ -427,6 +427,12 @@ def test_stream_processor_detects_duplicate_order_id():
 
     proc._window = deque()
     proc._seen_order_ids = {}
+    # 11-d Track T: new state for the 4th detector (HLL cardinality-spike)
+    # + the dict-fallback flag. Set up so the bypass-__init__ test path
+    # doesn't AttributeError on the new attributes.
+    proc._seen_cap_warned = False
+    proc._hll_cardinality_history = {}
+    proc._last_minute_bucket = None
     proc._baseline_rate = None
     proc._baseline_score_mean = None
     proc._baseline_score_std = None
@@ -435,6 +441,9 @@ def test_stream_processor_detects_duplicate_order_id():
     proc.HLL_KEY_PREFIX = "rto:stream:hll"
     proc.RATE_SPIKE_MULTIPLIER = 3.0
     proc.SCORE_DRIFT_SIGMA = 2.0
+    proc.HLL_SPIKE_FACTOR = 3.0
+    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+    proc.SEEN_ORDER_IDS_CAP = 10000
     proc.GROUP = "test-processors"
 
     # Mock producer to capture model.drift publishes.
@@ -480,3 +489,409 @@ def test_stream_processor_detects_duplicate_order_id():
     assert drift["fields"]["anomaly_reason"] == "duplicate_order_id"
     assert drift["fields"]["order_id"] == "ORD-DUP-1"
     assert drift["fields"]["prediction_id"] == "p2"
+
+
+# --- Test 6: 4th detector — HLL cardinality-spike (Track T 11-d) ----------
+
+
+def test_stream_processor_detects_hll_cardinality_spike():
+    """Unit-test the 4th anomaly detector (HLL cardinality-spike) without
+    Redis. The detector compares the current minute's HLL PFCOUNT to the
+    rolling average of the last 10 completed minutes + emits an
+    ``hll_cardinality_spike`` anomaly when current > 3x avg.
+
+    Simulates 1 quiet minute (PFCOUNT=5) then a burst minute (PFCOUNT=20).
+    The quiet minute is snapshotted into ``_hll_cardinality_history`` when
+    the minute rolls over; the burst minute's first message then triggers
+    the spike detector.
+
+    Why this matters: the in-memory ``_seen_order_ids`` dict can only see
+    ONE process's order_ids. The HLL aggregates across all stream-processor
+    replicas — the spike detector catches the "merchant bot burst"
+    signature that fans out across processes.
+    """
+    proc = StreamProcessor.__new__(StreamProcessor)  # bypass __init__
+    proc.redis_url = None
+    proc.consumer_name = "test-processor-hll"
+    proc.client = None
+    proc._stop = False
+    proc._group_ensured = False
+    from collections import deque
+
+    proc._window = deque()
+    proc._seen_order_ids = {}
+    proc._seen_cap_warned = False
+    proc._hll_cardinality_history = {}
+    proc._last_minute_bucket = None
+    proc._baseline_rate = None
+    proc._baseline_score_mean = None
+    proc._baseline_score_std = None
+    proc.WINDOW_SECONDS = 600  # wide so messages don't trim mid-test
+    proc.BASELINE_SEED = 30
+    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+    proc.RATE_SPIKE_MULTIPLIER = 3.0
+    proc.SCORE_DRIFT_SIGMA = 2.0
+    proc.HLL_SPIKE_FACTOR = 3.0
+    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+    proc.SEEN_ORDER_IDS_CAP = 10000
+    proc.GROUP = "test-processors"
+
+    drift_calls: list[dict] = []
+
+    class _MockProd:
+        def publish(self, stream, fields):
+            drift_calls.append({"stream": stream, "fields": dict(fields)})
+            return "mock-drift-id"
+
+        def close(self):
+            pass
+
+    proc.producer = _MockProd()
+    proc._connect = lambda: None  # type: ignore[assignment]
+    proc._hll_add_order = lambda oid, bucket: None  # type: ignore[assignment]
+
+    # Control the HLL count deterministically. The quiet minute bucket
+    # returns 5; the burst minute bucket returns 20 (which is 4x the
+    # baseline 5, well above the 3x spike_factor).
+    quiet_minute = 1_700_000_000 // 60  # arbitrary stable bucket index
+    burst_minute = quiet_minute + 1
+    hll_counts = {quiet_minute: 5, burst_minute: 20}
+
+    def _mock_hll_count(bucket):
+        return hll_counts.get(bucket, 0)
+
+    proc._hll_count_orders = _mock_hll_count  # type: ignore[assignment]
+
+    # Seed the history: simulate that the quiet minute already completed +
+    # its PFCOUNT was snapshotted. This avoids needing two real minute
+    # boundaries (which would slow the test).
+    proc._hll_cardinality_history = {quiet_minute: 5}
+
+    # Now feed a message in the burst minute. The HLL count for the burst
+    # minute is 20 (set above) — 20 > 5 * 3.0 = 15, so the detector fires.
+    fields = {
+        "prediction_id": "p-hll-spike-1",
+        "order_id": "ORD-SPIKE-1",
+        "score": "0.500",
+        "ts": "2026-01-03T00:01:00+00:00",
+    }
+    # Patch time.time to land in the burst minute. _handle_message calls
+    # time.time() once for `now` — we use a monkeypatched module.
+    import src.stream.processor as proc_mod
+
+    orig_time = proc_mod.time
+    proc_mod.time = type("T", (), {"time": lambda s: burst_minute * 60 + 5})()
+    try:
+        proc._handle_message(STREAM_RISK_SCORES, fields)
+    finally:
+        proc_mod.time = orig_time
+
+    # Assert the spike detector fired.
+    spike_calls = [
+        d for d in drift_calls
+        if d["fields"]["anomaly_reason"] == "hll_cardinality_spike"
+    ]
+    assert len(spike_calls) == 1, (
+        f"expected 1 hll_cardinality_spike publish; got "
+        f"{[d['fields']['anomaly_reason'] for d in drift_calls]}"
+    )
+    sp = spike_calls[0]
+    assert sp["stream"] == STREAM_MODEL_DRIFT
+    assert sp["fields"]["current_minute_count"] == "20"
+    assert sp["fields"]["baseline_avg_count"] == "5.00"
+    assert sp["fields"]["spike_factor"] == "3.0"
+    assert sp["fields"]["lookback_minutes"] == "10"
+
+
+def test_stream_processor_hll_spike_no_false_positive_below_factor():
+    """The 4th detector does NOT fire when current ≤ spike_factor x avg.
+
+    Quiet minute = 5, current minute = 14 (14 < 5 * 3 = 15) — no anomaly.
+    """
+    proc = StreamProcessor.__new__(StreamProcessor)
+    proc.redis_url = None
+    proc.consumer_name = "test-processor-hll-neg"
+    proc.client = None
+    proc._stop = False
+    proc._group_ensured = False
+    from collections import deque
+
+    proc._window = deque()
+    proc._seen_order_ids = {}
+    proc._seen_cap_warned = False
+    proc._hll_cardinality_history = {}
+    proc._last_minute_bucket = None
+    proc._baseline_rate = None
+    proc._baseline_score_mean = None
+    proc._baseline_score_std = None
+    proc.WINDOW_SECONDS = 600
+    proc.BASELINE_SEED = 30
+    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+    proc.RATE_SPIKE_MULTIPLIER = 3.0
+    proc.SCORE_DRIFT_SIGMA = 2.0
+    proc.HLL_SPIKE_FACTOR = 3.0
+    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+    proc.SEEN_ORDER_IDS_CAP = 10000
+    proc.GROUP = "test-processors"
+
+    drift_calls: list[dict] = []
+
+    class _MockProd:
+        def publish(self, stream, fields):
+            drift_calls.append({"stream": stream, "fields": dict(fields)})
+            return "mock-drift-id"
+
+        def close(self):
+            pass
+
+    proc.producer = _MockProd()
+    proc._connect = lambda: None  # type: ignore[assignment]
+    proc._hll_add_order = lambda oid, bucket: None  # type: ignore[assignment]
+
+    quiet_minute = 1_700_000_000 // 60
+    burst_minute = quiet_minute + 1
+    hll_counts = {quiet_minute: 5, burst_minute: 14}  # 14 < 5*3=15 → no fire
+    proc._hll_count_orders = lambda b: hll_counts.get(b, 0)  # type: ignore[assignment]
+    proc._hll_cardinality_history = {quiet_minute: 5}
+
+    fields = {
+        "prediction_id": "p-hll-neg-1",
+        "order_id": "ORD-NO-SPIKE-1",
+        "score": "0.500",
+        "ts": "2026-01-03T00:01:00+00:00",
+    }
+    import src.stream.processor as proc_mod
+
+    orig_time = proc_mod.time
+    proc_mod.time = type("T", (), {"time": lambda s: burst_minute * 60 + 5})()
+    try:
+        proc._handle_message(STREAM_RISK_SCORES, fields)
+    finally:
+        proc_mod.time = orig_time
+
+    spike_calls = [
+        d for d in drift_calls
+        if d["fields"]["anomaly_reason"] == "hll_cardinality_spike"
+    ]
+    assert len(spike_calls) == 0, (
+        "no spike should fire when current (14) ≤ avg*factor (15); got: "
+        + str([d["fields"]["anomaly_reason"] for d in drift_calls])
+    )
+
+
+def test_stream_processor_seen_order_ids_cap_falls_back_to_hll(capsys):
+    """When ``_seen_order_ids`` hits SEEN_ORDER_IDS_CAP, the dict stops
+    growing + a one-shot warning is logged. The HLL takes over for the
+    cardinality signal.
+
+    Sets the cap to 2 + feeds 3 distinct order_ids — the 3rd is NOT added
+    + a stderr warning is emitted. Duplicate detection continues to work
+    for the existing 2 entries.
+    """
+    proc = StreamProcessor.__new__(StreamProcessor)
+    proc.redis_url = None
+    proc.consumer_name = "test-processor-cap"
+    proc.client = None
+    proc._stop = False
+    proc._group_ensured = False
+    from collections import deque
+
+    proc._window = deque()
+    proc._seen_order_ids = {}
+    proc._seen_cap_warned = False
+    proc._hll_cardinality_history = {}
+    proc._last_minute_bucket = None
+    proc._baseline_rate = None
+    proc._baseline_score_mean = None
+    proc._baseline_score_std = None
+    proc.WINDOW_SECONDS = 600
+    proc.BASELINE_SEED = 30
+    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+    proc.RATE_SPIKE_MULTIPLIER = 3.0
+    proc.SCORE_DRIFT_SIGMA = 2.0
+    proc.HLL_SPIKE_FACTOR = 3.0
+    proc.HLL_SPIKE_LOOKBACK_MIN = 10
+    proc.SEEN_ORDER_IDS_CAP = 2  # tight cap → fallback trips on 3rd message
+    proc.GROUP = "test-processors"
+
+    drift_calls: list[dict] = []
+
+    class _MockProd:
+        def publish(self, stream, fields):
+            drift_calls.append({"stream": stream, "fields": dict(fields)})
+            return "mock-drift-id"
+
+        def close(self):
+            pass
+
+    proc.producer = _MockProd()
+    proc._connect = lambda: None  # type: ignore[assignment]
+    proc._hll_add_order = lambda oid, bucket: None  # type: ignore[assignment]
+    proc._hll_count_orders = lambda bucket: None  # type: ignore[assignment]
+
+    # Feed 3 distinct order_ids. The 3rd is the duplicate of the 1st? No —
+    # 3 distinct ones (ORD-A, ORD-B, ORD-C). The cap is 2, so the 3rd
+    # trips the fallback (not added to the dict).
+    fields_a = {
+        "prediction_id": "p-a",
+        "order_id": "ORD-A",
+        "score": "0.500",
+        "ts": "2026-01-03T00:00:00+00:00",
+    }
+    fields_b = {
+        "prediction_id": "p-b",
+        "order_id": "ORD-B",
+        "score": "0.500",
+        "ts": "2026-01-03T00:00:01+00:00",
+    }
+    fields_c = {
+        "prediction_id": "p-c",
+        "order_id": "ORD-C",  # 3rd distinct → trips cap fallback
+        "score": "0.500",
+        "ts": "2026-01-03T00:00:02+00:00",
+    }
+    proc._handle_message(STREAM_RISK_SCORES, fields_a)
+    proc._handle_message(STREAM_RISK_SCORES, fields_b)
+    # Before the 3rd: dict has 2 entries (at cap), no warning yet.
+    assert len(proc._seen_order_ids) == 2
+    assert proc._seen_cap_warned is False
+    proc._handle_message(STREAM_RISK_SCORES, fields_c)
+    # After the 3rd: dict STILL has 2 entries (3rd not added), warning
+    # fired exactly once.
+    assert len(proc._seen_order_ids) == 2, (
+        "dict should NOT have grown past the cap; the 3rd order_id should "
+        "have been dropped (HLL takes over for cardinality)"
+    )
+    assert "ORD-C" not in proc._seen_order_ids
+    assert proc._seen_cap_warned is True
+    # Stderr should contain the one-shot warning.
+    err = capsys.readouterr().err
+    assert "_seen_order_ids cap reached" in err
+    assert "falling back to HLL for cardinality" in err
+    # No drift publishes fired (these are 3 distinct order_ids, no spike).
+    assert len(drift_calls) == 0
+    # Duplicate detection still works for the existing 2 entries — feed
+    # ORD-A again → duplicate_order_id anomaly fires.
+    proc._handle_message(
+        STREAM_RISK_SCORES,
+        {**fields_a, "prediction_id": "p-a-dup"},
+    )
+    assert any(
+        d["fields"]["anomaly_reason"] == "duplicate_order_id"
+        for d in drift_calls
+    ), "duplicate detection should still work for entries within the cap"
+
+
+# --- Test 9 (T3.1): real Redis HLL path via fakeredis -------------------
+
+
+def test_stream_processor_hll_redis_pfadd_pfcount_dedup():
+    """T3.1 — Exercise the REAL Redis PFADD/PFCOUNT HLL path (not stubs).
+
+    Closes the test-coverage gap that ``proc._hll_add_order = lambda oid,
+    bucket: None`` left in the duplicate-detection test (lines 465-466):
+    the actual PFADD dedup + PFCOUNT estimation had zero coverage. This
+    test uses ``fakeredis`` to back the StreamProcessor's Redis client
+    so the real HLL commands run.
+
+    Verifies:
+    1. Three PFADDs of the SAME order_id → PFCOUNT == 1 (HLL dedup).
+    2. Two distinct order_ids → PFCOUNT == 2.
+    3. 1000 more distinct order_ids → PFCOUNT ≈ 1002 within the HLL
+       standard error (~0.81% at 16384 14-bit registers — Redis's
+       documented precision; we accept 5% to be conservative on the
+       test assertion).
+    """
+    try:
+        import fakeredis  # type: ignore[import-not-found]
+    except ImportError:
+        pytest.skip("fakeredis not installed — install `fakeredis>=2.0` "
+                    "to exercise the real HLL PFADD/PFCOUNT path")
+
+    proc = StreamProcessor.__new__(StreamProcessor)
+    proc.redis_url = "redis://fake-hll-test:6379"  # not used — client set below
+    proc.consumer_name = "test-hll-real"
+    # fakeredis implements PFADD/PFCOUNT (HyperLogLog) per the Redis spec.
+    # decode_responses=True so pfcount returns int (not bytes) for the
+    # direct equality assertions below.
+    proc.client = fakeredis.FakeRedis(decode_responses=True)
+    proc.HLL_KEY_PREFIX = "rto:stream:hll:test"
+    proc.WINDOW_SECONDS = 300  # used by the expire() call in _hll_add_order
+
+    bucket = 2_025_001  # arbitrary stable minute-bucket
+
+    # 1. HLL dedup: 3 PFADDs of the same order_id → cardinality 1.
+    proc._hll_add_order("order_001", bucket)
+    proc._hll_add_order("order_001", bucket)  # duplicate
+    proc._hll_add_order("order_001", bucket)  # duplicate again
+    count1 = proc._hll_count_orders(bucket)
+    assert count1 == 1, (
+        f"HLL should dedup 3 same-id PFADDs to cardinality 1; got {count1}"
+    )
+
+    # 2. Two distinct order_ids → cardinality 2.
+    proc._hll_add_order("order_002", bucket)
+    count2 = proc._hll_count_orders(bucket)
+    assert count2 == 2, (
+        f"HLL should count 2 distinct order_ids; got {count2}"
+    )
+
+    # 3. 1000 more distinct order_ids → PFCOUNT ≈ 1002 within HLL's
+    # standard error (~0.81% on Redis; we allow 5% to be conservative).
+    for i in range(1000):
+        proc._hll_add_order(f"order_distinct_{i:04d}", bucket)
+    count3 = proc._hll_count_orders(bucket)
+    expected = 1002  # 2 from above + 1000 new
+    assert abs(count3 - expected) <= expected * 0.05, (
+        f"HLL estimate for {expected} distinct orders should be within "
+        f"5% of {expected} (Redis HLL std error ~0.81%); got {count3}"
+    )
+
+    # Cleanup fakeredis connection so the test doesn't leak state into
+    # the next test (fakeredis instances are isolated, but close() is
+    # the documented teardown).
+    try:
+        proc.client.close()
+    except Exception:
+        pass
+
+
+def test_stream_processor_hll_count_returns_none_when_no_redis():
+    """T3.1 — ``_hll_count_orders`` returns None (not 0) when Redis is
+    unreachable. The best-effort try/except in the HLL path returns
+    None so callers can distinguish "no data yet" from "Redis down".
+
+    Verifies the contract: with ``proc.client = None`` and a forced
+    import-error on `redis`, the PFCOUNT call degrades to None instead
+    of raising.
+    """
+    proc = StreamProcessor.__new__(StreamProcessor)
+    proc.redis_url = None  # ensures _ensure_client returns None in StreamProducer
+    proc.client = None
+    proc.HLL_KEY_PREFIX = "rto:stream:hll"
+    proc.WINDOW_SECONDS = 300
+    # Force the _connect() import to fail (simulates missing redis-py).
+    # The except branch returns None for both _hll_add_order (silent)
+    # and _hll_count_orders.
+    import builtins
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "redis":
+            raise ImportError("simulated: redis-py not installed")
+        return real_import(name, *args, **kwargs)
+    builtins.__import__ = fake_import
+    try:
+        proc.client = None  # reset so _connect tries to import redis
+        # _connect raises ImportError internally → caught by the except
+        # in _hll_count_orders → returns None.
+        result = proc._hll_count_orders(123)
+    finally:
+        builtins.__import__ = real_import
+    # Either None (ImportError caught) or raises silently caught — both
+    # are acceptable contracts per the docstring "best-effort". The
+    # only hard contract: it must NOT raise to the caller.
+    assert result is None, (
+        f"_hll_count_orders should return None when Redis is unreachable; "
+        f"got {result!r}"
+    )

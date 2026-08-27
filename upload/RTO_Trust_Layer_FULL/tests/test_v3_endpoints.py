@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.api.routes import create_app  # noqa: E402
 from src.audit.logger import MerkleSealer  # noqa: E402
 
+
 SCORER = {"Authorization": "Bearer score-demo-key"}
 ADMIN = {"Authorization": "Bearer admin-demo-key"}
 
@@ -76,6 +78,32 @@ VALID = {
     "category": "Fashion",
     "customer_id": "CUST-H1",
 }
+
+
+@pytest.fixture(autouse=True)
+def _clear_override_nonce_cache_between_tests():
+    """Day 7 Wave 1 (Subagent 14-d — A2 fix) — clear the module-level
+    in-memory LRU+TTL nonce cache + the HKDF derived-key cache between
+    tests so the replay-protection state doesn't leak across test cases.
+    Each test that exercises the dual-control override path should be
+    able to assert "first sighting → 200; second sighting → 409"
+    without being shadowed by a prior test's nonce cache entry.
+    """
+    # Imported lazily so module-import order doesn't matter (the
+    # fixture is invoked per-test, after the routes module has been
+    # imported by the TestClient setup).
+    from src.api.routes import _clear_override_nonce_cache
+    _clear_override_nonce_cache()
+    yield
+    _clear_override_nonce_cache()
+
+
+def _fresh_nonce() -> str:
+    """Helper — generate a fresh 16-byte hex nonce (32 chars) for the
+    dual-control override request body. ``uuid.uuid4().hex`` is 32
+    chars (16 bytes of entropy) which is sufficient at the override
+    endpoint's traffic rate."""
+    return uuid.uuid4().hex
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +390,12 @@ def test_dual_control_override_requires_two_keys():
                 "notes": "test",
                 "admin_signature_1": "invalid-key-1",
                 "admin_signature_2": "admin-demo-key",
+                # Day 7 Wave 1 (Subagent 14-d — A2 fix) — the request
+                # body now carries a per-request nonce. The admin1
+                # check runs BEFORE the nonce consumption so the 403
+                # is preserved (the nonce is NOT consumed on this
+                # path — the request fails at admin1 validation first).
+                "nonce": _fresh_nonce(),
             },
         )
         assert r.status_code == 403, r.text
@@ -381,6 +415,11 @@ def test_dual_control_same_key_rejected():
                 "notes": "self-approve attempt",
                 "admin_signature_1": "admin-demo-key",
                 "admin_signature_2": "admin-demo-key",  # same key
+                # Day 7 Wave 1 (Subagent 14-d — A2 fix) — fresh nonce.
+                # The same-key check runs BEFORE the nonce consumption
+                # so the 400 is preserved (the nonce is NOT consumed
+                # on this path).
+                "nonce": _fresh_nonce(),
             },
         )
         assert r.status_code == 400, r.text
@@ -401,12 +440,23 @@ def test_dual_control_two_different_keys_succeeds():
     requires admin_signature_2 to be the HMAC output computed with
     admin2's API key. The test now computes that HMAC client-side +
     sends it in admin_signature_2; the server recomputes + verifies.
+
+    Day 7 Wave 1 (Subagent 14-d — A1 fix) UPDATE — the client now
+    derives the admin2 subkey via HKDF (RFC 5869) before computing the
+    HMAC. The server's HMAC chain verification uses the same derived
+    key, so the client + server agree on the expected signature_2.
+    The raw admin2_key is NEVER used directly as the HMAC key — only
+    the HKDF-derived subkey is. A1 + A2 fixes: nonce field is also
+    sent (a fresh one per request — the server stores SHA-256 hash +
+    409 on reuse).
     """
     import hmac
     import hashlib
     import json
     import os
     import time
+
+    from src.api.keys import derive_hmac_key
 
     # Set a second admin key via env var so default_keys() picks it up.
     # The settings cache must be cleared so the new key is loaded.
@@ -421,6 +471,8 @@ def test_dual_control_two_different_keys_succeeds():
             pid = scored["prediction_id"]
             # T1.1 — compute the real HMAC chain client-side. signature_2
             # = HMAC(admin2_key, signature_1 + canonical_body + timestamp).
+            # A1 fix — derive the admin2 subkey via HKDF first; the raw
+            # admin2_key is never used directly as the HMAC key.
             admin1_key = "admin-demo-key"
             admin2_key = "admin-second-key"
             decision = "REVIEW"
@@ -435,8 +487,14 @@ def test_dual_control_two_different_keys_succeeds():
                 sort_keys=True,
             )
             chained_msg = f"{admin1_key}|{canonical_body}|{ts}"
+            derived_admin2 = derive_hmac_key(
+                admin2_key,
+                salt=b"rto-override-v1",
+                info=b"dual-control",
+                length=32,
+            )
             sig2 = hmac.new(
-                admin2_key.encode(),
+                derived_admin2,
                 chained_msg.encode(),
                 hashlib.sha256,
             ).hexdigest()
@@ -448,6 +506,11 @@ def test_dual_control_two_different_keys_succeeds():
                     "admin_signature_1": admin1_key,
                     "admin_signature_2": sig2,
                     "timestamp": ts,
+                    # A2 fix — fresh per-request nonce (server stores
+                    # SHA-256 hash + 409 on reuse). The nonce is NOT
+                    # part of the HMAC canonical_body (the chain is
+                    # unchanged from T1.1).
+                    "nonce": _fresh_nonce(),
                 },
             )
             assert r.status_code == 200, r.text
@@ -459,6 +522,8 @@ def test_dual_control_two_different_keys_succeeds():
             # T1.1 — the chain-verified flag + timestamp are surfaced.
             assert body["dual_control_chain_verified"] is True
             assert body["dual_control_timestamp"] == ts
+            # A2 fix — the consumed-nonce hash is surfaced.
+            assert "override_nonce_hash" in body
             # The audit trail must record the new T1.1 fields.
             audit_id = body["audit_id"]
             rec = client.get(f"/audit/{audit_id}", headers=ADMIN).json()
@@ -476,6 +541,11 @@ def test_dual_control_two_different_keys_succeeds():
                 rec["admin_signature_1_digest"]
                 != rec["admin_signature_2_hmac_chain"]
             ), "admin1 digest + admin2 HMAC must differ in shape + value"
+            # A2 fix — the audit record carries the consumed-nonce hash
+            # (NOT the raw nonce — the table doesn't leak nonce values
+            # if the DB is compromised).
+            assert "override_nonce_hash" in rec
+            assert len(rec["override_nonce_hash"]) == 64  # SHA-256 hex
             # The override_form field records which path was taken.
             assert rec["request"]["override_form"] == "dual_control_v3_12_1"
     finally:
@@ -492,6 +562,13 @@ def test_dual_control_hmac_chain_rejects_tampered_signature_2():
     Sends admin_signature_1=admin1_key + admin_signature_2=garbage (not
     the HMAC computed with admin2_key). The server iterates admin keys,
     finds no match → 403 "dual_control HMAC chain verification failed".
+
+    Day 7 Wave 1 (Subagent 14-d — A2 fix) UPDATE — the request body
+    now carries a per-request nonce. The nonce is consumed BEFORE the
+    HMAC chain verification, so a tampered-sig2 request consumes the
+    nonce slot (a re-submission with the same nonce would 409). The
+    test uses a fresh nonce so the 403 is preserved (the nonce check
+    passes first sighting, then the HMAC check fails → 403).
     """
     import os
 
@@ -512,6 +589,12 @@ def test_dual_control_hmac_chain_rejects_tampered_signature_2():
                     "admin_signature_1": "admin-demo-key",
                     "admin_signature_2": "not-a-valid-hmac-hex-string",
                     "timestamp": int(__import__("time").time()),
+                    # A2 fix — fresh per-request nonce. The nonce is
+                    # consumed BEFORE the HMAC chain verification, so
+                    # this test "uses up" a nonce slot. The autouse
+                    # fixture clears the cache between tests so the
+                    # next test starts fresh.
+                    "nonce": _fresh_nonce(),
                 },
             )
             assert r.status_code == 403, r.text

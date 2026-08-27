@@ -75,6 +75,7 @@ def register_model(
     registry_path: str = "out/model_registry.json",
     p_orig: float | None = None,
     p_und: float | None = None,
+    priors: dict | None = None,
 ) -> dict:
     """Register a model version. If ``champion`` is True, atomically demotes
     any existing champion to challenger in the same transaction.
@@ -99,15 +100,155 @@ def register_model(
         Both values are stored inside the ``metrics`` JSON column (file mode:
         inside the metrics dict on disk) so existing DB schema + file shape
         are unchanged. :func:`get_priors` reads them back out.
+
+    priors : dict | None
+        Day 8 Task E14 — full Bahnsen Eq.(6) priors dict (the
+        :func:`src.models.train.compute_priors` shape)::
+
+            {"p_orig": float, "p_und": float, "n_train": int,
+             "n_pos_train": int, "calibration_method": "bahnsen_eq6",
+             "created_at": "<iso8601>"}
+
+        When provided, this is the **first-class** path: it is stored
+        verbatim under the ``_priors`` key inside the model's metrics blob
+        (file mode) / JSON column (Postgres mode), and the ``p_orig`` /
+        ``p_und`` floats from the dict are ALSO folded into the metrics
+        top-level so existing pre-E14 readers (the
+        :func:`get_priors` legacy 2-key shape, the in-process lifespan
+        registration in routes.py) continue to work unchanged. When
+        ``None`` (the default), no priors are stored — the model is
+        "pre-E14" and :func:`get_priors` returns the legacy
+        ``{"p_orig": None, "p_und": None}`` shape. Mutually-compatible
+        with the ``p_orig`` / ``p_und`` kwargs: if both are supplied,
+        the dict's ``p_orig`` / ``p_und`` win (the dict is the
+        first-class source).
     """
-    # Fold priors into the metrics dict so existing schema (JSON metrics
-    # column / file-mode metrics blob) is unchanged. Downstream readers
-    # (model card, drift endpoints) treat metrics as opaque JSON.
+    metrics = dict(metrics) if isinstance(metrics, dict) else {}
+    # Fold the priors dict (first-class path, E14) into the metrics blob
+    # under the ``_priors`` key (read back by :func:`get_priors`) AND fold
+    # p_orig/p_und to the top level so existing 2-key readers continue to
+    # work. The kwargs (p_orig/p_und) are kept for backwards compatibility
+    # with the Track-R lifespan registration path; the dict (if supplied)
+    # is authoritative.
+    if priors is not None:
+        if not isinstance(priors, dict):
+            raise TypeError(
+                f"priors must be a dict or None (got {type(priors).__name__})"
+            )
+        # Defensive copy so callers can mutate their dict after registration
+        # without leaking into the stored blob.
+        priors_copy = dict(priors)
+        # If the dict carries p_orig/p_und, those win over the kwargs.
+        if "p_orig" in priors_copy:
+            p_orig = priors_copy["p_orig"]
+        if "p_und" in priors_copy:
+            p_und = priors_copy["p_und"]
+        metrics["_priors"] = priors_copy
     if p_orig is not None or p_und is not None:
-        metrics = {**metrics, "p_orig": p_orig, "p_und": p_und}
+        metrics["p_orig"] = p_orig
+        metrics["p_und"] = p_und
     if _settings().is_postgres:
         return _register_model_postgres(version, model_path, metrics, champion)
     return _register_model_file(version, model_path, metrics, champion, registry_path)
+
+
+def set_priors(
+    version: str,
+    priors: dict,
+    registry_path: str = "out/model_registry.json",
+) -> None:
+    """Update the Bahnsen Eq.(6) priors blob on an already-registered model.
+
+    Day 8 Task E14 — first-class artifact path. The :func:`register_model`
+    ``priors`` kwarg is preferred when the priors are known at registration
+    time (the train.py path). This function exists for the rare case where
+    priors are computed AFTER registration (e.g. the model was registered
+    by the in-process lifespan path with no priors, then an external
+    auditor recomputes them from the training data and wants to backfill
+    the registry without re-registering).
+
+    Parameters
+    ----------
+    version : str
+        Version tag of the model to update. Must already exist in the
+        registry (raises ``KeyError`` otherwise — use
+        :func:`register_model` for first-time registration).
+    priors : dict
+        Priors blob (same shape as the :func:`register_model` ``priors``
+        kwarg). Must contain at least ``p_orig`` and ``p_und``.
+    registry_path : str
+        File-mode registry path (ignored in Postgres mode).
+
+    Side effects
+    ------------
+    Mutates the stored metrics blob: writes the dict under the
+    ``_priors`` key (first-class path) AND folds ``p_orig`` / ``p_und``
+    to the metrics top-level (legacy compat path) so existing
+    :func:`get_priors` callers continue to work. In Postgres mode the
+    ``metrics`` JSON column is UPDATEd in a single transaction.
+    """
+    if not isinstance(priors, dict):
+        raise TypeError(f"priors must be a dict (got {type(priors).__name__})")
+    priors_copy = dict(priors)
+    if "p_orig" not in priors_copy or "p_und" not in priors_copy:
+        raise ValueError(
+            "priors dict must contain at least 'p_orig' and 'p_und' keys; "
+            f"got {sorted(priors_copy.keys())}"
+        )
+    if _settings().is_postgres:
+        _set_priors_postgres(version, priors_copy)
+        return
+    reg = load_registry(registry_path)
+    found = False
+    for m in reg.get("models", []):
+        if m.get("version") == version:
+            metrics = dict(m.get("metrics") or {})
+            metrics["_priors"] = priors_copy
+            metrics["p_orig"] = priors_copy["p_orig"]
+            metrics["p_und"] = priors_copy["p_und"]
+            m["metrics"] = metrics
+            found = True
+            break
+    if not found:
+        raise KeyError(
+            f"model version {version!r} not found in registry {registry_path}"
+        )
+    Path(registry_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(registry_path).write_text(json.dumps(reg, indent=2))
+
+
+def _set_priors_postgres(version: str, priors_copy: dict) -> None:
+    """Postgres implementation of :func:`set_priors` — UPDATE the metrics
+    JSON column in a single transaction. Reads the current row, merges the
+    priors blob into the metrics dict (preserving all existing metrics),
+    writes it back. No champion flip — this is a metadata-only update.
+    """
+    conn = _get_conn()
+    with _conn_lock:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metrics FROM model_registry WHERE version = %s LIMIT 1",
+                (version,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise KeyError(
+                    f"model version {version!r} not found in model_registry table"
+                )
+            (metrics_raw,) = row
+            metrics = (
+                metrics_raw if isinstance(metrics_raw, dict)
+                else json.loads(metrics_raw)
+            )
+            metrics = dict(metrics) if isinstance(metrics, dict) else {}
+            metrics["_priors"] = priors_copy
+            metrics["p_orig"] = priors_copy["p_orig"]
+            metrics["p_und"] = priors_copy["p_und"]
+            cur.execute(
+                "UPDATE model_registry SET metrics = %s WHERE version = %s",
+                (json.dumps(metrics), version),
+            )
+            conn.commit()
 
 
 def get_priors(
@@ -137,18 +278,22 @@ def get_priors(
     Returns
     -------
     dict
-        ``{"p_orig": float | None, "p_und": float | None}``. Both keys are
-        ``None`` when:
+        Day 8 Task E14 — when the model was registered via the first-class
+        ``priors`` kwarg (the train.py / retrain_real.py path), returns the
+        full priors blob (``p_orig``, ``p_und``, ``n_train``,
+        ``n_pos_train``, ``calibration_method``, ``created_at``) verbatim.
+        The ``p_orig`` / ``p_und`` keys remain at the top level so existing
+        pre-E14 readers (the routes.py ``_priors.get("p_orig")`` pattern
+        at lines 787 + 2464) continue to work without modification.
 
-        * no model is registered (champion is None in file mode and the
-          model_registry table is empty in Postgres mode), OR
-        * the model was registered WITHOUT priors (the pre-Track-R
-          registration flow at routes.py:298-303 doesn't pass them, so the
-          in-process model artifact's priors are unknown).
-
-        Callers should treat both-None as a no-op signal — the live path
-        skips calibration (the un-calibrated probability is used as-is, same
-        as Track C's behaviour — correct when no resampling was applied).
+        Falls back to the legacy 2-key shape ``{"p_orig": float | None,
+        "p_und": float | None}`` when the model was registered via the
+        older ``p_orig`` / ``p_und`` kwargs (the Track-R lifespan path) OR
+        when no priors were stored at all (the pre-Track-R path — both
+        keys ``None``). Callers should treat both-None as a no-op signal
+        — the live path skips calibration (the un-calibrated probability
+        is used as-is, same as Track C's behaviour — correct when no
+        resampling was applied).
 
     Interface contract for 11-routes
     --------------------------------
@@ -164,8 +309,16 @@ def get_priors(
     if m is None:
         return {"p_orig": None, "p_und": None}
     metrics = m.get("metrics") or {}
-    p_orig = metrics.get("p_orig") if isinstance(metrics, dict) else None
-    p_und = metrics.get("p_und") if isinstance(metrics, dict) else None
+    if not isinstance(metrics, dict):
+        return {"p_orig": None, "p_und": None}
+    # Day 8 Task E14 — first-class priors blob path. Returned verbatim
+    # (it carries p_orig/p_und at the top level so all existing 2-key
+    # readers keep working — routes.py:787, routes.py:2464, test_ship.py
+    # assertions, the in-process lifespan registration path).
+    if "_priors" in metrics and isinstance(metrics["_priors"], dict):
+        return dict(metrics["_priors"])
+    p_orig = metrics.get("p_orig")
+    p_und = metrics.get("p_und")
     return {"p_orig": p_orig, "p_und": p_und}
 
 

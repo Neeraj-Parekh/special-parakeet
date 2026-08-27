@@ -125,107 +125,301 @@ def _reset_counters_conn() -> None:
     _counters_conn = None
 
 
-def _read_db_counters(mandate_sub: str, now: float) -> tuple[float, float, list[tuple[float, float]]]:
-    """Read persisted UPI Circle counters for a mandate from Postgres.
+# ---------------------------------------------------------------------------
+# C8/C9/C10 fix (Subagent 14-b) — the prior code split the counter read
+# (``_read_db_counters``) and the counter write (``_write_db_counters``)
+# across TWO separate transactions. Two concurrent ``/risk/score`` calls
+# could both read the counter below the ₹15k/month cap, both decrement,
+# and blow the ceiling. The new ``_begin_db_counter_txn`` opens a single
+# transaction, takes a per-mandate row lock with ``SELECT ... FOR UPDATE``,
+# does the C9 month-boundary reset (if needed), reads the 24h cooling
+# events, and returns a ``_DbCounterTxn`` handle holding the open txn.
+# The caller then runs the cap-checks while the lock is held; on VALID
+# it calls ``commit_increment`` (UPDATE + INSERT event + C10 90-day
+# prune + COMMIT all in the same txn); on any non-VALID verdict it calls
+# ``rollback`` to release the lock. Concurrent verifies serialize on the
+# row lock — the second caller blocks at the FOR UPDATE until the first
+# commits/rolls back.
+# ---------------------------------------------------------------------------
+class _DbCounterTxn:
+    """Open Postgres transaction holding a FOR UPDATE lock on a mandate counter row.
 
-    Returns ``(cumulative_monthly, last_activity_ts, recent_24h_events)`` where:
-      * ``cumulative_monthly`` is the running monthly cap counter (0.0 if the
-        mandate has no row yet — fresh mandate).
-      * ``last_activity_ts`` is the unix epoch of the last txn (or ``-inf`` if
-        no row — the caller falls back to the mandate's ``iat``).
-      * ``recent_24h_events`` is the rolling 24h txn list ``[(ts, amount), ...]``
-        reconstructed from ``mandate_counter_events`` rows with ``ts > now-86400``.
+    Constructed by ``_begin_db_counter_txn``; the caller runs the cap-checks
+    (inactivity, per-txn, monthly, device_id, user_id, cooling 24h) while
+    the lock is held, then either:
 
-    On ANY DB error (table missing, connection lost, partial-failure mid-query),
-    this returns ``(0.0, -1.0, [])`` and the caller falls through to the in-memory
-    dicts. NEVER raise — the verify path must degrade to the in-memory fallback
-    rather than fail the request.
+      * ``commit_increment(new_cumulative_monthly=..., ...)`` on VALID —
+        UPDATEs the counter row, INSERTs the 24h event, runs the C10
+        90-day prune DELETE, and COMMITs. Closes the transaction.
+      * ``rollback()`` on BREACH/REVIEW/EXPIRED — releases the FOR UPDATE
+        lock without advancing the counter (a rejected txn does not
+        consume the monthly cap; a REVIEW txn does not re-trigger the
+        cooling window). Closes the transaction.
+
+    Both methods are idempotent — a second call is a no-op (the txn is
+    already closed). This guards against double-commit in error paths
+    where the caller's try/except fires both the rollback and a second
+    cleanup.
     """
-    sentinel = (0.0, -1.0, [])
-    conn = _get_counters_conn()
-    if conn is None:
-        return sentinel
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT cumulative_monthly, last_activity_ts "
-                "FROM mandate_counters WHERE mandate_sub = %s",
-                (mandate_sub,),
-            )
-            row = cur.fetchone()
-            if row is not None:
-                cumulative_monthly = float(row[0] or 0.0)
-                last_activity_ts = float(row[1]) if row[1] is not None else -1.0
-            else:
-                cumulative_monthly = 0.0
-                last_activity_ts = -1.0
-            # Rolling 24h window — filter on the (mandate_sub, ts) index.
-            cur.execute(
-                "SELECT ts, amount_inr FROM mandate_counter_events "
-                "WHERE mandate_sub = %s AND ts > %s ORDER BY ts ASC",
-                (mandate_sub, now - 86400),
-            )
-            recent_24h = [(float(r[0]), float(r[1])) for r in cur.fetchall()]
-        return cumulative_monthly, last_activity_ts, recent_24h
-    except Exception:
-        # Degrade to in-memory fallback. The verify path will use the dicts;
-        # the cap is enforced within the process (real but not cross-restart).
+
+    __slots__ = (
+        "conn", "cur", "mid", "cumulative_monthly", "last_activity_ts",
+        "recent_24h", "current_month_key", "_closed",
+    )
+
+    def __init__(
+        self,
+        *,
+        conn: Any,
+        cur: Any,
+        mid: str,
+        cumulative_monthly: float,
+        last_activity_ts: float,
+        recent_24h: list[tuple[float, float]],
+        current_month_key: str,
+    ) -> None:
+        self.conn = conn
+        self.cur = cur
+        self.mid = mid
+        self.cumulative_monthly = cumulative_monthly
+        self.last_activity_ts = last_activity_ts
+        self.recent_24h = recent_24h
+        self.current_month_key = current_month_key
+        self._closed = False
+
+    def commit_increment(
+        self,
+        *,
+        new_cumulative_monthly: float,
+        last_activity_ts: float,
+        txn_ts: float,
+        txn_amount: float,
+    ) -> None:
+        """UPDATE counter + INSERT 24h event + C10 90-day prune + COMMIT.
+
+        All four statements run in the SAME transaction (the FOR UPDATE
+        lock is held throughout). On ANY DB error this rolls back — the
+        verify path has ALREADY updated the in-memory dicts by the time
+        this is called (so the request succeeds even if the persistence
+        layer fails; the cap is enforced within the process). A future
+        improvement is to surface the failure to the audit logger so
+        ops sees it (the silent-fall-back is the safe-but-debuggable
+        trade-off — same as the prior code's behaviour).
+        """
+        if self._closed:
+            return
         try:
-            conn.rollback()
-        except Exception:
-            pass
-        return sentinel
-
-
-def _write_db_counters(
-    mandate_sub: str,
-    *,
-    new_cumulative_monthly: float,
-    last_activity_ts: float,
-    txn_ts: float,
-    txn_amount: float,
-) -> None:
-    """Persist the updated UPI Circle counters + append the 24h event to Postgres.
-
-    UPSERTs the per-mandate ``mandate_counters`` row (single row per ``sub``)
-    and appends a row to ``mandate_counter_events`` for the 24h rolling window.
-    Both writes are in the same transaction so the cumulative counter + the
-    cooling-window event log advance atomically (a crash mid-write leaves the
-    prior state intact, not a half-updated counter).
-
-    On ANY DB error this swallows the exception and rolls back — the verify
-    path has ALREADY updated the in-memory dicts by the time this is called,
-    so the request succeeds even if the persistence layer fails. A future
-    improvement is to surface the failure to the audit logger so ops sees it
-    (the silent-fall-back is the safe-but-debuggable trade-off).
-    """
-    conn = _get_counters_conn()
-    if conn is None:
-        return
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO mandate_counters "
-                "(mandate_sub, cumulative_monthly, last_activity_ts, updated_at) "
-                "VALUES (%s, %s, %s, NOW()) "
-                "ON CONFLICT (mandate_sub) DO UPDATE SET "
-                "cumulative_monthly = EXCLUDED.cumulative_monthly, "
-                "last_activity_ts = EXCLUDED.last_activity_ts, "
-                "updated_at = NOW()",
-                (mandate_sub, new_cumulative_monthly, last_activity_ts),
+            # C8 — UPDATE the counter while still holding the FOR UPDATE
+            # lock (acquired in _begin_db_counter_txn). The
+            # ``month_key`` is written back too so the C9 reset branch
+            # fires only once per month rollover (subsequent verifies in
+            # the same month see the matching month_key and skip the
+            # reset).
+            self.cur.execute(
+                "UPDATE mandate_counters "
+                "SET cumulative_monthly = %s, "
+                "    last_activity_ts = %s, "
+                "    month_key = %s, "
+                "    updated_at = NOW() "
+                "WHERE mandate_sub = %s",
+                (
+                    new_cumulative_monthly,
+                    last_activity_ts,
+                    self.current_month_key,
+                    self.mid,
+                ),
             )
-            cur.execute(
+            self.cur.execute(
                 "INSERT INTO mandate_counter_events "
                 "(mandate_sub, ts, amount_inr, created_at) "
                 "VALUES (%s, %s, %s, NOW())",
-                (mandate_sub, txn_ts, txn_amount),
+                (self.mid, txn_ts, txn_amount),
             )
-        conn.commit()
+            # C10 — retention prune. Keep only the last 90 days of
+            # mandate_counter_events so the table stays bounded under
+            # steady-state traffic. The 24h cooling window only needs
+            # the last 24h; 90 days is generous headroom for compliance
+            # audit export. Runs on EVERY counter-event INSERT (inline
+            # prune-on-write — no scheduler dep). Uses the
+            # ``ix_mandate_counter_events_created_at`` index added by
+            # alembic migration 004 for a fast range scan.
+            self.cur.execute(
+                "DELETE FROM mandate_counter_events "
+                "WHERE created_at < NOW() - INTERVAL '90 days'"
+            )
+            self.conn.commit()
+        except Exception:
+            try:
+                self.conn.rollback()
+            except Exception:
+                pass
+        finally:
+            self._close()
+
+    def rollback(self) -> None:
+        """Release the FOR UPDATE lock without advancing the counter.
+
+        Called on BREACH/REVIEW/EXPIRED — a rejected txn does not consume
+        the monthly cap; a REVIEW txn does not re-trigger the cooling
+        window. Idempotent — a second call (e.g. from a try/finally
+        after the cap-check already returned) is a no-op.
+        """
+        if self._closed:
+            return
+        try:
+            self.conn.rollback()
+        except Exception:
+            pass
+        finally:
+            self._close()
+
+    def _close(self) -> None:
+        self._closed = True
+        try:
+            self.cur.close()
+        except Exception:
+            pass
+
+
+def _current_month_key(now: float) -> str:
+    """Return the current UTC month as a ``YYYY-MM`` string.
+
+    Centralised here so ``_begin_db_counter_txn`` (C9 reset) + the test
+    that asserts the C9 reset branch uses the same key computation.
+    Uses ``time.gmtime`` rather than ``datetime.utcnow`` so we don't
+    pull a ``datetime`` import into the verify hot path (the rest of
+    the file uses ``time.time()`` consistently).
+    """
+    return time.strftime("%Y-%m", time.gmtime(now))
+
+
+def _begin_db_counter_txn(
+    mandate_sub: str,
+    now: float,
+    current_month_key: str | None = None,
+) -> "_DbCounterTxn | None":
+    """Open a transaction + acquire FOR UPDATE on the per-mandate counter row.
+
+    Sequence (all inside ONE transaction — the FOR UPDATE lock is held
+    throughout):
+      1. ``INSERT ... ON CONFLICT DO NOTHING`` to ensure the row exists
+         (race-safe against a concurrent verifier that just inserted
+         the same ``mandate_sub``).
+      2. ``SELECT cumulative_monthly, last_activity_ts, month_key ...
+         FOR UPDATE`` — takes the per-mandate row lock. Concurrent
+         verifies block here until the first commits/rolls back.
+      3. **C9 month-boundary reset** — if the stored ``month_key``
+         differs from the current ``YYYY-MM`` string, the monthly cap
+         has rolled over: ``UPDATE mandate_counters SET
+         cumulative_monthly = 0, month_key = %s`` (still holding the
+         FOR UPDATE lock). If ``month_key`` is empty (the migration
+         just landed + the row hasn't been touched since), back-fill
+         the current month_key without resetting (the counter is
+         already the legacy cumulative value — preserving it would
+         be wrong, but resetting would lose prior-month spend; the
+         pragmatic choice is to back-fill month_key + let the next
+         month rollover trigger the reset on its own). Tests cover
+         both branches.
+      4. ``SELECT ts, amount_inr FROM mandate_counter_events WHERE
+         mandate_sub = %s AND ts > now - 86400`` — the 24h cooling
+         window, read while holding the lock so the cooling check
+         sees a consistent snapshot.
+
+    Returns a ``_DbCounterTxn`` handle (open transaction, lock held) on
+    success. Returns ``None`` on ANY failure (no DB connection, table
+    missing, query error) — the caller falls back to the in-memory
+    dicts in that case (file-mode / test path). NEVER raise — the
+    verify path must degrade to the in-memory fallback rather than
+    fail the request.
+    """
+    conn = _get_counters_conn()
+    if conn is None:
+        return None
+    if current_month_key is None:
+        current_month_key = _current_month_key(now)
+    try:
+        cur = conn.cursor()
+        # Step 1 — ensure the row exists (race-safe upsert; ON CONFLICT
+        # DO NOTHING so a concurrent verifier that just inserted the
+        # same mandate_sub doesn't trip a PK violation).
+        cur.execute(
+            "INSERT INTO mandate_counters "
+            "(mandate_sub, cumulative_monthly, last_activity_ts, month_key, updated_at) "
+            "VALUES (%s, 0, NULL, %s, NOW()) "
+            "ON CONFLICT (mandate_sub) DO NOTHING",
+            (mandate_sub, current_month_key),
+        )
+        # Step 2 — SELECT FOR UPDATE (C8). Concurrent verifies block
+        # here until the first commits/rolls back. The lock is held
+        # until commit_increment/rollback is called by the caller.
+        cur.execute(
+            "SELECT cumulative_monthly, last_activity_ts, month_key "
+            "FROM mandate_counters WHERE mandate_sub = %s FOR UPDATE",
+            (mandate_sub,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            # Defensive — INSERT ON CONFLICT DO NOTHING should have
+            # materialised the row above. Roll back + fall back.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return None
+        cumulative_monthly = float(row[0] or 0.0)
+        last_activity_ts = float(row[1]) if row[1] is not None else -1.0
+        stored_month_key = row[2] or ""
+
+        # Step 3 — C9 month-boundary reset. If the stored month_key is
+        # non-empty AND differs from the current YYYY-MM, the monthly
+        # cap has rolled over. Reset cumulative_monthly to 0 + update
+        # month_key to the current month. If stored_month_key is empty
+        # (the migration just landed; the row hasn't been touched
+        # since), back-fill the current month_key WITHOUT resetting
+        # (pragmatic choice — see docstring above).
+        if stored_month_key and stored_month_key != current_month_key:
+            cur.execute(
+                "UPDATE mandate_counters "
+                "SET cumulative_monthly = 0, month_key = %s, updated_at = NOW() "
+                "WHERE mandate_sub = %s",
+                (current_month_key, mandate_sub),
+            )
+            cumulative_monthly = 0.0
+        elif not stored_month_key:
+            cur.execute(
+                "UPDATE mandate_counters "
+                "SET month_key = %s, updated_at = NOW() "
+                "WHERE mandate_sub = %s",
+                (current_month_key, mandate_sub),
+            )
+
+        # Step 4 — 24h cooling window, read while holding the lock so
+        # the cooling check sees a consistent snapshot.
+        cur.execute(
+            "SELECT ts, amount_inr FROM mandate_counter_events "
+            "WHERE mandate_sub = %s AND ts > %s ORDER BY ts ASC",
+            (mandate_sub, now - 86400),
+        )
+        recent_24h = [(float(r[0]), float(r[1])) for r in cur.fetchall()]
+
+        return _DbCounterTxn(
+            conn=conn,
+            cur=cur,
+            mid=mandate_sub,
+            cumulative_monthly=cumulative_monthly,
+            last_activity_ts=last_activity_ts,
+            recent_24h=recent_24h,
+            current_month_key=current_month_key,
+        )
     except Exception:
+        # Degrade to in-memory fallback. The verify path will use the
+        # dicts; the cap is enforced within the process (real but not
+        # cross-restart). Same trade-off as the prior code.
         try:
             conn.rollback()
         except Exception:
             pass
+        return None
 
 
 def _secret() -> bytes:
@@ -378,27 +572,50 @@ def verify_mandate(
         now = time.time()
 
         if mtype == "upi_circle_delegation":
-            # --- Track P (Task 11-a) — read persisted counters from DB when  ---
-            # --- available; fall back to in-memory dicts in file mode.       ---
-            # ``_read_db_counters`` returns (0.0, -1.0, []) sentinel when no
-            # Postgres connection is configured OR when the query fails — the
-            # sentinel ``last_activity_ts = -1.0`` is the "no row / use iat"
-            # signal. We use the DB values when ``db_last_activity >= 0``,
-            # otherwise the in-memory dicts (file mode / test path).
-            db_cumulative, db_last_activity, db_recent_24h = _read_db_counters(mid, now)
-            if db_last_activity >= 0:
-                cumulative_monthly = db_cumulative
-                # DB is the source of truth in prod. If the row exists but
-                # last_activity_ts is NULL (mandate never spent), fall back to
-                # the mandate's iat — same baseline as the in-memory path.
+            # --- Track P (Task 11-a) — read persisted counters from DB    ---
+            # --- when available; fall back to in-memory dicts in file mode.---
+            # C8/C9/C10 fix (Subagent 14-b): the prior code split the
+            # read (``_read_db_counters``) + write (``_write_db_counters``)
+            # across two transactions — concurrent verifies could both read
+            # below the cap + both decrement, blowing the ₹15k ceiling.
+            # The new ``_begin_db_counter_txn`` opens ONE transaction,
+            # acquires ``SELECT ... FOR UPDATE`` on the per-mandate row
+            # (serialising concurrent verifies), does the C9 month-boundary
+            # reset (if stored ``month_key != current YYYY-MM``), reads the
+            # 24h cooling events, and returns a ``_DbCounterTxn`` handle
+            # holding the open txn. The cap-checks run with the lock held;
+            # on VALID we call ``commit_increment`` (UPDATE counter +
+            # INSERT event + C10 90-day prune DELETE + COMMIT, all in the
+            # same txn); on BREACH/REVIEW/EXPIRED we call ``rollback`` to
+            # release the lock without advancing the counter.
+            #
+            # ``_begin_db_counter_txn`` returns None when no Postgres
+            # connection is configured OR when the query fails — the
+            # sentinel ``last_activity_ts = -1.0`` from the legacy code is
+            # replaced by the None return; the caller falls back to the
+            # in-memory dicts (file mode / test path).
+            current_month_key = _current_month_key(now)
+            db_txn = _begin_db_counter_txn(mid, now, current_month_key)
+            if db_txn is not None:
+                # DB is the source of truth in prod. The C9 reset has
+                # already fired inside ``_begin_db_counter_txn`` if needed
+                # (the FOR UPDATE lock was held throughout), so
+                # ``db_txn.cumulative_monthly`` is the post-reset value.
+                cumulative_monthly = db_txn.cumulative_monthly
+                # If the row exists but last_activity_ts is NULL (mandate
+                # never spent), fall back to the mandate's iat — same
+                # baseline as the in-memory path.
                 last_act = (
-                    db_last_activity
-                    if db_last_activity > 0
+                    db_txn.last_activity_ts
+                    if db_txn.last_activity_ts > 0
                     else payload.get("iat", now)
                 )
-                # ``db_recent_24h`` is already filtered to ts > now-86400 by
-                # the DB query — no need to re-prune.
-                recent = db_recent_24h
+                # ``db_txn.recent_24h`` is already filtered to ts >
+                # now-86400 by the DB query inside the txn — no need to
+                # re-prune.
+                recent = db_txn.recent_24h
+                # Mirror to in-memory dicts so ops introspection + the
+                # file-mode fallback path see the same values.
                 _cumulative_monthly[mid] = cumulative_monthly
                 _cumulative_24h[mid] = list(recent)
                 _last_activity[mid] = last_act
@@ -415,6 +632,10 @@ def verify_mandate(
             #    passes); once a txn lands, _last_activity is updated.
             inactivity_days = int(payload.get("inactivity_revoke_days", 180))
             if now - last_act > inactivity_days * 86400:
+                # Release the FOR UPDATE lock on the non-VALID path — a
+                # rejected txn does not consume the monthly cap.
+                if db_txn is not None:
+                    db_txn.rollback()
                 return MandateVerdict.EXPIRED, {
                     **payload,
                     "verdict_reason": "inactivity_auto_revoke",
@@ -423,15 +644,25 @@ def verify_mandate(
             # 2. OC-201B: per-txn cap (default ₹5,000).
             max_per_txn = float(payload.get("max_per_txn_inr", 5000.0))
             if float(amount_inr) > max_per_txn:
+                if db_txn is not None:
+                    db_txn.rollback()
                 return MandateVerdict.BREACH, {
                     **payload,
                     "verdict_reason": "per_txn_cap_exceeded",
                 }
 
             # 3. OC-201B: monthly cumulative cap (default ₹15,000).
+            # C8 fix: the cap-check uses the post-FOR-UPDATE-LOCK
+            # cumulative_monthly value (read inside the txn while the
+            # row was locked). A concurrent verifier that just landed a
+            # ₹15k txn will have committed before our SELECT FOR UPDATE
+            # acquired the lock, so we'll see its committed value + trip
+            # the cap ourselves — the cap is now race-safe.
             max_per_month = float(payload.get("max_per_month_inr", 15000.0))
             projected = cumulative_monthly + float(amount_inr)
             if projected > max_per_month:
+                if db_txn is not None:
+                    db_txn.rollback()
                 return MandateVerdict.BREACH, {
                     **payload,
                     "verdict_reason": "monthly_cap_exceeded",
@@ -442,6 +673,8 @@ def verify_mandate(
             #    request carries an X-Device-Id, it must be in the list.
             allowed_devices = payload.get("device_ids", [])
             if device_id is not None and allowed_devices and device_id not in allowed_devices:
+                if db_txn is not None:
+                    db_txn.rollback()
                 return MandateVerdict.BREACH, {
                     **payload,
                     "verdict_reason": "device_id_not_allowed",
@@ -451,6 +684,8 @@ def verify_mandate(
             #    registration and validated per txn.
             expected_uid = payload.get("user_id", "")
             if user_id is not None and expected_uid and user_id != expected_uid:
+                if db_txn is not None:
+                    db_txn.rollback()
                 return MandateVerdict.BREACH, {
                     **payload,
                     "verdict_reason": "user_id_mismatch",
@@ -464,6 +699,8 @@ def verify_mandate(
             cooling_24h = float(payload.get("cooling_24h_inr", 5000.0))
             for _ts, amt in recent:
                 if amt >= cooling_24h:
+                    if db_txn is not None:
+                        db_txn.rollback()
                     return MandateVerdict.REVIEW, {
                         **payload,
                         "verdict_reason": "cooling_period_active",
@@ -480,13 +717,17 @@ def verify_mandate(
             _cumulative_monthly[mid] = new_cumulative
             _cumulative_24h.setdefault(mid, []).append((now, float(amount_inr)))
             _last_activity[mid] = now
-            _write_db_counters(
-                mid,
-                new_cumulative_monthly=new_cumulative,
-                last_activity_ts=now,
-                txn_ts=now,
-                txn_amount=float(amount_inr),
-            )
+            if db_txn is not None:
+                # C8/C9/C10 — the FOR UPDATE lock has been held since
+                # ``_begin_db_counter_txn``; this UPDATE + INSERT event +
+                # C10 90-day prune DELETE + COMMIT all run in the SAME
+                # transaction, so concurrent verifies serialize.
+                db_txn.commit_increment(
+                    new_cumulative_monthly=new_cumulative,
+                    last_activity_ts=now,
+                    txn_ts=now,
+                    txn_amount=float(amount_inr),
+                )
             return MandateVerdict.VALID, {**payload, "verdict_reason": "ok"}
 
         # --- cod_order (legacy) path ---

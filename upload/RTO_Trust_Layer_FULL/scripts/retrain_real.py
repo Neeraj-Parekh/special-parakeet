@@ -75,7 +75,13 @@ from src.features.cleaning import load_ingested_real  # noqa: E402
 from src.features.enrich import add_address_features  # noqa: E402
 from src.models.explain import global_importance  # noqa: E402
 from src.models.splitting import group_leakage, group_split  # noqa: E402
-from src.models.train import build_feature_frame, fit_model, save_model  # noqa: E402
+from src.models.train import (  # noqa: E402
+    build_feature_frame,
+    compute_priors,
+    fit_model,
+    save_model,
+    write_priors_artifact,
+)
 from src.ml.registry import current_champion, register_model  # noqa: E402
 
 # CI gate — matches `.github/workflows/mlops.yml` Stage 3 (Fail if PR-AUC
@@ -268,6 +274,20 @@ def main() -> int:
     save_model(model, args.model_out)
     print(f"[train] model saved → {args.model_out}")
 
+    # 5b. *** E14 fix — compute Bahnsen Eq.(6) priors BEFORE register_model. ***
+    #     No class balancing in this path → p_und = p_orig (identity
+    #     calibration; the live path's fast-path check correctly skips
+    #     calibration). If a future revision adds SMOTE / under-sampling,
+    #     pass the post-balancing labels via the y_und arg of compute_priors.
+    priors = compute_priors(y_tr)
+    priors_path = write_priors_artifact(priors, args.model_out)
+    print(f"[priors] written → {priors_path}")
+    print(
+        f"[priors] p_orig={priors['p_orig']:.6f} p_und={priors['p_und']:.6f} "
+        f"n_train={priors['n_train']} n_pos_train={priors['n_pos_train']} "
+        f"calibration_method={priors['calibration_method']}"
+    )
+
     # 6. Evaluate — PR-AUC, ROC-AUC, F1, precision/recall @ F1-best threshold.
     proba = model.predict_proba(X_te)[:, 1]
     pr_auc = float(average_precision_score(y_te, proba))
@@ -321,15 +341,32 @@ def main() -> int:
                 "base_return_rate": round(base_rate, 4),
             },
             champion=True,
+            # *** E14 fix — pass the priors blob so the live decision path's
+            # calibrate_probabilities([proba], p_orig, p_und) at routes.py:787
+            # + 2464 has real numbers to resample against. Without this, the
+            # entire Bahnsen Eq.(6) cost-optimizer math is a no-op at
+            # inference. ***
+            priors=priors,
         )
         print(
             f"[registry] NEW champion registered: {entry.get('version', version)} "
             f"(demoted prior champion {champ_version})"
         )
+        print(
+            f"[registry] Bahnsen Eq.(6) priors stored — "
+            f"p_orig={priors['p_orig']:.6f} p_und={priors['p_und']:.6f} "
+            f"(calibration "
+            f"{'IDENTITY — no resampling was applied' if priors['p_orig'] == priors['p_und'] else 'NON-TRIVIAL — resampling was applied'})."
+        )
     else:
         print(
             f"[registry] NOT promoted — new PR-AUC {pr_auc:.4f} <= champion's "
             f"{champ_pr_auc:.4f}. Use --promote-always to force."
+        )
+        print(
+            "[registry] NOTE: priors.json was still written next to the model "
+            "artifact (you can backfill the registry via set_priors() if you "
+            "later --promote-always)."
         )
 
     # 9. Write the evaluation report (same shape as out/metrics.json so the
@@ -357,6 +394,8 @@ def main() -> int:
             "previous_pr_auc": champ_pr_auc,
             "previous_version": champ_version,
         },
+        "priors": priors,
+        "priors_artifact_path": str(Path(str(args.model_out) + ".priors.json")),
         "trained_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     metrics_path = Path(args.metrics_out)
@@ -387,7 +426,9 @@ def main() -> int:
     print(
         f"Retrained on {n_rows:,} real orders. "
         f"PR-AUC: {pr_auc:.2f} (was {champ_pr_auc:.2f} on synthetic). "
-        f"Champion: {version if promote else champ_version}."
+        f"Champion: {version if promote else champ_version}. "
+        f"p_orig={priors['p_orig']:.6f} p_und={priors['p_und']:.6f} "
+        f"(calibration {'IDENTITY' if priors['p_orig'] == priors['p_und'] else 'NON-TRIVIAL'})."
     )
     print("=" * 72 + "\n")
 

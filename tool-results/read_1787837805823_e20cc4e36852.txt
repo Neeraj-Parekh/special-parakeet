@@ -1,0 +1,598 @@
+     1→"""Signed spending mandates: the only way an agent may transact within bounds.
+     2→
+     3→Doctrine: agents hold ZERO ambient authority. A merchant backend (admin scope) issues
+     4→a short-lived, bounded mandate; agents present it; the server enforces bounds and
+     5→escalates any breach deterministically. Agents cannot mint, extend, or widen mandates.
+     6→
+     7→Day 1 Track D (V3 §13 — mandate action-class expansion) adds UPI Circle / delegated-
+     8→payments mandates per NPCI OC-201B (8 Oct 2025). UPI Circle mandates are bounded by
+     9→the circular's hard caps: ₹5,000/txn, ₹15,000/month, ₹5,000 24-hour cooling, 5-device
+    10→cap, 6-month inactivity auto-revoke, BH purpose code tagging, per-txn device_id +
+    11→user_id validation by the issuer (this server). Source papers:
+    12→
+    13→- "Addendum to NPCI/UPI/2024-25/OC 201 — Introduction of IoT devices & software on
+    14→  UPI Circle" (NPCI/UPI/OC-201B/2025-26, 8 Oct 2025)
+    15→- Walia, Gautam, Shrivastava (Khaitan & Co), Lexology, 21 Nov 2025 — interpretive
+    16→  analysis of OC-201B
+    17→- "SoK: Security of Autonomous LLM Agents in Agentic Commerce" (Mao 2026) — D2
+    18→  transaction-authorization dimension: design mandates as scoped, task-bound,
+    19→  attenuating credentials rather than standing broad authority.
+    20→
+    21→Backward-compat: ``cod_order`` mandates (the original HMAC system agent 1-b built)
+    22→continue to work with the same 3-argument signature. UPI Circle mandates opt in via
+    23→``mandate_type="upi_circle_delegation"`` and the new keyword-only fields.
+    24→
+    25→Track P (Task 11-a) — the UPI Circle cumulative counters (₹15,000/month cap,
+    26→₹5,000 24h cooling, 6-month inactivity auto-revoke) are now PERSISTED in
+    27→Postgres via the ``mandate_counters`` + ``mandate_counter_events`` tables (see
+    28→``alembic/versions/003_mandate_counters.py``). The caps survive process restarts,
+    29→multi-worker deployments, and redeploy events. When ``DATABASE_URL`` is unset
+    30→(file-mode / test path), the in-memory dicts remain the source of truth so the
+    31→22 existing tests in ``tests/test_mandates.py`` continue to pass unchanged.
+    32→"""
+    33→from __future__ import annotations
+    34→
+    35→import hashlib
+    36→import hmac
+    37→import json
+    38→import os
+    39→import threading
+    40→import time
+    41→from base64 import urlsafe_b64decode, urlsafe_b64encode
+    42→from typing import Any
+    43→
+    44→
+    45→# ---------------------------------------------------------------------------
+    46→# In-memory UPI Circle cumulative counters — file-mode fallback (Track P).
+    47→# Keyed by mandate ``sub`` (the salted customer_ref digest prefix that uniquely
+    48→# identifies a mandate). These track:
+    49→#   * monthly cumulative spend per mandate (₹15,000 cap per OC-201B)
+    50→#   * 24-hour rolling txn log per mandate (₹5,000 cooling per OC-201B)
+    51→#   * last-activity timestamp per mandate (6-month auto-revoke per OC-201B)
+    52→#
+    53→# Track P (Task 11-a) — when ``DATABASE_URL`` is set, ``verify_mandate()`` reads
+    54→# + writes the persisted ``mandate_counters`` / ``mandate_counter_events`` rows
+    55→# instead of these dicts; the dicts remain the source of truth only for the
+    56→# file-mode / test path (no Postgres available). ``reset_upi_counters()`` wipes
+    57→# BOTH surfaces so test isolation holds regardless of which mode the suite runs in.
+    58→# ---------------------------------------------------------------------------
+    59→_cumulative_monthly: dict[str, float] = {}
+    60→_cumulative_24h: dict[str, list[tuple[float, float]]] = {}
+    61→_last_activity: dict[str, float] = {}
+    62→
+    63→
+    64→# ---------------------------------------------------------------------------
+    65→# Module-level lazy Postgres connection for the mandate counters path (Track P).
+    66→# Pattern mirrors ``src/audit/logger.py``: open ONE persistent psycopg connection
+    67→# per process (the mandate verify path is not the write-hot path; a pool would
+    68→# add latency for no benefit at this scale). Lazily constructed on first call to
+    69→# ``_get_counters_conn()`` so the import is side-effect-free — file-mode tests
+    70→# that never set ``DATABASE_URL`` never touch psycopg.
+    71→# ---------------------------------------------------------------------------
+    72→_counters_conn_lock = threading.Lock()
+    73→_counters_conn: Any = None  # psycopg.Connection | None
+    74→
+    75→
+    76→def _get_counters_conn() -> Any:
+    77→    """Return a lazy shared psycopg connection for the mandate counters path.
+    78→
+    79→    Returns ``None`` when:
+    80→      * ``DATABASE_URL`` is unset (file-mode / test path), or
+    81→      * it does not point at a Postgres DSN (defensive — same logic as
+    82→        ``src.config.Settings.is_postgres``), or
+    83→      * psycopg is not importable (shouldn't happen — requirements.txt pins it;
+    84→        the ``try/except ImportError`` is a defensive guard for stripped test
+    85→        envs where the package was yanked).
+    86→
+    87→    The connection is opened once and cached on the module; subsequent calls
+    88→    return the cached connection. ``reset_upi_counters()`` does NOT close it —
+    89→    connection lifecycle is the process's responsibility, not the test's. The
+    90→    cache is keyed off ``DATABASE_URL`` at first-read time; if the env var
+    91→    changes mid-process (tests that mutate it), call ``_reset_counters_conn()``
+    92→    to clear the cache.
+    93→    """
+    94→    global _counters_conn
+    95→    if _counters_conn is not None:
+    96→        return _counters_conn
+    97→    db_url = os.environ.get("DATABASE_URL", "").strip()
+    98→    if not db_url or not db_url.startswith(
+    99→        ("postgresql://", "postgres://", "postgresql+psycopg://")
+   100→    ):
+   101→        return None
+   102→    try:
+   103→        import psycopg
+   104→    except ImportError:  # pragma: no cover — defensive; psycopg is in requirements
+   105→        return None
+   106→    with _counters_conn_lock:
+   107→        if _counters_conn is None:
+   108→            _counters_conn = psycopg.connect(db_url, autocommit=False)
+   109→        return _counters_conn
+   110→
+   111→
+   112→def _reset_counters_conn() -> None:
+   113→    """Test helper — drop the cached counters connection.
+   114→
+   115→    Call between tests that mutate ``DATABASE_URL`` so the next
+   116→    ``_get_counters_conn()`` call re-reads the env var and reopens. Not part
+   117→    of the public API; only ``reset_upi_counters()`` should call this.
+   118→    """
+   119→    global _counters_conn
+   120→    if _counters_conn is not None:
+   121→        try:
+   122→            _counters_conn.close()
+   123→        except Exception:
+   124→            pass
+   125→    _counters_conn = None
+   126→
+   127→
+   128→def _read_db_counters(mandate_sub: str, now: float) -> tuple[float, float, list[tuple[float, float]]]:
+   129→    """Read persisted UPI Circle counters for a mandate from Postgres.
+   130→
+   131→    Returns ``(cumulative_monthly, last_activity_ts, recent_24h_events)`` where:
+   132→      * ``cumulative_monthly`` is the running monthly cap counter (0.0 if the
+   133→        mandate has no row yet — fresh mandate).
+   134→      * ``last_activity_ts`` is the unix epoch of the last txn (or ``-inf`` if
+   135→        no row — the caller falls back to the mandate's ``iat``).
+   136→      * ``recent_24h_events`` is the rolling 24h txn list ``[(ts, amount), ...]``
+   137→        reconstructed from ``mandate_counter_events`` rows with ``ts > now-86400``.
+   138→
+   139→    On ANY DB error (table missing, connection lost, partial-failure mid-query),
+   140→    this returns ``(0.0, -1.0, [])`` and the caller falls through to the in-memory
+   141→    dicts. NEVER raise — the verify path must degrade to the in-memory fallback
+   142→    rather than fail the request.
+   143→    """
+   144→    sentinel = (0.0, -1.0, [])
+   145→    conn = _get_counters_conn()
+   146→    if conn is None:
+   147→        return sentinel
+   148→    try:
+   149→        with conn.cursor() as cur:
+   150→            cur.execute(
+   151→                "SELECT cumulative_monthly, last_activity_ts "
+   152→                "FROM mandate_counters WHERE mandate_sub = %s",
+   153→                (mandate_sub,),
+   154→            )
+   155→            row = cur.fetchone()
+   156→            if row is not None:
+   157→                cumulative_monthly = float(row[0] or 0.0)
+   158→                last_activity_ts = float(row[1]) if row[1] is not None else -1.0
+   159→            else:
+   160→                cumulative_monthly = 0.0
+   161→                last_activity_ts = -1.0
+   162→            # Rolling 24h window — filter on the (mandate_sub, ts) index.
+   163→            cur.execute(
+   164→                "SELECT ts, amount_inr FROM mandate_counter_events "
+   165→                "WHERE mandate_sub = %s AND ts > %s ORDER BY ts ASC",
+   166→                (mandate_sub, now - 86400),
+   167→            )
+   168→            recent_24h = [(float(r[0]), float(r[1])) for r in cur.fetchall()]
+   169→        return cumulative_monthly, last_activity_ts, recent_24h
+   170→    except Exception:
+   171→        # Degrade to in-memory fallback. The verify path will use the dicts;
+   172→        # the cap is enforced within the process (real but not cross-restart).
+   173→        try:
+   174→            conn.rollback()
+   175→        except Exception:
+   176→            pass
+   177→        return sentinel
+   178→
+   179→
+   180→def _write_db_counters(
+   181→    mandate_sub: str,
+   182→    *,
+   183→    new_cumulative_monthly: float,
+   184→    last_activity_ts: float,
+   185→    txn_ts: float,
+   186→    txn_amount: float,
+   187→) -> None:
+   188→    """Persist the updated UPI Circle counters + append the 24h event to Postgres.
+   189→
+   190→    UPSERTs the per-mandate ``mandate_counters`` row (single row per ``sub``)
+   191→    and appends a row to ``mandate_counter_events`` for the 24h rolling window.
+   192→    Both writes are in the same transaction so the cumulative counter + the
+   193→    cooling-window event log advance atomically (a crash mid-write leaves the
+   194→    prior state intact, not a half-updated counter).
+   195→
+   196→    On ANY DB error this swallows the exception and rolls back — the verify
+   197→    path has ALREADY updated the in-memory dicts by the time this is called,
+   198→    so the request succeeds even if the persistence layer fails. A future
+   199→    improvement is to surface the failure to the audit logger so ops sees it
+   200→    (the silent-fall-back is the safe-but-debuggable trade-off).
+   201→    """
+   202→    conn = _get_counters_conn()
+   203→    if conn is None:
+   204→        return
+   205→    try:
+   206→        with conn.cursor() as cur:
+   207→            cur.execute(
+   208→                "INSERT INTO mandate_counters "
+   209→                "(mandate_sub, cumulative_monthly, last_activity_ts, updated_at) "
+   210→                "VALUES (%s, %s, %s, NOW()) "
+   211→                "ON CONFLICT (mandate_sub) DO UPDATE SET "
+   212→                "cumulative_monthly = EXCLUDED.cumulative_monthly, "
+   213→                "last_activity_ts = EXCLUDED.last_activity_ts, "
+   214→                "updated_at = NOW()",
+   215→                (mandate_sub, new_cumulative_monthly, last_activity_ts),
+   216→            )
+   217→            cur.execute(
+   218→                "INSERT INTO mandate_counter_events "
+   219→                "(mandate_sub, ts, amount_inr, created_at) "
+   220→                "VALUES (%s, %s, %s, NOW())",
+   221→                (mandate_sub, txn_ts, txn_amount),
+   222→            )
+   223→        conn.commit()
+   224→    except Exception:
+   225→        try:
+   226→            conn.rollback()
+   227→        except Exception:
+   228→            pass
+   229→
+   230→
+   231→def _secret() -> bytes:
+   232→    return os.environ.get("RTO_MANDATE_SECRET", "dev-only-secret").encode()
+   233→
+   234→
+   235→def self_salt() -> str:
+   236→    return os.environ.get("RTO_AUDIT_SALT", "local-demo-salt")
+   237→
+   238→
+   239→def issue_mandate(
+   240→    customer_ref: str,
+   241→    max_amount_inr: float,
+   242→    ttl_seconds: int,
+   243→    scope: str = "cod_order",
+   244→    *,
+   245→    mandate_type: str | None = None,
+   246→    device_ids: list[str] | None = None,
+   247→    user_id: str | None = None,
+   248→    bh_purpose_code: str | None = None,
+   249→    max_per_txn_inr: float | None = None,
+   250→    max_per_month_inr: float | None = None,
+   251→    cooling_24h_inr: float | None = None,
+   252→    inactivity_revoke_days: int | None = None,
+   253→) -> str:
+   254→    """Mint a bounded, HMAC-signed mandate.
+   255→
+   256→    Backward-compat: 3-positional-arg form (``customer_ref, max_amount_inr,
+   257→    ttl_seconds``) still issues a ``cod_order`` mandate — the original system
+   258→    agent 1-b built. No existing caller breaks.
+   259→
+   260→    New keyword-only fields opt in to the UPI Circle / delegated-payments mandate
+   261→    type (NPCI OC-201B). When ``mandate_type="upi_circle_delegation"`` (or
+   262→    ``scope="upi_circle"`` for short), the payload carries the circular's hard
+   263→    caps + the device/user identity chain the issuer must validate per txn.
+   264→    """
+   265→    payload: dict[str, Any] = {
+   266→        "sub": hashlib.sha256(
+   267→            f"{customer_ref}:{self_salt()}".encode()
+   268→        ).hexdigest()[:16],
+   269→        "scope": scope,
+   270→        "max_amount_inr": round(float(max_amount_inr), 2),
+   271→        "exp": int(time.time()) + int(ttl_seconds),
+   272→        "iat": int(time.time()),
+   273→    }
+   274→
+   275→    # Normalize mandate_type: if not provided, infer from scope (back-compat).
+   276→    if mandate_type is None:
+   277→        mandate_type = "upi_circle_delegation" if scope == "upi_circle" else "cod_order"
+   278→    payload["mandate_type"] = mandate_type
+   279→
+   280→    if mandate_type == "upi_circle_delegation":
+   281→        # OC-201B: max 5 IoT devices/software per user. Reject at mint time
+   282→        # rather than at verify time — fail-loud doctrine (V3 §4 principle 3).
+   283→        if device_ids is None:
+   284→            device_ids = []
+   285→        if len(device_ids) > 5:
+   286→            raise ValueError("OC-201B: max 5 devices per delegation")
+   287→        payload["device_ids"] = list(device_ids)
+   288→        payload["user_id"] = user_id or ""
+   289→        # BH purpose code: "90" = commercial payment per NPCI BH list. The
+   290→        # ``bh_purpose_code_reconciliation`` skill surfaces this for raw-file
+   291→        # audit trail tagging (Track E Day 2 will persist + emit the
+   292→        # secondary-details raw file per OC-201B §3.8).
+   293→        payload["bh_purpose_code"] = bh_purpose_code or "90"
+   294→        payload["max_per_txn_inr"] = float(
+   295→            max_per_txn_inr if max_per_txn_inr is not None else 5000.0
+   296→        )
+   297→        payload["max_per_month_inr"] = float(
+   298→            max_per_month_inr if max_per_month_inr is not None else 15000.0
+   299→        )
+   300→        payload["cooling_24h_inr"] = float(
+   301→            cooling_24h_inr if cooling_24h_inr is not None else 5000.0
+   302→        )
+   303→        payload["inactivity_revoke_days"] = int(
+   304→            inactivity_revoke_days if inactivity_revoke_days is not None else 180
+   305→        )
+   306→
+   307→    body = urlsafe_b64encode(
+   308→        json.dumps(payload, sort_keys=True).encode()
+   309→    ).decode().rstrip("=")
+   310→    sig = hmac.new(_secret(), body.encode(), hashlib.sha256).hexdigest()
+   311→    return f"{body}.{sig}"
+   312→
+   313→
+   314→class MandateVerdict:
+   315→    """Outcome categories the mandate verifier can return.
+   316→
+   317→    Backward-compat: VALID / TAMPERED / EXPIRED / BREACH are the original four
+   318→    (agent 1-b). REVIEW is new (Day 1 Track D) — UPI Circle 24h cooling period
+   319→    requires human approval but is not a hard REJECT (the txn is allowed in
+   320→    principle, just gated). REVIEW routes to the case queue like other REVIEW
+   321→    decisions; the difference is the audit carries ``verdict_reason=
+   322→    "cooling_period_active"`` for compliance traceability.
+   323→    """
+   324→
+   325→    VALID = "valid"
+   326→    TAMPERED = "tampered"
+   327→    EXPIRED = "expired"
+   328→    BREACH = "breach"
+   329→    REVIEW = "review"
+   330→
+   331→
+   332→def verify_mandate(
+   333→    token: str | None,
+   334→    amount_inr: float,
+   335→    *,
+   336→    device_id: str | None = None,
+   337→    user_id: str | None = None,
+   338→) -> tuple[str, dict]:
+   339→    """Verify a mandate token + the per-txn request context.
+   340→
+   341→    Returns ``(verdict, payload)`` where ``payload`` is the decoded mandate
+   342→    body (with the new ``verdict_reason`` key explaining non-VALID outcomes)
+   343→    or a minimal ``{"verdict_reason": ...}`` dict for TAMPERED tokens.
+   344→
+   345→    Backward-compat: the original 2-arg signature ``verify_mandate(token,
+   346→    amount_inr)`` still works for ``cod_order`` mandates — ``device_id`` and
+   347→    ``user_id`` default to ``None`` and are simply not consulted.
+   348→
+   349→    Enforcement precedence (consumer = ``src/api/routes.py``):
+   350→      * ``TAMPERED`` with header present → REJECT (mandate_invalid)
+   351→      * ``EXPIRED`` with header present   → REJECT (mandate_invalid) — covers
+   352→        both TTL expiry and OC-201B 6-month inactivity auto-revoke
+   353→      * ``BREACH``                          → REJECT (mandate_breach) — covers
+   354→        per-txn cap, monthly cap, device_id_not_allowed, user_id_mismatch
+   355→      * ``REVIEW``                          → REVIEW (mandate_review_required)
+   356→        — currently only the OC-201B 24h cooling-period gate
+   357→      * ``VALID``                           → fall through to the cost-optimizer
+   358→        decision path (Track C's optimal_decision / Bahnsen BMR)
+   359→    """
+   360→    empty: dict = {}
+   361→    if not token:
+   362→        return MandateVerdict.TAMPERED, {"verdict_reason": "missing_mandate"}
+   363→    try:
+   364→        body, sig = token.rsplit(".", 1)
+   365→        expected = hmac.new(_secret(), body.encode(), hashlib.sha256).hexdigest()
+   366→        if not hmac.compare_digest(sig, expected):
+   367→            return MandateVerdict.TAMPERED, {"verdict_reason": "hmac_signature_mismatch"}
+   368→        pad = "=" * (-len(body) % 4)
+   369→        payload = json.loads(urlsafe_b64decode(body + pad))
+   370→
+   371→        if payload.get("exp", 0) < time.time():
+   372→            return MandateVerdict.EXPIRED, {**payload, "verdict_reason": "expired_ttl"}
+   373→
+   374→        mtype = payload.get("mandate_type", "cod_order")
+   375→        # Use ``sub`` (the salted customer_ref digest) as the per-mandate key
+   376→        # for cumulative counters. Stable across verifies for the same mandate.
+   377→        mid = payload.get("sub", "")
+   378→        now = time.time()
+   379→
+   380→        if mtype == "upi_circle_delegation":
+   381→            # --- Track P (Task 11-a) — read persisted counters from DB when  ---
+   382→            # --- available; fall back to in-memory dicts in file mode.       ---
+   383→            # ``_read_db_counters`` returns (0.0, -1.0, []) sentinel when no
+   384→            # Postgres connection is configured OR when the query fails — the
+   385→            # sentinel ``last_activity_ts = -1.0`` is the "no row / use iat"
+   386→            # signal. We use the DB values when ``db_last_activity >= 0``,
+   387→            # otherwise the in-memory dicts (file mode / test path).
+   388→            db_cumulative, db_last_activity, db_recent_24h = _read_db_counters(mid, now)
+   389→            if db_last_activity >= 0:
+   390→                cumulative_monthly = db_cumulative
+   391→                # DB is the source of truth in prod. If the row exists but
+   392→                # last_activity_ts is NULL (mandate never spent), fall back to
+   393→                # the mandate's iat — same baseline as the in-memory path.
+   394→                last_act = (
+   395→                    db_last_activity
+   396→                    if db_last_activity > 0
+   397→                    else payload.get("iat", now)
+   398→                )
+   399→                # ``db_recent_24h`` is already filtered to ts > now-86400 by
+   400→                # the DB query — no need to re-prune.
+   401→                recent = db_recent_24h
+   402→                _cumulative_monthly[mid] = cumulative_monthly
+   403→                _cumulative_24h[mid] = list(recent)
+   404→                _last_activity[mid] = last_act
+   405→            else:
+   406→                cumulative_monthly = _cumulative_monthly.get(mid, 0.0)
+   407→                last_act = _last_activity.get(mid, payload.get("iat", now))
+   408→                recent = _cumulative_24h.get(mid, [])
+   409→                # Prune txns older than 24h (rolling window).
+   410→                recent = [(ts, amt) for ts, amt in recent if now - ts < 86400]
+   411→                _cumulative_24h[mid] = recent
+   412→
+   413→            # 1. OC-201B §3.8: 6-month inactivity auto-revoke. Baseline last
+   414→            #    activity is the mandate's iat (so a freshly-issued mandate
+   415→            #    passes); once a txn lands, _last_activity is updated.
+   416→            inactivity_days = int(payload.get("inactivity_revoke_days", 180))
+   417→            if now - last_act > inactivity_days * 86400:
+   418→                return MandateVerdict.EXPIRED, {
+   419→                    **payload,
+   420→                    "verdict_reason": "inactivity_auto_revoke",
+   421→                }
+   422→
+   423→            # 2. OC-201B: per-txn cap (default ₹5,000).
+   424→            max_per_txn = float(payload.get("max_per_txn_inr", 5000.0))
+   425→            if float(amount_inr) > max_per_txn:
+   426→                return MandateVerdict.BREACH, {
+   427→                    **payload,
+   428→                    "verdict_reason": "per_txn_cap_exceeded",
+   429→                }
+   430→
+   431→            # 3. OC-201B: monthly cumulative cap (default ₹15,000).
+   432→            max_per_month = float(payload.get("max_per_month_inr", 15000.0))
+   433→            projected = cumulative_monthly + float(amount_inr)
+   434→            if projected > max_per_month:
+   435→                return MandateVerdict.BREACH, {
+   436→                    **payload,
+   437→                    "verdict_reason": "monthly_cap_exceeded",
+   438→                }
+   439→
+   440→            # 4. OC-201B §3.7 (Issuer Bank duty): validate device_id before
+   441→            #    debiting. If the mandate enumerates device_ids and the
+   442→            #    request carries an X-Device-Id, it must be in the list.
+   443→            allowed_devices = payload.get("device_ids", [])
+   444→            if device_id is not None and allowed_devices and device_id not in allowed_devices:
+   445→                return MandateVerdict.BREACH, {
+   446→                    **payload,
+   447→                    "verdict_reason": "device_id_not_allowed",
+   448→                }
+   449→
+   450→            # 5. OC-201B §3.3 (Secondary App/PSP duty): user_id captured at
+   451→            #    registration and validated per txn.
+   452→            expected_uid = payload.get("user_id", "")
+   453→            if user_id is not None and expected_uid and user_id != expected_uid:
+   454→                return MandateVerdict.BREACH, {
+   455→                    **payload,
+   456→                    "verdict_reason": "user_id_mismatch",
+   457→                }
+   458→
+   459→            # 6. OC-201B: 24h cooling period. If a prior txn in the last 24h
+   460→            #    was >= cooling_24h_inr (default ₹5,000), require human
+   461→            #    approval — REVIEW, not REJECT. The txn is permitted in
+   462→            #    principle; the cooling gate is a fraud-control circuit
+   463→            #    breaker, not a hard cap.
+   464→            cooling_24h = float(payload.get("cooling_24h_inr", 5000.0))
+   465→            for _ts, amt in recent:
+   466→                if amt >= cooling_24h:
+   467→                    return MandateVerdict.REVIEW, {
+   468→                        **payload,
+   469→                        "verdict_reason": "cooling_period_active",
+   470→                    }
+   471→
+   472→            # All checks passed — record the txn for cumulative tracking.
+   473→            # Update BOTH the in-memory dicts (cheap, file-mode source of
+   474→            # truth + shadow for ops introspection) AND the DB counters
+   475→            # (cross-restart persistence, Track P). On a VALID verdict only —
+   476→            # BREACH/REVIEW/EXPIRED do not advance the counters (a rejected
+   477→            # txn does not consume the monthly cap; a REVIEW txn does not
+   478→            # re-trigger the cooling window).
+   479→            new_cumulative = cumulative_monthly + float(amount_inr)
+   480→            _cumulative_monthly[mid] = new_cumulative
+   481→            _cumulative_24h.setdefault(mid, []).append((now, float(amount_inr)))
+   482→            _last_activity[mid] = now
+   483→            _write_db_counters(
+   484→                mid,
+   485→                new_cumulative_monthly=new_cumulative,
+   486→                last_activity_ts=now,
+   487→                txn_ts=now,
+   488→                txn_amount=float(amount_inr),
+   489→            )
+   490→            return MandateVerdict.VALID, {**payload, "verdict_reason": "ok"}
+   491→
+   492→        # --- cod_order (legacy) path ---
+   493→        if float(amount_inr) > float(payload.get("max_amount_inr", 0)):
+   494→            return MandateVerdict.BREACH, {**payload, "verdict_reason": "amount_exceeds_max"}
+   495→        return MandateVerdict.VALID, {**payload, "verdict_reason": "ok"}
+   496→    except Exception:
+   497→        return MandateVerdict.TAMPERED, {"verdict_reason": "decode_error"}
+   498→
+   499→
+   500→def decode_mandate(token: str) -> dict:
+   501→    """Decode a mandate token's body without verifying the HMAC.
+   502→
+   503→    Convenience helper for tests + dashboards that want to *inspect* a
+   504→    mandate's payload (e.g. read the ``mandate_type``, ``bh_purpose_code``,
+   505→    or ``device_ids``) without going through ``verify_mandate``'s
+   506→    enforcement path. **Never** use this for authorization decisions —
+   507→    always go through ``verify_mandate`` for those.
+   508→    """
+   509→    body = token.rsplit(".", 1)[0]
+   510→    pad = "=" * (-len(body) % 4)
+   511→    return json.loads(urlsafe_b64decode(body + pad))
+   512→
+   513→
+   514→def reset_upi_counters() -> None:
+   515→    """Test helper — wipe the UPI Circle cumulative counters.
+   516→
+   517→    Wipes BOTH surfaces so test isolation holds regardless of mode:
+   518→      * in-memory dicts (file-mode / test path) — always cleared.
+   519→      * Postgres ``mandate_counters`` + ``mandate_counter_events`` tables
+   520→        (Track P, prod path) — TRUNCATED when ``DATABASE_URL`` is set.
+   521→      * cached module-level psycopg connection — closed + cleared so the
+   522→        next ``_get_counters_conn()`` call re-reads ``DATABASE_URL`` (handles
+   523→        tests that flip the env var between cases).
+   524→
+   525→    Track E Day 2 will replace this with a Postgres truncate + transactional
+   526→    rollback; this implementation already does the truncate so a future Track
+   527→    E refactor just removes the in-memory fallback.
+   528→    """
+   529→    _cumulative_monthly.clear()
+   530→    _cumulative_24h.clear()
+   531→    _last_activity.clear()
+   532→    # Close + drop the cached connection so DATABASE_URL changes between
+   533→    # tests are picked up. Re-opening is cheap (lazy on next verify call).
+   534→    _reset_counters_conn()
+   535→    conn = _get_counters_conn()
+   536→    if conn is None:
+   537→        return
+   538→    try:
+   539→        with conn.cursor() as cur:
+   540→            # Events first (no FK to counters, but order is still safer).
+   541→            cur.execute("TRUNCATE TABLE mandate_counter_events")
+   542→            cur.execute("DELETE FROM mandate_counters")
+   543→        conn.commit()
+   544→    except Exception:
+   545→        # The tables may not exist (migration not run yet — e.g. CI without
+   546→        # DATABASE_URL fixture). Silently fall through; the in-memory dicts
+   547→        # are the test's source of truth in that case.
+   548→        try:
+   549→            conn.rollback()
+   550→        except Exception:
+   551→            pass
+   552→
+   553→
+   554→def simulate_inactivity(token: str, days: int) -> None:
+   555→    """Test helper — backdate the per-mandate ``_last_activity`` by ``days``.
+   556→
+   557→    Used to drive the OC-201B 6-month inactivity auto-revoke path without
+   558→    having to actually sleep 180 days. Mutates module state for the mandate
+   559→    identified by the token's ``sub``. No-op if the token is invalid.
+   560→
+   561→    Track P — also persists the backdated timestamp to the
+   562→    ``mandate_counters`` row so the auto-revoke check fires in Postgres mode
+   563→    too (the DB row is the source of truth there; in-memory mutation alone
+   564→    would be invisible to the next ``verify_mandate`` call).
+   565→    """
+   566→    try:
+   567→        payload = decode_mandate(token)
+   568→    except Exception:
+   569→        return
+   570→    mid = payload.get("sub", "")
+   571→    if not mid:
+   572→        return
+   573→    backdated_ts = time.time() - (int(days) * 86400)
+   574→    _last_activity[mid] = backdated_ts
+   575→    # Persist to the mandate_counters row so the inactivity check fires in
+   576→    # Postgres mode. UPSERT — the mandate may not have a row yet (fresh
+   577→    # mandate with no prior txn).
+   578→    conn = _get_counters_conn()
+   579→    if conn is None:
+   580→        return
+   581→    try:
+   582→        with conn.cursor() as cur:
+   583→            cur.execute(
+   584→                "INSERT INTO mandate_counters "
+   585→                "(mandate_sub, cumulative_monthly, last_activity_ts, updated_at) "
+   586→                "VALUES (%s, 0, %s, NOW()) "
+   587→                "ON CONFLICT (mandate_sub) DO UPDATE SET "
+   588→                "last_activity_ts = EXCLUDED.last_activity_ts, "
+   589→                "updated_at = NOW()",
+   590→                (mid, backdated_ts),
+   591→            )
+   592→        conn.commit()
+   593→    except Exception:
+   594→        try:
+   595→            conn.rollback()
+   596→        except Exception:
+   597→            pass
+   598→

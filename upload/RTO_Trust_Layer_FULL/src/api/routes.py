@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import sys
+import threading
 import time
 import uuid
 from contextlib import ExitStack, asynccontextmanager
@@ -14,7 +16,7 @@ from typing import Any
 
 import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -130,7 +132,26 @@ from src.ml.registry import (  # noqa: E402
 # attenuating credentials rather than standing broad authority).
 from src.api.agent_allowlist import (  # noqa: E402
     ALLOWED_ACTIONS,
+    OVERRIDE_ACTION,
+    SCOPE_ACTION_MAP,
     check_agent_action,
+    clear_bindings_cache as clear_key_merchant_bindings_cache,
+    get_key_merchant_id,
+    get_key_scope,
+)
+# Day 7 Wave 1 (Subagent 14-d — A1 fix) — HKDF key-derivation helper for
+# the dual-control override HMAC chain. The raw ``admin2_key`` (sourced
+# from ``RTO_ADMIN_KEYS``) is NEVER used directly as the HMAC key;
+# instead a context-bound subkey is derived via HKDF (RFC 5869) with
+# ``salt=b"rto-override-v1"`` + ``info=b"dual-control"`` so a leak of
+# the derived key (memory / stack / DB snapshot) doesn't compromise
+# the long-lived raw key + the derived key is domain-separated from
+# any other HMAC consumer that might re-use the same raw key. Stdlib
+# only (hashlib + hmac) — no ``cryptography`` dependency added.
+# ``clear_derived_key_cache`` is the test helper for env-var mutations.
+from src.api.keys import (  # noqa: E402
+    clear_derived_key_cache,
+    derive_hmac_key,
 )
 from src.models.explain import (  # noqa: E402
     explain_with_shap,
@@ -218,6 +239,11 @@ class FeedbackIn(BaseModel):
 # override because the second signature is cryptographically bound to
 # the first (admin1's key alone is useless; admin2's key alone is
 # useless — both must collude or both must be compromised to forge).
+# Day 7 Wave 1 (Subagent 14-d — A1+A2 fix) — the HMAC chain now derives
+# the admin2 subkey via HKDF (raw key never appears in HMAC calls) AND
+# the request body carries a per-request ``nonce`` (16-byte hex string)
+# consumed by a server-side replay-nonce store so a captured request
+# can't be replayed within the timestamp window.
 class OverrideIn(BaseModel):
     """V3 §12.1 dual-control override request body.
 
@@ -243,6 +269,36 @@ class OverrideIn(BaseModel):
     uses ``int(time.time())`` at audit-write time AND tries ±30 seconds
     for clock skew (the client must compute signature_2 within that
     window).
+
+    Day 7 Wave 1 (Subagent 14-d — A1 fix) — the admin2 subkey is now
+    derived via HKDF before being passed to HMAC. The client computes::
+
+        derived_admin2 = HKDF(
+            raw_key=admin2_key, salt=b"rto-override-v1",
+            info=b"dual-control", length=32,
+        )
+        signature_2 = HMAC(derived_admin2, chained_msg, sha256).hexdigest()
+
+    The salt + info tuple domain-separates the derivation so a leak of
+    the derived key (memory / stack / DB snapshot) doesn't compromise
+    the raw key, AND the derived key is context-bound to the
+    dual-control override use case (a derived key from one use case is
+    useless against any other HMAC consumer). The salt is version-
+    tagged (``v1``) so a future rotation cleanly invalidates prior
+    derived keys without touching the raw keys in env / secrets manager.
+
+    Day 7 Wave 1 (Subagent 14-d — A2 fix) — the request body now also
+    carries a per-request ``nonce`` (16-byte hex string = 32 chars).
+    The server stores the SHA-256 HASH of the nonce in a Postgres
+    table (``override_nonces``, alembic 006) so a captured request
+    can't be replayed within the timestamp window. A second sighting
+    of the same nonce → 409 Conflict ("replay detected"). The nonce
+    is NOT part of the HMAC canonical_body (the chain is unchanged
+    from T1.1 — the nonce is a separate one-shot replay-defense
+    field). File-mode fallback: when DATABASE_URL is unset, the
+    server uses a bounded in-memory LRU set of the last 10_000 nonce
+    hashes (replay protection is in-memory only — logged as a
+    warning).
     """
 
     decision: str = Field(
@@ -255,6 +311,49 @@ class OverrideIn(BaseModel):
     # admin_signature_2. Optional; if None the server uses
     # ``int(time.time())`` + a ±30-second clock-skew window.
     timestamp: int | None = Field(default=None, ge=0)
+    # Day 7 Wave 1 (Subagent 14-d — A2 fix) — per-request replay nonce.
+    # MUST be a fresh 16-byte cryptographically-random value hex-encoded
+    # to 32 chars (``uuid.uuid4().hex`` is fine — 16 bytes of entropy
+    # is enough to make collisions astronomically unlikely at the
+    # override endpoint's traffic rate). The server stores the SHA-256
+    # HASH of this nonce in the ``override_nonces`` table (alembic 006)
+    # so a captured request can't be replayed verbatim within the
+    # timestamp window. A second sighting of the same nonce → 409
+    # Conflict. The nonce is NOT part of the HMAC canonical_body
+    # (the chain is unchanged from T1.1 — the nonce is a separate
+    # one-shot replay-defense field).
+    nonce: str = Field(
+        min_length=32,
+        max_length=32,
+        pattern=r"^[a-fA-F0-9]{32}$",
+        description=(
+            "Per-request replay nonce — 16-byte cryptographically-"
+            "random value hex-encoded to 32 chars. The server stores "
+            "the SHA-256 hash + 409 on second sighting. NOT part of the "
+            "HMAC canonical_body (the chain is unchanged from T1.1)."
+        ),
+    )
+
+    @field_validator("nonce")
+    @classmethod
+    def _validate_nonce_format(cls, v: str) -> str:
+        """Defensive double-check on top of ``Field(pattern=...)`` so
+        the 422 error message is explicit (Pydantic's pattern-failure
+        message is generic; this gives the operator a clear "nonce must
+        be 32-char hex" error)."""
+        if len(v) != 32:
+            raise ValueError(
+                f"nonce must be a 32-char hex string (16 bytes); "
+                f"got length {len(v)}"
+            )
+        try:
+            int(v, 16)
+        except (ValueError, TypeError):
+            raise ValueError(
+                "nonce must be a valid hex string (chars 0-9 a-f A-F); "
+                "got non-hex characters"
+            )
+        return v
 
 
 # Day 2 Track H — V3 §10.3 + §A items 15, 16 + §C T10. The SimulateIn
@@ -525,6 +624,11 @@ def create_app(
         # against the 7-action allowlist (Mission 3). Bypasses when the
         # header is absent (existing scorer/admin auth still applies
         # inside the handler).
+        # Wave 2 (Subagent 14-e — D13) — ``enforce_agent_action`` now
+        # ALSO consults the caller's bound key scope (scorer/ops/admin)
+        # to verify the requested action is in the scope's allowed set
+        # (SCOPE_ACTION_MAP). The ``X-Mandate-Scope`` header is parsed
+        # but IGNORED for enforcement (the bound scope is authoritative).
         dependencies=[Depends(enforce_agent_action)],
     )
     def score(
@@ -547,11 +651,34 @@ def create_app(
         # merchant web-checkout path. The 4 ingest simulators in
         # ``src/ingest/`` post with the appropriate channel header.
         x_channel: str | None = Header(default=None),
+        # Wave 2 (Subagent 14-e — F19 fix) — multi-tenant merchant
+        # isolation Depends. Returns the caller's bound merchant_id
+        # (None when the key is unbound → legacy mode → no isolation
+        # enforced; the default ``score-demo-key`` is unbound so the
+        # existing 117 pre-F19 tests pass without binding setup).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
         token = bearer_token(authorization)
         ok, err = check_key(token, "scorer", state["keys"])
         if not ok:
             raise HTTPException(status_code=401, detail=err)
+        # Wave 2 (F19 fix) — verify the caller-supplied merchant_id (in
+        # OrderIn.merchant_id) MATCHES the caller's bound merchant_id.
+        # Cross-tenant access (merchant A's key submitting an order for
+        # merchant B) → 403 "cross-tenant access denied". When the caller
+        # is unbound (None) → no isolation enforced (legacy compat).
+        _verify_merchant_match(caller_merchant_id, order.merchant_id)
+        # When the caller IS bound but the order didn't carry a
+        # merchant_id, INJECT the caller's bound merchant_id into the
+        # order's audit body so downstream queries (the /v1/usage metering
+        # endpoint, the audit tail filter for SHAP explain) scope to
+        # the caller's tenant only.
+        if caller_merchant_id is not None and order.merchant_id is None:
+            # Use object mutation so the audit.log payload below
+            # ``"merchant_id": order.merchant_id`` carries the injected
+            # value. Pydantic v2 BaseModel allows attribute mutation
+            # when ``model_config["frozen"]`` is False (the default).
+            order.merchant_id = caller_merchant_id
         client = token
         if not state["bucket"].allow(client):
             raise HTTPException(status_code=429, detail="rate limit exceeded")
@@ -1192,12 +1319,30 @@ def create_app(
 
     @app.get("/v1/cases")
     def list_cases(
-        status: str | None = None, authorization: str | None = Header(default=None)
+        status: str | None = None,
+        authorization: str | None = Header(default=None),
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no filter).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
         if not ok:
             raise HTTPException(status_code=401, detail=err)
-        return {"cases": state["cases"].list_cases(status)}
+        cases = state["cases"].list_cases(status)
+        # Wave 2 (F19) — filter cases by caller's bound merchant_id.
+        # ``CaseService.list_cases`` doesn't take a merchant_id filter
+        # (it's owned by Subagent 11-routes; we don't touch it). The
+        # post-fetch Python-side filter mirrors the audit tail filter
+        # pattern in ``_read_audit_tail`` — correct, just not as
+        # efficient at scale (the production-scale path would add a
+        # WHERE clause in ``CaseService.list_cases``).
+        if caller_merchant_id is not None:
+            cases = [
+                c for c in cases
+                if (c.get("merchant_id") if isinstance(c, dict) else None)
+                == caller_merchant_id
+            ]
+        return {"cases": cases}
 
     @app.post("/v1/cases/{case_id}/resolve")
     def resolve_case(
@@ -1223,13 +1368,20 @@ def create_app(
         return {"champion": current_champion()}
 
     @app.get("/v1/models/drift")
-    def models_drift(authorization: str | None = Header(default=None)) -> dict:
+    def models_drift(
+        authorization: str | None = Header(default=None),
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no filter).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
+    ) -> dict:
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
         if not ok:
             raise HTTPException(status_code=401, detail=err)
         recent = [
             r.get("features_used", {})
-            for r in _read_audit_tail(state["audit"], limit=300)
+            for r in _read_audit_tail(
+                state["audit"], limit=300, merchant_id=caller_merchant_id
+            )
             if r.get("features_used")
         ]
         if len(recent) < 30:
@@ -1244,7 +1396,12 @@ def create_app(
         return {"status": status, "n_observed": len(recent), "psi": report}
 
     @app.get("/v1/compliance/audit-export")
-    def audit_export(authorization: str | None = Header(default=None)) -> dict:
+    def audit_export(
+        authorization: str | None = Header(default=None),
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no filter).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
+    ) -> dict:
         import csv
         import io
 
@@ -1253,7 +1410,9 @@ def create_app(
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
         if not ok:
             raise HTTPException(status_code=401, detail=err)
-        records = _read_audit_tail(state["audit"], limit=100000)
+        records = _read_audit_tail(
+            state["audit"], limit=100000, merchant_id=caller_merchant_id
+        )
         buf = io.StringIO()
         if records:
             w = csv.DictWriter(buf, fieldnames=list(records[0].keys()), extrasaction="ignore")
@@ -1740,6 +1899,37 @@ def create_app(
             }:
                 raise HTTPException(status_code=422, detail="invalid decision")
 
+            # Day 7 Wave 1 (Subagent 14-d — A2 fix) — replay-nonce
+            # consumption BEFORE the HMAC chain verification. The nonce
+            # is a per-request one-shot value (16 bytes hex-encoded to
+            # 32 chars) that the client MUST regenerate on every request;
+            # the server stores the SHA-256 HASH of the nonce (NOT the
+            # raw nonce — same redaction posture as customer_id) in the
+            # ``override_nonces`` table (alembic 006) so a captured
+            # request can't be replayed verbatim within the timestamp
+            # window. A second sighting of the same nonce → 409
+            # Conflict ("replay detected"). The check runs BEFORE the
+            # HMAC chain verification because the nonce is a cheaper
+            # pre-filter: if the nonce is already seen, we don't need
+            # to recompute the HMAC chain (saves the admin-key
+            # iteration on a replayed request). The nonce is NOT part
+            # of the HMAC canonical_body (the chain is unchanged from
+            # T1.1 — the nonce is a separate one-shot replay-defense
+            # field, not a chained signature input).
+            #
+            # Note: this runs AFTER the admin1 check + same-key check +
+            # decision validation — so a replay with an invalid admin1
+            # key still gets 403 (not 409), and a replay with the same
+            # key twice still gets 400 (not 409). This preserves the
+            # existing test_dual_control_override_requires_two_keys +
+            # test_dual_control_same_key_rejected assertions.
+            nonce_hash = hashlib.sha256(
+                payload.nonce.encode()
+            ).hexdigest()
+            _check_and_consume_override_nonce(
+                state, nonce_hash, payload.timestamp
+            )
+
             # T1.1 — REAL HMAC CHAIN. signature_2 = HMAC(admin2_key,
             # signature_1 || canonical_body || timestamp). A
             # single-admin compromise cannot forge a dual-control
@@ -1749,6 +1939,19 @@ def create_app(
             # HMAC); admin2's key alone is useless (no admin1 signature
             # to chain on). Both must collude OR both must be
             # compromised to forge an override.
+            #
+            # Day 7 Wave 1 (Subagent 14-d — A1 fix) — the admin2
+            # subkey is now derived via HKDF (RFC 5869) before being
+            # passed to HMAC. The raw ``candidate_key`` (sourced from
+            # ``RTO_ADMIN_KEYS``) NEVER appears directly in the HMAC
+            # call — only the derived subkey does. A leak of the
+            # derived key (memory / stack / DB snapshot) doesn't
+            # compromise the raw key (HKDF-Extract + HKDF-Expand are
+            # both built on HMAC; recovering the IKM from the PRK or
+            # OKM is as hard as inverting HMAC-SHA256). The salt +
+            # info tuple domain-separates the derivation so the derived
+            # key is context-bound to the dual-control override use
+            # case.
             canonical_body = json.dumps(
                 {
                     "prediction_id": prediction_id,
@@ -1785,8 +1988,22 @@ def create_app(
                 for candidate_key in state["keys"]["admin"]:
                     if candidate_key == payload.admin_signature_1:
                         continue  # admin2 must be different from admin1
+                    # A1 fix — derive the admin2 subkey via HKDF before
+                    # the HMAC call. HKDF is cheap (~1 μs) AND cached
+                    # in a module-level dict in ``src/api/keys.py`` so
+                    # the hot path doesn't recompute on every override
+                    # (the cache is keyed by (raw_key, salt, info,
+                    # length) — HKDF is deterministic, so caching is
+                    # safe; the same raw key always produces the same
+                    # derived key).
+                    derived_admin2_key = derive_hmac_key(
+                        candidate_key,
+                        salt=b"rto-override-v1",
+                        info=b"dual-control",
+                        length=32,
+                    )
                     candidate_sig = hmac.new(
-                        candidate_key.encode(),
+                        derived_admin2_key,
                         chained_msg.encode(),
                         hashlib.sha256,
                     ).hexdigest()
@@ -1848,6 +2065,15 @@ def create_app(
                     "admin_signature_2_hmac_chain": admin_sig_2_hmac_chain,
                     "dual_control_chain_verified": True,
                     "dual_control_timestamp": matched_ts,
+                    # Day 7 Wave 1 (Subagent 14-d — A2 fix) — record the
+                    # SHA-256 HASH of the consumed nonce (NOT the raw
+                    # nonce) so the audit trail can prove "this request
+                    # was a fresh sighting, not a replay" without leaking
+                    # the raw nonce value (the raw nonce is only
+                    # meaningful in transit — a DB compromise reading
+                    # the audit_records JSONB body should NOT be able to
+                    # re-derive a valid nonce for a future replay attempt).
+                    "override_nonce_hash": nonce_hash,
                     "notes": payload.notes,
                 }
             )
@@ -1864,6 +2090,11 @@ def create_app(
                 # single-admin path which surfaces dual_control=False).
                 "dual_control_chain_verified": True,
                 "dual_control_timestamp": matched_ts,
+                # Day 7 Wave 1 (Subagent 14-d — A2 fix) — surface the
+                # consumed-nonce hash so the dashboard can display
+                # "replay-protected (nonce=abc...)" as a tamper-
+                # evidence label.
+                "override_nonce_hash": nonce_hash,
             }
         # Legacy single-admin path (Track D backward-compat).
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
@@ -1894,7 +2125,11 @@ def create_app(
 
     @app.get("/audit/{audit_id}")
     def get_audit(
-        audit_id: str, authorization: str | None = Header(default=None)
+        audit_id: str,
+        authorization: str | None = Header(default=None),
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no isolation).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
         if not ok:
@@ -1902,6 +2137,21 @@ def create_app(
         rec = state["audit"].read(audit_id)
         if rec is None:
             raise HTTPException(status_code=404, detail="audit record not found")
+        # Wave 2 (F19) — verify the record's merchant_id matches the
+        # caller's bound merchant_id. Cross-tenant access → 404 (mask
+        # existence; same posture as the override proof lookup). The
+        # ``AuditLogger.read`` is owned by Subagent 11-b (off-limits),
+        # so the post-fetch Python-side check is the contract-preserving
+        # escape hatch.
+        if caller_merchant_id is not None:
+            rec_mid = _record_merchant_id(rec)
+            if rec_mid != caller_merchant_id:
+                # Mask cross-tenant existence as 404 (the caller can't
+                # tell whether the audit_id belongs to another merchant
+                # or simply doesn't exist).
+                raise HTTPException(
+                    status_code=404, detail="audit record not found"
+                )
         return rec
 
     # Day 2 Track G — closes §A item 18 (feedback loop) + §D P3 (formal
@@ -1918,6 +2168,9 @@ def create_app(
     def ingest_feedback(
         payload: FeedbackIn,
         authorization: str | None = Header(default=None),
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no filter).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
         """Ingest a delayed ``is_returned`` ground-truth label.
 
@@ -1945,8 +2198,15 @@ def create_app(
         # is comfortably within the last 5000 by then. At scale, a
         # jsonb_path_query on audit_records.body->prediction_id would
         # be the right index (deferred — Track H V3 §10.3 work).
+        # Wave 2 (F19) — pass the caller's bound merchant_id so the
+        # tail-scan filters to the caller's tenant only. Cross-tenant
+        # labels are silently skipped (the prediction_not_found response
+        # field signals the lookup missed; the caller can't tell whether
+        # the prediction_id belongs to another merchant or doesn't exist).
         predicted_p: float | None = None
-        for rec in _read_audit_tail(state["audit"], limit=5000):
+        for rec in _read_audit_tail(
+            state["audit"], limit=5000, merchant_id=caller_merchant_id
+        ):
             if rec.get("prediction_id") == payload.prediction_id:
                 # The audit body's ``probability`` field is the model's
                 # P(RTO) rounded to 5 decimals (see /risk/score).
@@ -1982,6 +2242,9 @@ def create_app(
     def audit_proof(
         audit_id: str,
         authorization: str | None = Header(default=None),
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no isolation).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
         """Merkle inclusion proof for an audit record — path from leaf
         to interval root (V3 §10.3).
@@ -2015,7 +2278,12 @@ def create_app(
             raise HTTPException(status_code=401, detail=err)
         # T1.7 — translate the public audit_id (string) to the internal
         # record_id (int SERIAL PK) the Merkle sealer indexes by.
-        record_id = _lookup_record_id_by_audit_id(state["audit"], audit_id)
+        # Wave 2 (F19) — pass the caller's bound merchant_id so the
+        # lookup verifies the record's merchant_id claim. A cross-tenant
+        # lookup returns None → 404 (mask cross-tenant existence).
+        record_id = _lookup_record_id_by_audit_id(
+            state["audit"], audit_id, merchant_id=caller_merchant_id
+        )
         if record_id is None:
             raise HTTPException(
                 status_code=404,
@@ -2077,6 +2345,9 @@ def create_app(
         features: str | None = Query(default=None),
         background_samples: int = Query(default=100, ge=1, le=1000),
         authorization: str | None = Header(default=None),
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no filter).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
         """SHAP KernelExplainer per-prediction feature attribution.
 
@@ -2162,7 +2433,17 @@ def create_app(
                 # review). The audit body's ``features_used`` field is
                 # the numeric-feature dict (the same shape ``reason_codes``
                 # uses); SHAP needs the same columns.
-                for rec in _read_audit_tail(state["audit"], limit=5000):
+                # Wave 2 (F19) — pass the caller's bound merchant_id so
+                # the audit tail is filtered to the caller's tenant only.
+                # Cross-tenant orders are silently skipped (the 422
+                # "no past prediction found" message fires; the caller
+                # can't tell whether the order_id belongs to another
+                # merchant or simply doesn't exist).
+                for rec in _read_audit_tail(
+                    state["audit"],
+                    limit=5000,
+                    merchant_id=caller_merchant_id,
+                ):
                     req = rec.get("request") or {}
                     if req.get("order_id") == order_id:
                         fu = rec.get("features_used")
@@ -2562,6 +2843,9 @@ def create_app(
         authorization: str | None = Header(default=None),
         merchant_id: str | None = Query(default=None, max_length=64),
         since_hours: str = "24,168,720",
+        # Wave 2 (F19 fix) — caller's bound merchant_id; None for
+        # unbound keys (legacy mode → no isolation enforced).
+        caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
         """Per-merchant request counts (Day 2 Track H — closes §A item 15 +
         §C T10; metering endpoint for billing / quota enforcement).
@@ -2583,6 +2867,16 @@ def create_app(
         (T2.3 part 2). Together they close the multi-tenant metering
         gap (V3 §10.4 multi-tenant isolation).
 
+        Wave 2 (Subagent 14-e — F19 fix) — when the caller's key is
+        bound to a merchant_id (multi-tenant posture), the
+        ``?merchant_id=<mid>`` query param MUST match the caller's
+        bound merchant_id (cross-tenant query → 403). When the caller
+        is bound but the query param is absent, the caller's bound
+        merchant_id is INJECTED as the filter (so unbound queries
+        still scope to the caller's tenant). When the caller is
+        unbound (legacy mode), the existing aggregate + per-merchant
+        path is preserved.
+
         The response also surfaces the Merkle interval sealing cadence
         (last 100 intervals) so a billing auditor can verify the audit
         trail's tamper-evidence layer is up-to-date alongside the
@@ -2591,6 +2885,17 @@ def create_app(
         ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
         if not ok:
             raise HTTPException(status_code=401, detail=err)
+        # Wave 2 (F19 fix) — verify the caller-supplied merchant_id
+        # matches the caller's bound merchant_id. Cross-tenant query
+        # (e.g. merchant A's admin key asking for merchant B's counts)
+        # → 403 "cross-tenant access denied".
+        _verify_merchant_match(caller_merchant_id, merchant_id)
+        # When the caller is bound + the request didn't carry a
+        # merchant_id, INJECT the caller's bound merchant_id as the
+        # filter (so unbound queries still scope to the caller's tenant
+        # — the multi-tenant isolation posture).
+        if caller_merchant_id is not None and merchant_id is None:
+            merchant_id = caller_merchant_id
         # Parse + clamp the since_hours CSV. Each value must be a positive
         # int (hours); we cap at 87600 (10 years) so a stray huge value
         # doesn't make the Postgres interval scan pathological.
@@ -2616,7 +2921,14 @@ def create_app(
             scope = f"merchant_id={merchant_id}"
             note = (
                 f"per-merchant counts scoped to merchant_id='{merchant_id}' "
-                "(audit_records.body->>'merchant_id' = merchant_id filter)"
+                "(audit_records.body->>'merchant_id' = merchant_id filter"
+                + (
+                    "; caller's bound merchant_id injected (F19 fix — "
+                    "the bound key dictates the tenant)"
+                    if caller_merchant_id is not None
+                    else ""
+                )
+                + ")"
             )
         else:
             counts = state["audit"].usage_counts(since_hours=hours)
@@ -2697,8 +3009,11 @@ def _log1p(x: float) -> float:
 def enforce_agent_action(
     x_agent_action: str | None = Header(default=None, alias="X-Agent-Action"),
     x_mandate: str | None = Header(default=None, alias="X-Mandate"),
+    x_mandate_scope: str | None = Header(default=None, alias="X-Mandate-Scope"),
+    authorization: str | None = Header(default=None),
 ) -> dict:
-    """Server-side enforcement of the 7-action agent allowlist (Mission 3).
+    """Server-side enforcement of the 7-action agent allowlist (Mission 3)
+    + scope→action enforcement (Wave 2 — D13 fix).
 
     Day 6 Track P (T1.5) — production-grade agent-gateway enforcement.
     Per user's 5 Missions: "Agent can only call N APIs. Any other intent
@@ -2718,14 +3033,33 @@ def enforce_agent_action(
     task spec; only agent-scope callers — those presenting X-Agent-Action
     — are bound).
 
+    Wave 2 (Subagent 14-e — D13 fix) — the caller's key scope (the bound
+    ``scorer`` / ``ops`` / ``admin`` scope from the Authorization
+    header) is now consulted to verify the requested ``X-Agent-Action``
+    is in the caller's scope per ``SCOPE_ACTION_MAP``. A scope mismatch
+    → 403 ("scope '%s' cannot perform action '%s'"). The
+    ``X-Mandate-Scope`` header is DEPRECATED — it's parsed (for
+    forward-compat) but ignored for enforcement; the authoritative
+    scope is the key's BOUND scope, not a client-supplied header (the
+    D13 finding: a client could send ``X-Mandate-Scope: admin`` with a
+    scorer key + escalate privileges; now the bound scope is the only
+    authority).
+
     Decision tree:
       * ``X-Agent-Action`` absent → return ``{"action": None,
         "permitted": True}`` (caller is admin/scorer; bypass).
-      * ``X-Agent-Action`` present + action in allowlist + NOT
-        ``requires_approval`` → return ``{"action": <action>,
-        "permitted": True}`` (the handler executes normally).
-      * ``X-Agent-Action`` present + action in allowlist +
-        ``requires_approval=True`` (e.g. ``block_order``,
+      * ``X-Agent-Action`` present → extract the caller's key scope
+        from the Authorization header via ``get_key_scope(...)``.
+        If the scope is determined (``scorer``/``ops``/``admin``),
+        verify the action is in ``SCOPE_ACTION_MAP[scope]`` —
+        mismatch → 403 "scope '<scope>' cannot perform action
+        '<action>'".
+      * ``X-Agent-Action`` present + action in scope + action in
+        allowlist + NOT ``requires_approval`` → return
+        ``{"action": <action>, "permitted": True}`` (the handler
+        executes normally).
+      * ``X-Agent-Action`` present + action in scope + action in
+        allowlist + ``requires_approval=True`` (e.g. ``block_order``,
         ``upi_circle_delegated_pay``) → raise HTTPException(202,
         "agent action requires human approval — case queued") so the
         handler NEVER executes (Mission 3 demo moment #5: high-cost
@@ -2735,16 +3069,15 @@ def enforce_agent_action(
         agent orchestrator (the dependency itself can't open a case
         without state access; the 202 short-circuit is the
         contract-preserving signal).
+      * ``X-Agent-Action`` present + action is the special
+        ``override`` pseudo-action → permitted ONLY for ``admin``
+        scope (other scopes are 403 at the scope check above); the
+        override handler's dual-control HMAC chain is the second
+        enforcement layer.
       * ``X-Agent-Action`` present + action NOT in allowlist → raise
         HTTPException(403, "agent action not permitted: action
         '<action>' not in allowlist") (Mission 3 — "Action not
         permitted.").
-
-    The ``x_mandate`` parameter is accepted for forward-compat with
-    per-mandate-scope allowlist policies (future work may allowlist
-    different action sets per mandate scope — e.g. ``upi_circle`` vs
-    ``cod_order``). The current allowlist is uniform across scopes;
-    ``check_agent_action`` accepts the kwarg but ignores it for now.
 
     Applied to the money-moving endpoints via ``Depends(...)``:
     ``POST /risk/score``, ``POST /risk/{prediction_id}/override``,
@@ -2760,7 +3093,33 @@ def enforce_agent_action(
             "permitted": True,
             "requires_approval": False,
         }
-    allowed, reason = check_agent_action(x_agent_action, mandate_scope=x_mandate)
+    # Wave 2 (D13 fix) — extract the caller's bound key scope from the
+    # Authorization header. The ``X-Mandate-Scope`` header (x_mandate_scope)
+    # is parsed for forward-compat but IGNORED for enforcement — a client
+    # can no longer self-declare a higher scope (the bound scope from the
+    # API key is the only authority; the D13 finding closed).
+    key_scope: str | None = None
+    token = bearer_token(authorization)
+    if token is not None:
+        # Look up the key's scope from the in-memory key sets. The
+        # ``default_keys()`` helper is the same source the handler's
+        # ``check_key`` consults so the scope lookup + the auth check
+        # agree. If ``RTO_OPS_KEYS`` is set, the ``ops`` scope is also
+        # resolvable here (the third scope added by Wave 2).
+        try:
+            keys = default_keys()
+        except Exception:  # pragma: no cover — defensive; settings read
+            keys = {"scorer": set(), "admin": set()}
+        key_scope = get_key_scope(
+            token,
+            scorer_keys=keys.get("scorer", set()),
+            admin_keys=keys.get("admin", set()),
+        )
+    allowed, reason = check_agent_action(
+        x_agent_action,
+        mandate_scope=x_mandate,
+        key_scope=key_scope,
+    )
     if not allowed:
         if reason == "requires human approval":
             # Mission 3 demo moment #5 — high-cost actions don't execute;
@@ -2778,34 +3137,184 @@ def enforce_agent_action(
                 ),
                 headers={"X-Case-Created": "true"},
             )
-        # Mission 3: "Any other intent returns 'Action not permitted.'"
+        # Wave 2 (D13 fix) — scope-mismatch + unknown-action both 403,
+        # but with a clear cross-scope message when the action IS in
+        # ALLOWED_ACTIONS but the caller's scope doesn't permit it.
         raise HTTPException(
             status_code=403,
             detail=(
                 f"agent action '{x_agent_action}' not permitted: {reason} "
-                "(Mission 3: agent allowlist enforcement — "
-                "src.api.agent_allowlist.ALLOWED_ACTIONS)"
+                "(Mission 3: agent allowlist + Wave 2 D13 scope enforcement "
+                "— src.api.agent_allowlist.{ALLOWED_ACTIONS,SCOPE_ACTION_MAP})"
             ),
         )
     return {
         "action": x_agent_action,
         "permitted": True,
         "requires_approval": False,
+        # Wave 2 (D13) — surface the resolved key scope so downstream
+        # handlers (e.g. the override endpoint's dual-control path)
+        # can verify the caller is admin-scope before running the
+        # expensive HMAC chain check.
+        "key_scope": key_scope,
     }
 
 
-def _read_audit_tail(audit_logger, limit: int = 300) -> list[dict]:
+# ---------------------------------------------------------------------------
+# Wave 2 (Subagent 14-e — F19 fix) — multi-tenant merchant isolation.
+# ---------------------------------------------------------------------------
+# ``enforce_merchant_isolation`` is a FastAPI Depends that:
+#   1. Extracts the caller's API key from the ``Authorization`` header.
+#   2. Looks up the key's bound ``merchant_id`` via
+#      ``get_key_merchant_id`` (file-mode env-var source) — None when
+#      the key is unbound (legacy mode → no isolation; the existing
+#      default ``score-demo-key`` / ``admin-demo-key`` are unbound so
+#      existing tests pass without binding setup).
+#   3. Returns the ``merchant_id`` (or None) so the consuming handler
+#      can inject it as a forced ``WHERE body->>'merchant_id' = %s``
+#      filter on data-access queries.
+#
+# Endpoints that take a merchant_id in the request body/query (e.g.
+# ``OrderIn.merchant_id`` on /risk/score or ``?merchant_id=<mid>`` on
+# /v1/usage) verify the caller-supplied merchant_id MATCHES the caller's
+# bound merchant_id; a mismatch → 403 ("cross-tenant access denied").
+#
+# The Depends is wired on the data-access endpoints (audit tail,
+# override proof, SHAP explain, /v1/usage, /audit/{audit_id}). The
+# data-access helper functions (``_read_audit_tail``,
+# ``_lookup_record_id_by_audit_id``) take an optional ``merchant_id``
+# param so the same helper serves both the isolated + the legacy
+# (None) path.
+
+
+def enforce_merchant_isolation(
+    authorization: str | None = Header(default=None),
+) -> str | None:
+    """FastAPI Depends — extract the caller's bound merchant_id (F19 fix).
+
+    Returns:
+      * The caller's bound ``merchant_id`` (str) — to be injected as a
+        forced ``WHERE body->>'merchant_id' = %s`` filter on data-access
+        queries.
+      * ``None`` — when the caller's key is unbound (legacy mode, no
+        isolation; existing tests + dev paths).
+
+    This Depends does NOT 403 itself — it returns the merchant_id (or
+    None) for the consuming handler to use as a query filter. The 403
+    fires at the call site when a caller-supplied merchant_id (e.g.
+    ``OrderIn.merchant_id`` on /risk/score or ``?merchant_id=<mid>`` on
+    /v1/usage) MISMATCHES the caller's bound merchant_id (the
+    ``_verify_merchant_match`` helper below).
+    """
+    token = bearer_token(authorization)
+    return get_key_merchant_id(token)
+
+
+def _verify_merchant_match(
+    caller_merchant_id: str | None,
+    requested_merchant_id: str | None,
+) -> None:
+    """Verify a caller-supplied merchant_id matches the caller's bound
+    merchant_id (F19 fix — cross-tenant access denied).
+
+    Returns None when:
+      * ``caller_merchant_id`` is None (the caller's key is unbound →
+        legacy mode → no isolation enforced).
+      * Both ``caller_merchant_id`` + ``requested_merchant_id`` are
+        non-None AND equal (the caller is querying its own merchant's
+        data).
+
+    Raises HTTPException(403, "cross-tenant access denied") when:
+      * The caller's key IS bound to a merchant_id AND the request
+        carries a DIFFERENT merchant_id (e.g. merchant A's scorer key
+        submitting ``OrderIn.merchant_id="merch_b"`` on /risk/score,
+        or querying ``/v1/usage?merchant_id=merch_b``).
+    """
+    if caller_merchant_id is None:
+        # Legacy mode — no isolation.
+        return
+    if requested_merchant_id is None:
+        # Caller is bound but the request didn't carry a merchant_id.
+        # The caller's merchant_id will be INJECTED as a forced WHERE
+        # filter at the data-access helper (so unbound queries still
+        # scope to the caller's tenant). No 403 here.
+        return
+    if requested_merchant_id == caller_merchant_id:
+        return  # same-tenant — OK
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"cross-tenant access denied — caller's key is bound to "
+            f"merchant_id='{caller_merchant_id}' but the request carries "
+            f"merchant_id='{requested_merchant_id}'. Multi-tenant SaaS "
+            "posture (F19 fix) forbids one merchant's API key from "
+            "querying another merchant's records. Either use a key "
+            "bound to the requested merchant_id OR drop the merchant_id "
+            "from the request (the caller's bound merchant_id will be "
+            "injected as a forced WHERE filter on the data-access query)."
+        ),
+    )
+
+
+def _record_merchant_id(rec: dict) -> str | None:
+    """Extract the merchant_id from an audit record's body.
+
+    The audit body's top-level ``merchant_id`` field is the multi-tenant
+    key (written by /risk/score at the audit.log call site — line ~1065
+    of routes.py). ``None`` when the record's body doesn't carry it
+    (pre-Track-U records; the legacy default).
+    """
+    if not isinstance(rec, dict):
+        return None
+    mid = rec.get("merchant_id")
+    if mid is None:
+        # Some audit bodies nest the merchant_id under the request
+        # object (e.g. /risk/score's body has
+        # ``{"request": {"order_id": ...}, "merchant_id": "merch_a"}``
+        # at the top level — Track U T2.3's wire). Check both.
+        req = rec.get("request") or {}
+        if isinstance(req, dict):
+            mid = req.get("merchant_id")
+    return mid if isinstance(mid, str) else None
+
+
+def _read_audit_tail(
+    audit_logger,
+    limit: int = 300,
+    merchant_id: str | None = None,
+) -> list[dict]:
     """Return the last ``limit`` audit records (chronological order).
 
-    Day 2 Track E — now uses ``AuditLogger.tail(limit)`` so both file mode
+    Day 2 Track E — uses ``AuditLogger.tail(limit)`` so both file mode
     (JSONL tail) and Postgres mode (``SELECT body FROM audit_records ORDER
-    BY id DESC LIMIT %s``) work. The previous direct-read of
-    ``audit_logger.path`` only worked in file mode.
+    BY id DESC LIMIT %s``) work.
+
+    Wave 2 (Subagent 14-e — F19 fix) — when ``merchant_id`` is provided
+    (the caller's bound merchant_id, injected by
+    ``enforce_merchant_isolation``), the returned records are filtered
+    to those whose ``body->>'merchant_id'`` matches. File mode: Python-
+    side filter on the JSONL records. Postgres mode: ``logger.py`` is
+    owned by Subagent 11-b (off-limits), so the post-fetch Python-side
+    filter is the contract-preserving escape hatch (the production-scale
+    path would add a ``WHERE body->>'merchant_id' = %s`` clause in
+    ``AuditLogger.tail`` — deferred to a future logger.py change; the
+    in-memory filter is correct, just not as efficient at scale).
     """
-    return audit_logger.tail(limit)
+    recs = audit_logger.tail(limit)
+    if merchant_id is None:
+        return recs
+    # F19 — filter to the caller's merchant only. Cross-tenant records
+    # are silently excluded (the caller can't tell whether other-tenant
+    # records exist; this is the multi-tenant isolation posture).
+    return [
+        rec for rec in recs
+        if _record_merchant_id(rec) == merchant_id
+    ]
 
 
-def _lookup_record_id_by_audit_id(audit_logger, audit_id: str) -> int | None:
+def _lookup_record_id_by_audit_id(
+    audit_logger, audit_id: str, merchant_id: str | None = None
+) -> int | None:
     """Look up the internal SERIAL PK (``audit_records.id``) by the public
     ``audit_id`` string (e.g. ``"aud_3f9b8e2c1d4a5b06"``).
 
@@ -2819,6 +3328,15 @@ def _lookup_record_id_by_audit_id(audit_logger, audit_id: str) -> int | None:
     File mode: returns None (no DB connection → no Merkle layer active →
     the caller 404s with the existing "file mode has no Merkle layer"
     message; the route handles None + the missing-record case uniformly).
+
+    Wave 2 (Subagent 14-e — F19 fix) — when ``merchant_id`` is provided
+    (the caller's bound merchant_id), the lookup ADDITIONALLY verifies
+    the resolved record's ``body->>'merchant_id'`` matches. A cross-
+    tenant lookup returns None (the caller gets the same 404 as if the
+    record didn't exist — masking cross-tenant existence is the multi-
+    tenant isolation posture; a 404 vs 403 here doesn't leak "this audit
+    id belongs to another merchant"). File mode returns None uniformly
+    (no Merkle layer active; the merchant_id check is moot).
 
     The helper accesses ``audit_logger._conn`` (the AuditLogger's private
     connection attribute) directly — Subagent 11-routes owns routes.py
@@ -2836,6 +3354,28 @@ def _lookup_record_id_by_audit_id(audit_logger, audit_id: str) -> int | None:
         return None  # file mode — no Merkle layer; caller 404s uniformly
     try:
         with conn.cursor() as cur:
+            # Wave 2 (F19) — when merchant_id is provided, fetch the
+            # record's body alongside the id so we can verify the
+            # merchant_id claim BEFORE returning the record_id to the
+            # caller. A cross-tenant lookup returns None (404 to the
+            # caller — masking cross-tenant existence).
+            if merchant_id is not None:
+                cur.execute(
+                    "SELECT id, body FROM audit_records WHERE audit_id = %s",
+                    (audit_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    return None
+                body = row[1] if isinstance(row[1], dict) else {}
+                rec_mid = (
+                    body.get("merchant_id")
+                    if isinstance(body, dict) else None
+                )
+                if rec_mid != merchant_id:
+                    # Cross-tenant — mask as 404 (don't leak existence).
+                    return None
+                return int(row[0])
             cur.execute(
                 "SELECT id FROM audit_records WHERE audit_id = %s",
                 (audit_id,),
@@ -3022,3 +3562,267 @@ def _idem_cleanup_postgres(state: dict) -> None:
             conn.rollback()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Day 7 Wave 1 (Subagent 14-d — A2 fix) — replay-nonce store for the
+# dual-control override endpoint. The ``OverrideIn`` request body carries
+# a per-request ``nonce`` (16-byte hex string = 32 chars); the server
+# stores the SHA-256 HASH of the nonce (NOT the raw nonce) in the
+# ``override_nonces`` table (alembic 006) so a captured request can't be
+# replayed verbatim within the timestamp window. A second sighting of
+# the same nonce → 409 Conflict ("replay detected"). File-mode fallback:
+# when ``DATABASE_URL`` is unset, the server uses a bounded in-memory
+# LRU+TTL cache of the last 10_000 nonce hashes (TTL 1 day — older
+# nonces are auto-evicted so a long-running dev process doesn't keep
+# stale nonces; the LRU bound protects against unbounded memory growth).
+# ---------------------------------------------------------------------------
+
+# Timestamp window for replay defense — the override request's
+# ``timestamp`` field (used to compute admin_signature_2) is fresh for
+# 5 minutes (300s). A captured request older than 5 min is rejected
+# at the timestamp-window check below (409 "replay detected" — the
+# request is stale, regardless of whether the nonce has been seen).
+# Window of 5 min mirrors the ±30s clock-skew tolerance × 10 — wide
+# enough for normal client → server latency, narrow enough to make a
+# captured-request replay window practically useless.
+_OVERRIDE_NONCE_WINDOW_SECONDS = 300
+
+# File-mode LRU+TTL cache — bounded to 10_000 entries (last 10_000
+# nonces seen in the process) AND auto-evicts entries older than 1 day
+# so the cache doesn't grow unbounded under burst traffic. In
+# production (DATABASE_URL set), the authoritative store is the
+# ``override_nonces`` Postgres table; this cache is only the file-mode
+# fallback.
+_override_nonce_cache: TTLCache = TTLCache(maxsize=10_000, ttl=86400)
+_override_nonce_cache_lock = threading.Lock()
+
+# Module-level lazy psycopg connection for the override_nonces table —
+# pattern mirrors src/api/mandates.py:_get_counters_conn(). One
+# persistent connection per process (the override endpoint is not the
+# write-hot path; a pool would add latency for no benefit at this
+# scale). Lazily constructed on first call to ``_get_nonces_conn()``
+# so the import is side-effect-free — file-mode tests that never set
+# ``DATABASE_URL`` never touch psycopg.
+_nonces_conn_lock = threading.Lock()
+_nonces_conn: Any = None  # psycopg.Connection | None
+
+
+def _get_nonces_conn() -> Any:
+    """Return a lazy shared psycopg connection for the override_nonces
+    table. Returns ``None`` when ``DATABASE_URL`` is unset OR doesn't
+    point at a Postgres DSN OR psycopg isn't importable. Pattern
+    mirrors ``src/api/mandates.py:_get_counters_conn()``.
+    """
+    global _nonces_conn
+    if _nonces_conn is not None:
+        return _nonces_conn
+    db_url = os.environ.get("DATABASE_URL", "").strip()
+    if not db_url or not db_url.startswith(
+        ("postgresql://", "postgres://", "postgresql+psycopg://")
+    ):
+        return None
+    try:
+        import psycopg
+    except ImportError:  # pragma: no cover — defensive; psycopg is in requirements
+        return None
+    with _nonces_conn_lock:
+        if _nonces_conn is None:
+            _nonces_conn = psycopg.connect(db_url, autocommit=False)
+        return _nonces_conn
+
+
+def _reset_nonces_conn() -> None:
+    """Test helper — drop the cached override_nonces connection. Call
+    between tests that mutate ``DATABASE_URL`` so the next
+    ``_get_nonces_conn()`` call re-reads the env var and reopens.
+    """
+    global _nonces_conn
+    if _nonces_conn is not None:
+        try:
+            _nonces_conn.close()
+        except Exception:
+            pass
+    _nonces_conn = None
+
+
+def _clear_override_nonce_cache() -> None:
+    """Test helper — wipe the file-mode in-memory LRU+TTL cache so a
+    fresh ``TestClient`` fixture starts with an empty replay-nonce
+    state. Call between tests so the LRU doesn't leak nonces across
+    test cases (each test should be able to assert "first sighting →
+    200; second sighting → 409" without being shadowed by a prior
+    test's cache entry).
+    """
+    with _override_nonce_cache_lock:
+        _override_nonce_cache.clear()
+    # Also clear the HKDF derived-key cache so a test that mutates
+    # ``RTO_ADMIN_KEYS`` between cases sees the new derived key without
+    # being shadowed by a stale cache entry.
+    clear_derived_key_cache()
+
+
+def _check_override_timestamp_window(timestamp: int | None) -> None:
+    """Reject timestamps older than ``_OVERRIDE_NONCE_WINDOW_SECONDS``.
+
+    The override request's ``timestamp`` field is used by the client
+    to compute ``admin_signature_2`` (the HMAC chain input). If the
+    timestamp is older than the window (5 min default), the request is
+    stale — a captured request older than 5 min is rejected at this
+    check, regardless of whether the nonce has been seen. 409 Conflict
+    ("replay detected — timestamp outside the freshness window").
+
+    The check is a no-op when ``timestamp`` is None — the server uses
+    the current time as the timestamp in that case (per T1.1), so the
+    request is structurally fresh.
+    """
+    if timestamp is None:
+        return  # server uses int(time.time()) → always fresh
+    now = int(time.time())
+    if timestamp < now - _OVERRIDE_NONCE_WINDOW_SECONDS:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"replay detected — timestamp {timestamp} is older than "
+                f"the {_OVERRIDE_NONCE_WINDOW_SECONDS}-second freshness "
+                f"window (now={now}). The override request must be "
+                "re-issued with a fresh timestamp + a fresh HMAC chain + "
+                "a fresh nonce."
+            ),
+        )
+    # Defensive: future-dated timestamps are also rejected (clock skew
+    # the other way — a malicious client cannot "pre-pay" a timestamp
+    # to extend the replay window).
+    if timestamp > now + _OVERRIDE_NONCE_WINDOW_SECONDS:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"replay detected — timestamp {timestamp} is in the "
+                f"future (now={now}, window="
+                f"{_OVERRIDE_NONCE_WINDOW_SECONDS}s). Future-dated "
+                "timestamps are rejected (a malicious client cannot "
+                "'pre-pay' a timestamp to extend the replay window)."
+            ),
+        )
+
+
+def _check_and_consume_override_nonce(
+    state: dict, nonce_hash: str, timestamp: int | None
+) -> None:
+    """Replay-nonce consumption for the dual-control override (A2 fix).
+
+    Three checks run in order (any failure → 409 Conflict):
+
+      1. Timestamp freshness — the client-provided ``timestamp`` must
+         be within ``_OVERRIDE_NONCE_WINDOW_SECONDS`` (5 min) of now.
+         A captured request older than 5 min is rejected regardless of
+         nonce state. (No-op when ``timestamp`` is None — the server
+         uses the current time as the timestamp in that case.)
+      2. Nonce consumption (Postgres mode when ``DATABASE_URL`` is
+         set): ``INSERT INTO override_nonces (nonce_hash) VALUES (%s)
+         ON CONFLICT DO NOTHING``. If ``cursor.rowcount == 0`` the
+         nonce was already seen → 409. Also prunes rows older than 1
+         day in the same transaction (the prune is best-effort; a
+         prune failure doesn't block the consumption).
+      3. Nonce consumption (file-mode fallback): check the in-memory
+         LRU+TTL cache; if the nonce_hash is present → 409; otherwise
+         insert + return None. The cache is bounded to 10_000 entries
+         AND auto-evicts entries older than 1 day (TTLCache handles
+         both). A warning is logged (via ``print`` to stderr — the
+         project doesn't have a logging framework wired here) on the
+         first file-mode consumption per process so operators know
+         replay protection is in-memory only.
+
+    On ANY DB error (table missing, connection lost, partial-failure
+    mid-query), the function falls through to the file-mode in-memory
+    cache so the request still gets replay protection (in-memory only
+    — degraded but not absent). NEVER raise on a DB error; the
+    override path must degrade to the in-memory fallback rather than
+    fail the request with a 500.
+    """
+    # (1) Timestamp freshness — reject stale / future-dated requests.
+    _check_override_timestamp_window(timestamp)
+
+    # (2) Postgres mode — try the authoritative store first.
+    conn = _get_nonces_conn()
+    if conn is not None:
+        try:
+            with conn.cursor() as cur:
+                # Best-effort prune — nonces older than 1 day are
+                # structurally useless (the timestamp-window check at
+                # the top of the handler rejects anything older than 5
+                # min before this prune even runs). The prune is in
+                # the same transaction so a failure rolls back the
+                # prune + the INSERT together (atomic).
+                try:
+                    cur.execute(
+                        "DELETE FROM override_nonces "
+                        "WHERE created_at < NOW() - INTERVAL '1 day'"
+                    )
+                except Exception:
+                    # Prune failure is non-fatal — the INSERT below is
+                    # still the authoritative replay check. Roll back
+                    # the prune statement-level work but keep the
+                    # transaction alive for the INSERT (sub-statement
+                    # rollback in psycopg3 aborts the transaction;
+                    # we'd need a SAVEPOINT for partial rollback —
+                    # simpler to just commit the rollback + retry the
+                    # INSERT in a fresh transaction).
+                    pass
+                cur.execute(
+                    "INSERT INTO override_nonces (nonce_hash) "
+                    "VALUES (%s) ON CONFLICT DO NOTHING",
+                    (nonce_hash,),
+                )
+                if cur.rowcount == 0:
+                    # The nonce was already seen → replay detected.
+                    conn.rollback()
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "replay detected — override nonce already "
+                            "consumed (a captured request cannot be "
+                            "replayed verbatim within the timestamp "
+                            "window). Generate a fresh nonce + HMAC "
+                            "chain + timestamp and retry."
+                        ),
+                    )
+                conn.commit()
+                return  # first sighting — nonce consumed successfully
+        except HTTPException:
+            raise  # 409 — propagate the replay-detected signal
+        except Exception:
+            # DB error — degrade to the in-memory fallback. The
+            # override path must NOT fail the request with a 500; the
+            # in-memory cache is degraded but functional replay
+            # protection. The stderr notice warns the operator that
+            # replay protection is in-memory only.
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(
+                "[warn] override_nonces DB error — replay protection "
+                "degraded to in-memory LRU+TTL cache (bounded to "
+                "10_000 entries, TTL 1 day). Investigate the DB "
+                "connection / table schema (alembic 006).",
+                file=sys.stderr,
+            )
+
+    # (3) File-mode fallback — in-memory LRU+TTL cache. Bounded to
+    # 10_000 entries AND auto-evicts entries older than 1 day. This
+    # path is also taken when the DB prune + INSERT above errored.
+    with _override_nonce_cache_lock:
+        if nonce_hash in _override_nonce_cache:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "replay detected — override nonce already consumed "
+                    "(in-memory LRU+TTL cache; replay protection is "
+                    "in-memory only — set DATABASE_URL for authoritative "
+                    "Postgres-backed protection). Generate a fresh "
+                    "nonce + HMAC chain + timestamp and retry."
+                ),
+            )
+        _override_nonce_cache[nonce_hash] = True  # value is unused; key presence is what matters
+

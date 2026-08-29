@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -44,6 +46,11 @@ import {
   type ReasonCode,
   type ScoreResponse,
 } from "@/lib/mock-data";
+import { ShapWaterfall } from "@/components/shap-waterfall";
+import { RulesToggleCard } from "@/components/rules-toggle-card";
+import { AgentConsole } from "@/components/agent-console";
+import { NarrativePivotCard } from "@/components/narrative-pivot-card";
+import { CostCurveSlider } from "@/components/cost-curve-slider";
 
 // ----------------------------------------------------------------------------
 // Recent-decisions table (in-session local state — survives nav?)
@@ -218,6 +225,21 @@ export default function RiskConsolePage() {
             loading={loading}
             error={error}
             mock={mock}
+          />
+          <NarrativePivotCard />
+          <CostCurveSlider
+            probability={result?.probability ?? null}
+            mock={mock}
+          />
+          <RulesToggleCard
+            order={order}
+            lastDecision={result?.decision ?? null}
+            lastProbability={result?.probability ?? null}
+            onRescore={score}
+          />
+          <AgentConsole
+            recentCount={recent.length}
+            rulesCount={rulesQuery.data?.rules.length ?? 0}
           />
           <RecentDecisionsCard
             rows={recent}
@@ -575,6 +597,9 @@ function ResultCard({
           probability={result.probability ?? undefined}
           reasons={result.explanation}
           orderSummary={summarizeOrder(result)}
+          mock={mock}
+          acceptT={result.gate_thresholds?.legacy_accept_t}
+          rejectT={result.gate_thresholds?.legacy_reject_t}
         />
         {result.cost_breakdown && (
           <CostBreakdownTable breakdown={result.cost_breakdown} />
@@ -646,11 +671,17 @@ function ExplainabilityPanel({
   probability,
   reasons,
   orderSummary,
+  mock,
+  acceptT,
+  rejectT,
 }: {
   decision: Decision;
   probability?: number;
   reasons: ReasonCode[];
   orderSummary: string;
+  mock?: boolean;
+  acceptT?: number;
+  rejectT?: number;
 }) {
   const pct = probability === undefined ? null : Math.round(probability * 100);
   return (
@@ -693,6 +724,15 @@ function ExplainabilityPanel({
           ))}
         </ul>
       )}
+      <div className="mt-3">
+        <ShapWaterfall
+          reasons={reasons}
+          probability={probability ?? null}
+          acceptT={acceptT}
+          rejectT={rejectT}
+          mock={mock}
+        />
+      </div>
     </div>
   );
 }

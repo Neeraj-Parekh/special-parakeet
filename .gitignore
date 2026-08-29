@@ -52,3 +52,9 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Security: leaked-credential context file (untracked, never commit)
+upload/system design context.txt
+upload/system_design_context.txt
+upload/system-design-context.txt
+tool-results/

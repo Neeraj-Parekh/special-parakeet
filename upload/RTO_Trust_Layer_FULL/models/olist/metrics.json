@@ -16,7 +16,7 @@
   "base_return_rate": 0.012409368369183738,
   "data_source": "data/olist/olist_merged_orders.csv",
   "feature_count": 14,
-  "trained_at": "2026-08-28T06:20:22Z",
+  "trained_at": "2026-08-29T08:45:21Z",
   "model_config": "HistGB(max_iter=250,max_depth=4,lr=0.08,l2_reg=0.1,class_weight=balanced)",
   "priors": {
     "p_orig": 0.013085780370072405,
@@ -27,7 +27,7 @@
     "n_pos_test": 193,
     "calibration_method": "identity",
     "note": "class_weight=balanced does not resample labels; p_und = p_orig.",
-    "created_at": "2026-08-28T06:20:22Z",
+    "created_at": "2026-08-29T08:45:21Z",
     "source": "github-actions:train.yml nightly cron"
   }
 }

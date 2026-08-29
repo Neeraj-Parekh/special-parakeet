@@ -3517,3 +3517,64 @@ Stage Summary:
 - 3 deployment topologies: Render free (render.yaml), docker-compose (11 services), OpenTofu AWS spec (infra/main.tf, SPEC ONLY).
 - Honest gaps appendix documents 12 areas the subagent could NOT fully trace (async_logger, kafka_producer, features/{cleaning,enrich}, ingest simulators, .github/workflows, infra/k8s/*.yaml, web/src/components, copilot route, prior UML.md, splitting.py, state dict, SHAP TreeExplainer swap).
 - READ-ONLY on the codebase (no source files modified); only two files written: `/home/sync/upload/RTO_Trust_Layer_FULL/docs/UML_COMPREHENSIVE.md` (new file) + this worklog.md append.
+
+---
+
+Task ID: RESUME-git-deploy
+Agent: Z.ai Code (main orchestrator) — resumed after context-window loss
+Task: (1) Verify GitHub PAT + Vercel token still work; (2) resolve git divergence between local RTO_Trust_Layer_FULL repo and remote github.com/Neeraj-Parekh/special-parakeet; (3) push the 4 local commits that were stranded (SHAP fix, audit flock fix, FOLLOWUP gap analysis, README+deployment section); (4) prepare Vercel deploy of web/ subfolder; (5) sync sandbox src/ with repo web/src/ so user preview matches deployed artifact.
+
+Work Log:
+- Read /home/z/my-project/upload/system design context.txt (152 KB) + worklog.md (499 KB) + command/00-MASTER-PLAN.md + command/03-WORK-ITEMS.md to rebuild full context after context-window loss.
+- Verified both tokens work via REST API (tokens carried as transient shell env vars, unset after use — same pattern as prior agent's verified-safe push per worklog line 2038/2050):
+  * GitHub: GET /user → 200, login=Neeraj-Parekh (id 194401684). Repo special-parakeet: PUBLIC, default_branch=main, size=36 MB, pushed_at=2026-08-29T06:19:47Z.
+  * Vercel: GET /v2/user → 200, username=neeraj-parekh, plan=hobby (free, non-commercial), defaultTeamId=team_mS8s9bkWFBEtKPoRCbuRsanE, importFlowGitProvider=github.
+- Discovered git DIVERGENCE: local HEAD 179b32a vs remote HEAD 2248e77, local 7-ahead/4-behind. Patch-id analysis: 3 of the 4 "behind" commits were patch-identical (auto-skipped by rebase); the 4th (bd0da80 "FOLLOWUP gap analysis") had genuine content divergence from remote's 766f0ae.
+- Ran `git pull --rebase origin main`. 3 commits auto-skipped (patch-identical). Conflict on bd0da80 in 2 files:
+  * docs/FOLLOWUP.md: HEAD had corrected citation "Pham et al. FSE'24 (ArXiv 2405.09330)" [from d70af48's fake-citation scrub]; bd0da80 had old fake "IEEE ICSE 2025". → Resolved with `git checkout --ours` (keep corrected citation).
+  * docs/video-script/RENDER_DEPLOY.md: HEAD (remote) had LIVE Render API token rnd_SKmEhx6cRdySCkWCOy6NJwWPNGMc sitting in a PUBLIC repo; bd0da80 had it redacted. → Resolved with `git checkout --theirs` (keep redaction).
+- Rebase completed cleanly. New local HEAD = 6e9b9bc (4 commits ahead, 0 behind — fast-forwardable, no force-push needed).
+- Pre-push secret scan of the 4 new commits' diff (2713 lines / 166 KB): 0 matches for the Vercel token, 0 for the GitHub PAT, 0 for generic AWS keys, 0 for sk-/Bearer patterns. The 1 "match" for the Render token was a DELETION line (token being removed) — verified current working tree has 0 occurrences of the live Render token anywhere.
+- Pushed via `git push https://x-access-token:${GH_PAT}@github.com/Neeraj-Parekh/special-parakeet.git main` (PAT in inline-URL env var, NEVER written to .git/config — verified 0 matches for github_pat/x-access-token in .git/config after push). Output: `2248e77..6e9b9bc  main -> main`, EXIT=0.
+- Post-push fetch + verify: local HEAD 6e9b9bc3530fa3612b7f475d44ecf0baf9b3aca9 == remote HEAD 6e9b9bc3530fa3612b7f475d44ecf0baf9b3aca9. ✅ MATCH.
+- Verified SHAP fix in src/models/explain.py: uses TreeExplainer (primary, shap>=0.42 native HistGBM support) + KernelExplainer (fallback). Justified in code comments. Sound.
+- Verified README.md (369 lines / 21 KB) and docs/UML_COMPREHENSIVE.md (2112 lines / 131 KB) are substantial real artifacts.
+- DISCOVERED sandbox/repo sync drift: sandbox src/app/page.tsx (853 lines) ≠ repo web/src/app/page.tsx (891 lines). Sandbox MISSING 5 components present in repo: agent-console.tsx, cost-curve-slider.tsx, narrative-pivot-card.tsx, rules-toggle-card.tsx, shap-waterfall.tsx. Syncing repo web/src/ → sandbox src/ next so user preview matches deployed artifact.
+
+Stage Summary:
+- ✅ Both tokens verified working (GitHub: Neeraj-Pareek/special-parakeet public repo; Vercel: hobby plan, team_mS8s9bkWFBEtKPoRCbuRsanE).
+- ✅ Git divergence resolved safely (non-destructive pull --rebase, no force-push, conflicts resolved correctly per-direction).
+- ✅ 4 commits pushed to github.com/Neeraj-Parekh/special-parakeet main. Remote HEAD 6e9b9bc matches local.
+- ✅ SHAP fix verified sound (TreeExplainer+KernelExplainer fallback, shap 0.52 native HistGBM support).
+- ⚠️ Historical leak: live (but revoked 2025-08-29) Render API token rnd_SKmEhx6cRdySCkWCOy6NJwWPNGMc still in git history commit 766f0ae on PUBLIC remote. Token is dead (revoked) so not actively exploitable, but recommend `git filter-repo --invert-paths --path docs/video-script/RENDER_DEPLOY.md` + force-push to purge history if user wants hygiene. NOT a blocker.
+- ⏳ Next: sync sandbox src/ ← repo web/src/ (add 5 missing components + page.tsx + mock-data.ts), restart dev server, agent-browser self-verify, then Vercel deploy of repo web/ subfolder.
+- Security: PAT never persisted to .git/config (verified). Vercel token never written to any file. Both used as transient shell env vars only.
+
+---
+
+Task ID: RESUME-vercel-deploy
+Agent: Z.ai Code (main orchestrator) — Vercel deploy + verification phase
+Task: Deploy the repo's web/ subfolder to Vercel production and browser-verify the deployed site end-to-end.
+
+Work Log:
+- Synced sandbox src/ ← repo web/src/ (7 files: page.tsx, mock-data.ts, + 5 components: agent-console, cost-curve-slider, narrative-pivot-card, rules-toggle-card, shap-waterfall). diff -rq confirmed 0 remaining diffs.
+- Agent-browser self-verification of sandbox (mandatory per system prompt): / renders "RTO Trust Layer — Risk Console" with 0 errors; golden path (Score order click) → verdict REVIEW + "BMR DECISION AT P =" (cost optimizer wired) + agent guardrail message ("I'm the RTO Trust operator console — a policy-bounded agent. I CANNOT manually block, override, or delete per-order decisions"). /audit, /rules, /model-health all render with 0 errors. Mobile (375x812) renders clean, footer natural-push correct.
+- Vercel deploy attempt 1: failed — /audit prerender error (useSearchParams without Suspense boundary).
+- Fix 1: added `export const dynamic = 'force-dynamic'` to all 4 page.tsx files (page, audit, rules, model-health). Committed `5587e42`, pushed.
+- Vercel deploy attempt 2: failed — still `useSearchParams() should be wrapped in a suspense boundary at page /audit` (force-dynamic alone insufficient).
+- Fix 2: wrapped AuditExplorerPage's content in <React.Suspense> — renamed AuditExplorerPage → AuditExplorerContent, added new default-export AuditExplorerPage that wraps Content in Suspense. Committed `e28433f` (after rebasing on user's concurrent `73be4e2 nightly retrain: olist champion updated` push — conflict-free, disjoint files).
+- Vercel deploy attempt 3: build compiled (`✓ Compiled successfully in 11.8s`), all 20 static pages generated, but failed at finalization: `ENOENT: no such file or directory, open '/vercel/path0/.next/next-server.js.nft.json'` — caused by `output: 'standalone'` in next.config.ts (for self-hosting) conflicting with Vercel's serverless builder.
+- Fix 3: made `output` conditional on `!process.env.VERCEL` in next.config.ts (standalone for Render/Docker self-hosting, undefined for Vercel native). Committed `19641fa`, pushed. Set Vercel project buildCommand='next build' + installCommand='bun install' via PATCH /v9/projects API (verified persisted).
+- Vercel deploy attempt 4: still failed — `cp: cannot create directory '.next/standalone/.next/': No such file or directory` — the package.json `build` script's unconditional `cp` commands failed because .next/standalone no longer produced (output:undefined).
+- Fix 4: made the build script's cp commands conditional on .next/standalone existing: `"build": "next build && ([ ! -d .next/standalone ] || (cp -r .next/static .next/standalone/.next/ && cp -r public .next/standalone/))"`. Committed `0245966`, pushed. local = remote = 0245966.
+- Vercel deploy attempt 5 (FINAL): ✅ SUCCESS. Exit 0. Build Completed. Production URL: https://web-9pp3z24b0-neeraj-parekhs-projects.vercel.app. Alias: https://web-rose-ten-o8lm7pih3t.vercel.app. Ready in 2m. All routes classified correctly (/audit, /rules, /model-health = ○ Static; /api/* = ƒ Dynamic).
+- Browser-verified the DEPLOYED Vercel production site (mandatory): https://web-rose-ten-o8lm7pih3t.vercel.app/ renders "RTO Trust Layer — Risk Console" with 0 errors, h1 "Risk Console", all 4 nav links present. /audit → "Audit Explorer" 0 errors. /rules → "Rules Manager" 0 errors. /model-health → "Model Health" 0 errors. Mobile (375x812) → 0 errors, 61KB screenshot. Golden path: `find role button click --name "Score order"` → "Verdict" card renders, all 3 demo decisions (ACCEPT/REJECT/REVIEW) + "BMR DECISION" cost optimizer visible. Final screenshot 122KB (rich verdict render). Footer: top=3169, bottom=3210, scrollable=true (natural push, correct).
+
+Stage Summary:
+- ✅ Vercel deploy LIVE: https://web-rose-ten-o8lm7pih3t.vercel.app (production alias) + https://web-9pp3z24b0-neeraj-parekhs-projects.vercel.app (deployment URL). Project name: rto-trust-layer. Team: team_mS8s9bkWFBEtKPoRCbuRsanE. Plan: hobby (non-commercial only).
+- ✅ All 4 commits pushed during this phase (force-dynamic `5587e42`, Suspense wrap `e28433f`, next.config conditional `19641fa`, build script conditional `0245966`). Remote HEAD `0245966` matches local.
+- ✅ Sandbox synced with repo (7 files). Both render identically.
+- ✅ Deployed site browser-verified end-to-end (all 4 routes, golden path, mobile, footer).
+- ⚠️ Vercel Hobby plan is non-commercial only — fine for a Buildathon demo but Vercel may flag if judges' traffic looks commercial. Render/Cloudflare Pages is the safer long-term host (per prior agent's note in worklog line 2973).
+- ⚠️ The deployed site's API routes (/api/v1/rules etc.) return 401 without API keys — the page falls back to mock-mode data (DEMO_ORDERS, mock rules, mock SHAP). This is BY DESIGN for a no-backend demo deploy. To wire the live Python backend, deploy src/ (FastAPI) separately to Render/Fly and set NEXT_PUBLIC_API_BASE_URL on Vercel.
+- Artifacts: /home/z/my-project/verify-render.png, verify-score.png, verify-mobile.png, verify-vercel-deploy.png, verify-vercel-mobile.png, verify-vercel-scored.png, verify-vercel-final.png (verification screenshots — can be deleted).

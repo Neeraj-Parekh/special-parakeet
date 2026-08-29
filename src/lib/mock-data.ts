@@ -603,6 +603,126 @@ export const SAMPLE_COST_CURVES: CostCurvePoint[] = [
 
 export const SAMPLE_OPTIMAL_THRESHOLD = 0.15;
 
+// ----------------------------------------------------------------------------
+// Cost-curve slider (demo moment #6) — Bahnsen Bayes Minimum Risk helpers.
+//
+// The slider lets a judge dial `C_fn` (false-negative cost) + `probability`
+// (model P(RTO)) and watch the cost-optimal decision flip live. These
+// helpers mirror `src/business/cost_optimizer.py::optimal_decision` 1:1 so
+// the live `CostBreakdownTable` shown in the Verdict card + the chart in
+// the cost-curve slider agree at every input combination — no "demo math"
+// drift between the slider and the real /risk/score response.
+//
+//   cost_accept = p · c_fn                                          (ship)
+//   cost_review = c_otp + (1 − p)·c_fp + p·(1 − otp_eff)·c_fn       (OTP gate)
+//   cost_reject = (1 − p) · c_block                                 (block)
+//   decision    = argmin over the three (Bahnsen Eq.5 BMR, ICMLA 2013)
+//
+// Defaults match the deployed weights (c_fp=50, c_fn=600, c_otp=5,
+// c_block=1000, otp_eff=0.82) used by both the Python `optimal_decision`
+// and the `mockScore` mock response — see docs/cost_table.md.
+// ----------------------------------------------------------------------------
+export interface BmrWeights {
+  c_fp: number;
+  c_fn: number;
+  c_otp: number;
+  c_block: number;
+  otp_effectiveness: number;
+}
+
+export const DEFAULT_BMR_WEIGHTS: BmrWeights = {
+  c_fp: 50,
+  c_fn: 600,
+  c_otp: 5,
+  c_block: 1000,
+  otp_effectiveness: 0.82,
+};
+
+/** Single sample point on the Bahnsen BMR cost-curve surface. */
+export interface CostCurveSample {
+  probability: number;
+  ACCEPT: number;
+  REVIEW: number;
+  REJECT: number;
+  decision: Decision;
+}
+
+/** Bahnsen Eq.(5) — per-decision expected cost at probability `p`. */
+export function bmrExpectedCosts(
+  p: number,
+  weights: Partial<BmrWeights> = {},
+): { ACCEPT: number; REVIEW: number; REJECT: number } {
+  const w: BmrWeights = { ...DEFAULT_BMR_WEIGHTS, ...weights };
+  const cost_accept = p * w.c_fn;
+  const cost_review =
+    w.c_otp + (1 - p) * w.c_fp + p * (1 - w.otp_effectiveness) * w.c_fn;
+  const cost_reject = (1 - p) * w.c_block;
+  return {
+    ACCEPT: Math.round(cost_accept * 100) / 100,
+    REVIEW: Math.round(cost_review * 100) / 100,
+    REJECT: Math.round(cost_reject * 100) / 100,
+  };
+}
+
+/** Argmin decision ∈ {ACCEPT, REVIEW, REJECT} at probability `p`. */
+export function bmrDecisionAt(
+  p: number,
+  weights: Partial<BmrWeights> = {},
+): { decision: Decision; costs: { ACCEPT: number; REVIEW: number; REJECT: number } } {
+  const costs = bmrExpectedCosts(p, weights);
+  const min = Math.min(costs.ACCEPT, costs.REVIEW, costs.REJECT);
+  let decision: Decision = "REVIEW";
+  // Tie-break by lowest friction: ACCEPT > REVIEW > REJECT (matches the
+  // Python `optimal_intervention` insertion-order tie-break, less-is-more).
+  if (costs.ACCEPT === min) decision = "ACCEPT";
+  else if (costs.REVIEW === min) decision = "REVIEW";
+  else decision = "REJECT";
+  return { decision, costs };
+}
+
+/**
+ * Sample the cost-curve surface over P(RTO) ∈ [0,1]. Returns N evenly
+ * spaced points with the three expected-cost curves so the cost-curve
+ * slider can render them with Recharts. Drummond-Holte 2006 §3.6.
+ */
+export function sampleCostCurve(
+  weights: Partial<BmrWeights> = {},
+  n = 41,
+): CostCurveSample[] {
+  const out: CostCurveSample[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = i / (n - 1);
+    const { costs, decision } = bmrDecisionAt(p, weights);
+    out.push({
+      probability: Math.round(p * 1000) / 1000,
+      ACCEPT: costs.ACCEPT,
+      REVIEW: costs.REVIEW,
+      REJECT: costs.REJECT,
+      decision,
+    });
+  }
+  return out;
+}
+
+/**
+ * Find the crossover probabilities where the cost-optimal decision flips.
+ * Returns the ascending list of P(RTO) at which argmin changes — so the
+ * slider can render vertical "flip points" on the chart.
+ */
+export function findDecisionCrossovers(
+  weights: Partial<BmrWeights> = {},
+): number[] {
+  const curve = sampleCostCurve(weights, 201);
+  const crossovers: number[] = [];
+  for (let i = 1; i < curve.length; i++) {
+    if (curve[i].decision !== curve[i - 1].decision) {
+      crossovers.push(curve[i].probability);
+    }
+  }
+  return crossovers;
+}
+
+
 // Model health — champion + drift state.
 export const SAMPLE_MODEL_CURRENT = {
   champion: {

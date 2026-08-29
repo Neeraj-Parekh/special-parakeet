@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = "force-dynamic";
+
 import * as React from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -51,7 +53,7 @@ interface VerifyResult {
   first_bad_audit_id: string | null;
 }
 
-export default function AuditExplorerPage() {
+function AuditExplorerContent() {
   const params = useSearchParams();
   const keys = useApiKeys();
   const [records, setRecords] = React.useState<AuditRecord[]>([]);
@@ -250,6 +252,14 @@ export default function AuditExplorerPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function AuditExplorerPage() {
+  return (
+    <React.Suspense fallback={<div className="p-8 text-sm text-muted-foreground">Loading audit explorer…</div>}>
+      <AuditExplorerContent />
+    </React.Suspense>
   );
 }
 

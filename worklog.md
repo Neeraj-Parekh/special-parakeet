@@ -3587,8 +3587,8 @@ Task: Remove the leaked-credential file directly from git (Vercel token vcp_5SV9
 Work Log:
 - Scanned all tracked files for unique token prefixes `vcp_5SV9fYAw` (full Vercel token) and `github_pat_11BOLF` (full GitHub PAT).
 - Found TWO tracked files containing full credentials (terminal display was auto-redacting the GitHub PAT as `[REDACTED:github_token]`, but raw byte dump via `od -c` confirmed full token present):
-  1. `upload/system design context.txt` (line 2635) — full Vercel token `REDACTED_VERCEL_TOKEN`
-  2. `tool-results/read_1787991756159_ac7a26ec339f.txt` (lines 934, 1092, 1097) — full GitHub PAT `REDACTED_GITHUB_TOKEN`
+  1. `upload/system design context.txt` (line 2635) — full Vercel token `[REDACTED:vercel_token]`
+  2. `tool-results/read_1787991756159_ac7a26ec339f.txt` (lines 934, 1092, 1097) — full GitHub PAT `[REDACTED:github_token]`
 - `git rm --cached` on `upload/system design context.txt` (local copy preserved).
 - `git rm -r --cached tool-results/` (entire debug-log dir, now in .gitignore).
 - Appended explicit gitignore rules for `upload/system design context.txt`, `upload/system_design_context.txt`, `upload/system-design-context.txt`, and `tool-results/`.

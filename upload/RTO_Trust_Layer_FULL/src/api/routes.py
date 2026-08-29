@@ -1742,6 +1742,7 @@ def create_app(
                         # on any failure so the response shape stays
                         # stable and the endpoint never 500s.
                         try:
+                            import numpy as _np  # routes.py doesn't import numpy at module level
                             _shap_explainer = state.get("shap_explainer")
                             if _shap_explainer is None:
                                 import shap as _shap_mod
@@ -1751,15 +1752,15 @@ def create_app(
                             # formats: list of 2 arrays (pre-0.45 binary),
                             # Explanation object (new API), or raw ndarray.
                             if isinstance(_sv, list) and len(_sv) >= 2:
-                                _sv_arr = list(np.asarray(_sv[1]).flatten())
+                                _sv_arr = list(_np.asarray(_sv[1]).flatten())
                             elif hasattr(_sv, "values") and hasattr(_sv, "base_values"):
-                                _vals = np.asarray(_sv.values)
+                                _vals = _np.asarray(_sv.values)
                                 if _vals.ndim == 3 and _vals.shape[-1] == 2:
                                     _sv_arr = list(_vals[0, :, 1].flatten())
                                 else:
                                     _sv_arr = list(_vals.flatten())
                             else:
-                                _sv_arr = list(np.asarray(_sv).flatten())
+                                _sv_arr = list(_np.asarray(_sv).flatten())
                             _feat_names = list(_feat_builder.feat_names)
                             _feat_vals = (
                                 list(X[0]) if hasattr(X, "shape") and getattr(X, "ndim", 0) == 2

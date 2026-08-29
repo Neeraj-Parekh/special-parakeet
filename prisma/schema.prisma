@@ -1,8 +1,9 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+// Looking for ways to speed up your queries, or scale easily with your
+// serverless or edge functions? Try Prisma Accelerate:
+// https://pris.ly/cli/accelerate-init
 
 generator client {
   provider = "prisma-client-js"
@@ -11,6 +12,75 @@ generator client {
 datasource db {
   provider = "sqlite"
   url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// G5 — Case Management SLA
+//
+// The cases table is the analyst workload surface for REVIEW decisions.
+// Every REVIEW verdict from /risk/score that exceeds a risk threshold gets
+// a case opened here. Analysts work cases through the queue; the SLA
+// columns drive overdue detection and the metrics endpoint
+// (auto-resolution rate, avg resolution time).
+//
+// Schema design mirrors Sardine/Unit21 case queues:
+//   - assigned_to / qa_reviewer: split first-line work from QA
+//   - due_at / sla_breached: the SLA clock (4h for high, 24h for medium)
+//   - status lifecycle: OPEN → IN_PROGRESS → PENDING_QA → RESOLVED → CLOSED
+//   - resolution: the analyst verdict + freeform note
+//
+// SQLite has no enum type — use String with an app-level union. Prisma
+// validates at the client boundary via the CaseStatus/CasePriority types
+// in src/lib/cases/service.ts.
+// ---------------------------------------------------------------------------
+
+model Case {
+  id            String   @id @default(cuid())
+  predictionId  String
+  customerId    String
+  orderId       String
+  amountInr     Float
+  riskScore     Float
+  priority      String   @default("medium") // low | medium | high
+  status        String   @default("open") // open | in_progress | pending_qa | resolved | closed
+  assignedTo    String?  // analyst handle; null = unassigned
+  qaReviewer    String?  // second-line QA reviewer
+  dueAt         DateTime
+  slaBreached   Boolean  @default(false)
+  openedAt      DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  resolvedAt    DateTime?
+  resolution    String?  // accept | reject | escalate | dismiss
+  resolutionNote String?
+
+  @@index([status, priority, dueAt])
+  @@index([assignedTo, status])
+  @@index([customerId])
+}
+
+// ---------------------------------------------------------------------------
+// G7 — Refresh-token rotation
+//
+// Refresh tokens are server-side stateful: a rotated refresh token
+// invalidates its predecessor. The family id groups a token and all its
+// rotations; reusing a revoked token from a family flips `compromised`,
+// which /auth/refresh uses to nuke the whole family (refresh-token
+// rotation attack detection, the OAuth2 threat-model mitigation).
+// ---------------------------------------------------------------------------
+
+model RefreshToken {
+  id           String   @id @default(cuid())
+  familyId     String
+  userId       String
+  hashedToken  String   @unique // SHA-256 of the raw refresh token
+  scope        String   // space-separated scopes: score admin audit:read cases:write
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  compromised  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([familyId])
+  @@index([userId])
 }
 
 model User {

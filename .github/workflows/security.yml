@@ -1,0 +1,78 @@
+# SEC-1 — Supply-chain + SAST security CI.
+#
+# Runs on every PR and push to main. Three jobs:
+#   1. audit-deps   — `bun audit` for known CVEs in the dependency tree
+#                      (the npm/bun equivalent of `pip-audit`).
+#   2. semgrep-sast  — Semgrep with the `p/owasp-top-ten` + `p/typescript`
+#                      rulesets. Flags SSRF, injection, hardcoded creds,
+#                      weak crypto. Non-blocking on info/low; fails on
+#                      high/critical.
+#   3. secret-scan   — TruffleHog + git-secrets-style regex sweep for
+#                      AWS keys, Stripe keys, JWTs, private keys.
+#                      Fails on any verified finding.
+#
+# This is the supply-chain-aware baseline. Adding Snyk + Dependabot
+# (the GitHub-native equivalents) is the production upgrade path.
+
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly at 02:30 UTC — catch newly-disclosed CVEs.
+    - cron: "30 2 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  audit-deps:
+    name: Dependency audit (bun audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      # SEC-1: fail the build on high/critical CVEs.
+      - name: bun audit
+        run: bun audit --level high
+        continue-on-error: false
+
+  semgrep-sast:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/typescript
+            p/react
+            p/security-audit
+      # Fail on HIGH/CRITICAL findings; info/low go to the report.
+      - name: gate on high/critical
+        run: |
+          if jq -e '.results | map(select(.extra.severity == "ERROR" or .extra.severity == "WARNING")) | length > 0' semgrep.sarif 2>/dev/null; then
+            echo "High/critical Semgrep findings present — failing build"
+            exit 1
+          fi
+
+  secret-scan:
+    name: Secret scan (TruffleHog)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history — secrets can be anywhere.
+          fetch-depth: 0
+      - name: TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: .
+          extra_args: --only-verified

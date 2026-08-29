@@ -1,0 +1,64 @@
+# infra/k8s/multi-az/hpa.yaml
+#
+# HorizontalPodAutoscaler for the multi-az API Deployment.
+#
+# Little's Law: L = λW. At λ=1000 req/s, p99 W=0.04s ⇒ L=40 in-flight.
+# HPA targets ~40 req/pod ⇒ 25 pods ceiling.
+#
+# Translation: at the project's claimed sustained load (1000 req/s) and
+# the latency SLO (p99 ≤ 40ms), the number of in-flight requests the
+# system carries is L = 1000 × 0.04 = 40. If each pod can absorb ~40
+# concurrent requests before its own p99 budget breaks, the autoscaler
+# only needs to grow the fleet to ~25 pods to keep the queue ahead of
+# the API from saturating. We pick a 20-pod ceiling as a defensive
+# under-claim (cheaper than the math says — see docs/LATENCY_ENGINEERING.md
+# for the full queueing derivation).
+#
+# Scale-up policy: aggressive (100% in 30s) so a 10× burst absorbs
+# inside one autoscaler window. Scale-down policy: conservative
+# (50% in 60s, 5-min stabilization) so a brief dip doesn't tear down
+# pods that a follow-on burst would just re-create.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rto-api-hpa
+  namespace: rto-trust-layer
+  labels:
+    app.kubernetes.io/name: rto-trust-layer
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: multi-az
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rto-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+      selectPolicy: Min

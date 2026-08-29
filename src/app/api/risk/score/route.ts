@@ -20,6 +20,11 @@ import {
   parseJsonBody,
 } from "@/lib/api-proxy";
 import { mockScore, type OrderInput } from "@/lib/mock-data";
+// RTC-2 — import the SHAP prebuild so it fires at first score-route
+// request (the hot path) rather than lazily on the first explain()
+// call. The prebuild runs at module load; the cost (~900ms) overlaps
+// with route compilation rather than inflating p99.
+import "@/lib/shap/prebuild";
 
 export const runtime = "nodejs";
 

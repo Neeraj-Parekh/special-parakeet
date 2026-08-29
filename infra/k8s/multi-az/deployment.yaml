@@ -1,0 +1,144 @@
+# infra/k8s/multi-az/deployment.yaml
+#
+# Multi-AZ Deployment for the RTO Trust Layer API.
+#
+# Pod anti-affinity + topologySpreadConstraints force the scheduler to
+# spread the 3 replicas across the cluster's AZs (az-a, az-b, az-c) so
+# the loss of a single AZ leaves ≥2 pods serving. The podAntiAffinity
+# is "preferred" not "required" — a strict requirement would block
+# scheduling in a 2-AZ cluster, and the hackathon's local kind/k3s has
+# only one AZ by default.
+#
+# Pair with:
+#   - pdb.yaml        — keep ≥2 pods alive during node drains.
+#   - hpa.yaml        — autoscale 3..20 pods on CPU 70%.
+#   - network-policy.yaml — restrict egress to DB + Kafka only.
+#
+# This manifest is committed but NOT applied to a real cluster — see
+# docs/MULTI_AZ.md §5 "Production swap" for the wiring path.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rto-api
+  namespace: rto-trust-layer
+  labels:
+    app.kubernetes.io/name: rto-trust-layer
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: multi-az
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rto-trust-layer
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: rto-trust-layer
+        app.kubernetes.io/component: api
+        app.kubernetes.io/part-of: multi-az
+    spec:
+      # Spread pods across AZs. When a zone is down the in-flight traffic
+      # drains to the survivors without exceeding the HPA ceiling.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: rto-trust-layer
+              app.kubernetes.io/component: api
+      # Preferred (not required) pod anti-affinity — works on a single-AZ
+      # kind/k3s cluster but spreads on a real multi-AZ EKS cluster.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: rto-trust-layer
+                    app.kubernetes.io/component: api
+                topologyKey: topology.kubernetes.io/zone
+      containers:
+        - name: api
+          image: rto-trust-layer:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: api-config
+            - secretRef:
+                name: postgres-creds
+          env:
+            - name: DATABASE_URL_A
+              valueFrom:
+                secretKeyRef:
+                  name: rds-creds-az-a
+                  key: url
+            - name: DATABASE_URL_B
+              valueFrom:
+                secretKeyRef:
+                  name: rds-creds-az-b
+                  key: url
+            - name: DATABASE_URL_C
+              valueFrom:
+                secretKeyRef:
+                  name: rds-creds-az-c
+                  key: url
+            - name: RAZORPAY_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: integration-secrets
+                  key: razorpay-webhook
+            - name: SHIPROCKET_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: integration-secrets
+                  key: shiprocket-token
+            - name: DELHIVERY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: integration-secrets
+                  key: delhivery-token
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 1000m
+              memory: 1Gi
+          # Liveness: is the process alive?
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          # Readiness: is the app ready to serve? Pod receives traffic
+          # only when this passes — failed DB ping → not-ready.
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          # Startup: give the model load + lifespan hooks up to 60s.
+          startupProbe:
+            httpGet:
+              path: /api/healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12

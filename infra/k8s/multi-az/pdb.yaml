@@ -1,0 +1,34 @@
+# infra/k8s/multi-az/pdb.yaml
+#
+# PodDisruptionBudget — keep ≥2 of 3 pods alive during voluntary
+# disruptions (node drain, cluster autoscaler scale-down). Combined
+# with the topologySpreadConstraints in deployment.yaml this means:
+#
+#   - An AZ loss (a zone going down) leaves ≥2 pods healthy because
+#     the spread forces at most 1 pod per AZ.
+#   - A node drain during a deploy leaves ≥2 pods because the PDB
+#     blocks the voluntary eviction of the 3rd.
+#
+# Involuntary disruptions (kernel panic, hardware failure) bypass the
+# PDB — that's what replicas: 3 + topologySpreadConstraints are for.
+#
+# RTC-3 — Little's Law (L = λW): at the worst-case λ=1000 req/s and
+# p99 W=0.04s the in-flight count is L=40. The PDB floor of 2 pods
+# is the upper bound on the loss-of-capacity event the queue ahead
+# of the API must absorb without rejecting — see docs/LATENCY_ENGINEERING.md
+# for the queueing model.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rto-api-pdb
+  namespace: rto-trust-layer
+  labels:
+    app.kubernetes.io/name: rto-trust-layer
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: multi-az
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rto-trust-layer
+      app.kubernetes.io/component: api

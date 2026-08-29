@@ -3578,3 +3578,28 @@ Stage Summary:
 - ⚠️ Vercel Hobby plan is non-commercial only — fine for a Buildathon demo but Vercel may flag if judges' traffic looks commercial. Render/Cloudflare Pages is the safer long-term host (per prior agent's note in worklog line 2973).
 - ⚠️ The deployed site's API routes (/api/v1/rules etc.) return 401 without API keys — the page falls back to mock-mode data (DEMO_ORDERS, mock rules, mock SHAP). This is BY DESIGN for a no-backend demo deploy. To wire the live Python backend, deploy src/ (FastAPI) separately to Render/Fly and set NEXT_PUBLIC_API_BASE_URL on Vercel.
 - Artifacts: /home/z/my-project/verify-render.png, verify-score.png, verify-mobile.png, verify-vercel-deploy.png, verify-vercel-mobile.png, verify-vercel-scored.png, verify-vercel-final.png (verification screenshots — can be deleted).
+
+---
+Task ID: security-scrub-leak-1
+Agent: main (Z.ai Code CLI)
+Task: Remove the leaked-credential file directly from git (Vercel token vcp_5SV9... + GitHub PAT github_pat_11BOLF...) so the repo can be safely pushed/deployed. Keep local copy for reference; do NOT commit any secrets to files.
+
+Work Log:
+- Scanned all tracked files for unique token prefixes `vcp_5SV9fYAw` (full Vercel token) and `github_pat_11BOLF` (full GitHub PAT).
+- Found TWO tracked files containing full credentials (terminal display was auto-redacting the GitHub PAT as `[REDACTED:github_token]`, but raw byte dump via `od -c` confirmed full token present):
+  1. `upload/system design context.txt` (line 2635) — full Vercel token `REDACTED_VERCEL_TOKEN`
+  2. `tool-results/read_1787991756159_ac7a26ec339f.txt` (lines 934, 1092, 1097) — full GitHub PAT `REDACTED_GITHUB_TOKEN`
+- `git rm --cached` on `upload/system design context.txt` (local copy preserved).
+- `git rm -r --cached tool-results/` (entire debug-log dir, now in .gitignore).
+- Appended explicit gitignore rules for `upload/system design context.txt`, `upload/system_design_context.txt`, `upload/system-design-context.txt`, and `tool-results/`.
+- Confirmed via `git log --all -S` that BOTH leaked tokens were introduced ONLY in HEAD commit `39b5d1a` — no earlier commits contain them.
+- `git commit --amend` to remove the leaked files from HEAD's tree (new HEAD = `f6658d3`).
+- `git reflog expire --expire=now --all` + `git gc --prune=now --aggressive` to drop the dangling blob containing the secrets.
+- Saved a local backup of the leaked context file to `/tmp/system_design_context_REDACTED_BACKUP.txt` (out of repo, just in case).
+
+Stage Summary:
+- FINAL VERIFICATION: `git log --all -p | grep -c vcp_5SV9fYAw` → 0; `grep -c github_pat_11BOLF` → 0. Also scanned all git objects (including dangling) — no matches.
+- Tracked-files count: 505 (down from before; tool-results/* + system design context.txt no longer tracked).
+- Local copy of `upload/system design context.txt` is preserved as an untracked file (size 173728 bytes); gitignored so it can never be re-added.
+- `upload/RTO_Trust_Layer_FULL.bak-pre-redact` still shows as a broken submodule-like entry in git status (no .gitmodules file exists). Not part of the leak scope — left alone for now.
+- STANDING SECURITY ADVISORY: Both tokens (Vercel `vcp_5SV9...` and GitHub PAT `github_pat_11BOLF...`) are leaked in chat history AND are still in active use per user request (in-chat only, env vars at deploy time). User MUST rotate both after the work is done. Repo-side exposure is now eliminated.

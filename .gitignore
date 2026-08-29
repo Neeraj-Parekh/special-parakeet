@@ -57,4 +57,9 @@ server.log
 upload/system design context.txt
 upload/system_design_context.txt
 upload/system-design-context.txt
-tool-results/upload/RTO_Trust_Layer_FULL.bak-pre-redact/
+
+# Security: tool-results dir (never commit — may contain dumped secrets)
+tool-results/
+
+# Security: pre-redaction backup dir (broken gitlink, no .gitmodules; never commit)
+upload/RTO_Trust_Layer_FULL.bak-pre-redact/

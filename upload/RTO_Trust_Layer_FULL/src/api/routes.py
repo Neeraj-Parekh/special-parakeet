@@ -1722,6 +1722,81 @@ def create_app(
                                 except Exception:  # pragma: no cover
                                     pass
                         state["breaker"].record_success()
+                        # ----------------------------------------------------------------
+                        # SHAP waterfall fix (audit gap #3, worklog Task 4a):
+                        # ----------------------------------------------------------------
+                        # ``reason_codes_batch`` above (line ~1622/1640)
+                        # uses perturbation-based attribution with the row's
+                        # own median as the reference. For a single-row
+                        # input the median IS the row -> every perturbation
+                        # returns the same probability -> delta_prob = 0
+                        # for all features -> the dashboard's ShapWaterfall
+                        # renders all-zero bars. The honest comment at line
+                        # 1615 admits this but the runtime still shipped it.
+                        #
+                        # Compute REAL TreeSHAP values via the cached
+                        # explainer (state["shap_explainer"] is now a
+                        # TreeExplainer after the fix at line ~3608) and
+                        # overwrite ``reasons`` with the real attributions.
+                        # Falls back to the perturbation-based ``reasons``
+                        # on any failure so the response shape stays
+                        # stable and the endpoint never 500s.
+                        try:
+                            _shap_explainer = state.get("shap_explainer")
+                            if _shap_explainer is None:
+                                import shap as _shap_mod
+                                _shap_explainer = _shap_mod.TreeExplainer(_active_model)
+                            _sv = _shap_explainer.shap_values(X)
+                            # Normalize across SHAP's heterogeneous output
+                            # formats: list of 2 arrays (pre-0.45 binary),
+                            # Explanation object (new API), or raw ndarray.
+                            if isinstance(_sv, list) and len(_sv) >= 2:
+                                _sv_arr = list(np.asarray(_sv[1]).flatten())
+                            elif hasattr(_sv, "values") and hasattr(_sv, "base_values"):
+                                _vals = np.asarray(_sv.values)
+                                if _vals.ndim == 3 and _vals.shape[-1] == 2:
+                                    _sv_arr = list(_vals[0, :, 1].flatten())
+                                else:
+                                    _sv_arr = list(_vals.flatten())
+                            else:
+                                _sv_arr = list(np.asarray(_sv).flatten())
+                            _feat_names = list(_feat_builder.feat_names)
+                            _feat_vals = (
+                                list(X[0]) if hasattr(X, "shape") and getattr(X, "ndim", 0) == 2
+                                else list(X.iloc[0])
+                            )
+                            _shap_reasons = [
+                                {
+                                    "feature": _feat_names[i],
+                                    "value": (
+                                        float(_feat_vals[i])
+                                        if i < len(_feat_vals)
+                                        and _feat_vals[i] is not None
+                                        and not isinstance(_feat_vals[i], str)
+                                        else (_feat_vals[i] if i < len(_feat_vals) else None)
+                                    ),
+                                    "delta_prob": round(float(_sv_arr[i]), 5),
+                                    "direction": (
+                                        "raises_risk"
+                                        if _sv_arr[i] > 0
+                                        else "lowers_risk"
+                                    ),
+                                }
+                                for i in range(min(len(_feat_names), len(_sv_arr)))
+                                if abs(_sv_arr[i]) > 0.001  # filter numerical noise
+                            ]
+                            _shap_reasons.sort(
+                                key=lambda d: abs(d["delta_prob"]), reverse=True
+                            )
+                            if _shap_reasons:
+                                reasons = _shap_reasons[:5]
+                        except Exception:
+                            # SHAP computation failed (shap not installed,
+                            # TreeExplainer raised InvalidModelError on a
+                            # non-tree model, etc.) - keep the perturbation
+                            # ``reasons`` as a graceful fallback. The
+                            # /risk/score endpoint must never 500 here.
+                            pass
                     except Exception:
                         state["breaker"].record_failure()
                         proba = None

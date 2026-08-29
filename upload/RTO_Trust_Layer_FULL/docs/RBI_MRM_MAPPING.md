@@ -37,7 +37,7 @@ honestly say "📋 future — see <doc>".
 |---|----------------------------|------------------------|---------|----------|----------------------------|
 | 1 | **Complete model inventory** (§4.1) | Every model, dataset, compute pipeline, and inference path must be continuously discovered + logged in a single inventory | `model_registry` table exists (`src/ml/registry.py:register_model`, line 70) with `is_champion` partial-unique index, but no auto-discovery — the Olist `model.pkl` lives on disk outside the registry unless `_seed_olist_registry` runs at boot | 🔴 HIGH | `src/ml/registry.py:register_model` (line 70) — ✅ the registry; `src/api/routes.py:_seed_champion_registry` (line 488) + `_seed_olist_registry` (line 582) — ✅ the seeders; 📋 auto-discovery scanner — future, see `docs/SELF_INVENTORY.md` §A |
 | 2 | **Independent validation before + after deploy** (§4.3) | A team independent of the model authors must red-team every model update — Tramèr-style extraction, gradient attacks, evasion attacks | `scripts/security_probes.py` exists but is mechanical (regex + tautology scans); no Tramèr extraction, no gradient attack, no evasion simulation | 🔴 HIGH | `scripts/security_probes.py` — ✅ mechanical probes; 📋 adversarial red-team — future, see `docs/SECURITY_HARDENING.md` §1-§2 |
-| 3 | **Human-in-the-loop + kill switch** (§4.5) | Operators must be able to disable a model instantly via an emergency path; overrides require 2 humans | Dual-control HMAC override exists (`src/api/routes.py:2698`, RFC 5869 + alembic 006 nonces); NO kill-switch API to zero all model traffic | 🟡 MEDIUM | `src/api/routes.py:2698` (override endpoint) — ✅ 2-of-2 dual control; 📋 `POST /v1/models/kill-switch` — future, see `docs/CHAOS_ENGINEERING.md` §3 |
+| 3 | **Human-in-the-loop + kill switch** (§4.5) | Operators must be able to disable a model instantly via an emergency path; overrides require 2 humans | Dual-control HMAC override (`src/api/routes.py` override endpoint, RFC 5869 + alembic 006 nonces) AND kill-switch API (`POST /v1/admin/kill-switch` admin-scoped, audited, auto-expiry) — both live | ✅ ADDRESSED | `src/api/routes.py` override endpoint — ✅ 2-of-2 dual control; `src/api/routes.py` `POST /v1/admin/kill-switch` + `GET /v1/admin/kill-switch` — ✅ wired (see `docs/ARCHITECTURE.md` row 1, line 96) |
 | 4 | **Third-party model accountability** (§4.7) | We are accountable for vendor-supplied models (the Kaggle-trained Amazon HistGB + the Olist HistGB) — formal vendor risk assessment, SLA, and validation reports | Kaggle model trained by us on Kaggle public data — documented as "third-party data" in `docs/MODEL_CARD.md`; no formal vendor risk assessment doc, no SLA | 🟡 MEDIUM | `docs/MODEL_CARD.md` — ✅ partial; 📋 vendor risk assessment — future, see `docs/SELF_INVENTORY.md` G4 |
 | 5 | **Explainability or compensating controls** (§4.9) | Either produce an explanation per decision OR have a compensating control (a second model corroborating, more frequent validation) | SHAP reason codes (`src/models/explain.py:reason_codes`, line documented in `docs/CROSS_COMPARISON.md`); NO corroboration layer (no second model) | 🟡 MEDIUM | `src/models/explain.py:reason_codes` — ✅ primary; 📋 ensemble corroboration — future, see `docs/SECURITY_HARDENING.md` §2.3 |
 | 6 | **Stateful firewall for customer-facing AI** (§5.2) | For customer-facing conversational AI (chatbots, agent consoles): score the FULL conversation state, not one prompt — detect multi-turn jailbreaks | Agent console (`web/src/components/agent-console.tsx`) is internal-operator only, NOT customer-facing; needs multi-turn jailbreak detection before going customer-facing | 🟢 FUTURE | `web/src/components/agent-console.tsx` — ✅ internal-only today; 📋 multi-turn jailbreak detector — future, see SoK Mao 2026 in `docs/RESEARCH.md` |
@@ -69,14 +69,19 @@ strictness + tautology scans (74 patterns, 364-test suite).
 PGD evasion. The defenses are 🔧 in `docs/SECURITY_HARDENING.md`.
 
 ### 2.3 §4.5 — Human-in-the-loop + kill switch
-Our dual-control override (`src/api/routes.py:2698`) needs TWO
-admin API keys + an HMAC chain (`admin_signature_1` +
+Our dual-control override (`src/api/routes.py` override endpoint)
+needs TWO admin API keys + an HMAC chain (`admin_signature_1` +
 `admin_signature_2 = HMAC(admin2_key, sig_1 + body + ts)`) +
 a per-request nonce (alembic 006) — RFC 5869 + NIST SP 800-56C.
-**Gap:** no `POST /v1/models/kill-switch` endpoint to zero all
-model traffic and fall back to rules-only REVIEW in one call.
-This is the one operator action that would save us in a model-
-meltdown incident.
+**Kill-switch API (live, not future):** `POST /v1/admin/kill-switch`
+(admin-scoped, body `{enabled, reason, duration_seconds?}`) zeroes
+ALL `/risk/score` traffic via a top-of-handler 503 pre-check BEFORE
+auth/HMAC/model/audit-write (zero CPU burn). The toggle writes a
+`kill_switch_toggled` row to the same hash chain that anchors every
+/risk/score record (tamper-evident). Auto-expires via
+`duration_seconds`; the pre-check auto-clears past-expiry flags on
+the next /risk/score request (no background task needed). The GET
+sibling reads the live (effective) state for operator dashboards.
 
 ### 2.4 §4.7 — Third-party model accountability
 The Kaggle champion was trained on public data — but the
@@ -142,8 +147,10 @@ to close the 3 🟡 partial items via the 🔧 A2 work in
 * Attack vectors + defenses — `docs/SECURITY_HARDENING.md`
 * Adversarial matrix (judge-readable summary) —
   `docs/ADVERSARIAL_DEFENSES.md`
-* Chaos + auto-remediation + kill-switch skeleton —
-  `docs/CHAOS_ENGINEERING.md` + `src/remediation/auto_heal.py`
+* Chaos + auto-remediation + kill-switch (LIVE, not skeleton) —
+  `docs/CHAOS_ENGINEERING.md` + `src/remediation/auto_heal.py` +
+  `src/api/routes.py` `POST /v1/admin/kill-switch` (admin-scoped,
+  audited, auto-expiry — closes §4.5 kill-switch requirement)
 * Latency / cost efficiency — `docs/LATENCY_ENGINEERING.md`
 * Self-inventory of all 23 gaps G1-G23 — `docs/SELF_INVENTORY.md`
 * Cross-comparison to 40 papers — `docs/CROSS_COMPARISON.md`
@@ -181,7 +188,7 @@ to close the 3 🟡 partial items via the 🔧 A2 work in
 |---|-----------------|--------|-------|
 | 1 | Complete model inventory | ✅ shape · 📋 scanner | Agent (future) |
 | 2 | Independent validation before + after deploy | ✅ mechanical · 📋 adversarial red-team | 🔧 A2 (`docs/SECURITY_HARDENING.md`) |
-| 3 | Human-in-the-loop + kill switch | ✅ override · 📋 kill-switch API | future (see `docs/CHAOS_ENGINEERING.md` §3) |
+| 3 | Human-in-the-loop + kill switch | ✅ override · ✅ kill-switch API (POST/GET /v1/admin/kill-switch) | ✅ DONE (backend-killswitch-1) |
 | 4 | Third-party model accountability | 🟡 partial (ModelCard exists, no vendor doc) | future (see `docs/SELF_INVENTORY.md` G4) |
 | 5 | Explainability or compensating controls | 🟡 SHAP ✅ · 📋 ensemble corroboration | future (see `docs/SECURITY_HARDENING.md` §2.3) |
 | 6 | Stateful firewall for customer-facing AI | 🟢 FUTURE (operator-only today) | future (see `docs/RESEARCH.md` SoK Mao 2026) |
@@ -201,7 +208,7 @@ AI yet" — which is honest.
 | 2026-06-24 | RBI draft MRM guidance published | ✅ architecture mapped (this doc) |
 | 2026-09 to 2026-11 | Public comments window — banks submit feedback | ✅ no change to our plan |
 | 2026-12 | Final RBI MRM guidance published (expected) | ✅ re-audit, minor deltas |
-| 2027-Q1 | Compliance window opens for banks | ✅ 6 of 7 requirements addressed; kill-switch API 📋 closes in Q4 2026 |
+| 2027-Q1 | Compliance window opens for banks | ✅ 7 of 7 requirements addressed (kill-switch API wired: POST/GET /v1/admin/kill-switch) |
 | 2027-Q2 | Compliance deadline for NBFCs + payments banks | ✅ all 7 requirements + adversarial red-team 🔧 (A2 work) |
 | 2027-Q3 | First RBI audits (sampling) | ✅ audit trail Merkle-sealed ✅; dual-control override ✅ |
 

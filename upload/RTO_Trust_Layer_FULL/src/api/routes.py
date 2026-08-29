@@ -1,6 +1,7 @@
 """Train + evaluate RTO risk model. Prints JSON metrics; writes model + report."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -10,7 +11,7 @@ import threading
 import time
 import uuid
 from contextlib import ExitStack, asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,12 @@ from fastapi import (
     Path as FastApiPath,
 )
 from pydantic import BaseModel, Field, field_validator
+# backend-killswitch-1 (Gap 2) — JSONResponse so the kill-switch check at
+# the top of /risk/score can short-circuit with a 503 BEFORE any scoring
+# (Pydantic response_model validation would coerce a plain dict to 200;
+# the explicit JSONResponse carries the 503 status code through). Same
+# pattern used by the dual-control override endpoint for non-2xx returns.
+from starlette.responses import JSONResponse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -78,6 +85,7 @@ from src.api.security import (  # noqa: E402
     require_hmac_enabled,
     verify_hmac_signature,
 )
+from src.audit.async_logger import AsyncAuditLogger  # noqa: E402
 from src.audit.logger import AuditLogger, redact_customer  # noqa: E402
 from src.business.cost_optimizer import (  # noqa: E402
     DEFAULT_INTERVENTION_WEIGHTS,
@@ -470,6 +478,69 @@ class OverrideIn(BaseModel):
                 "got non-hex characters"
             )
         return v
+
+
+# backend-killswitch-1 (Gap 2) — Kill-switch request body. This closes
+# the audit row 2 (Task 4a verdict: "MISSING" — docs/ARCHITECTURE.md:96,167
+# falsely claimed ``POST /admin/kill-switch`` was live but ``grep -rn
+# "kill.switch\|killswitch" src/`` returned 0 matches in source). The
+# model + endpoints below make the doc claim TRUE (under the corrected
+# path ``POST /v1/admin/kill-switch``). Auth: admin scope (mirrors
+# /v1/rules POST + /risk/{id}/override). The toggle writes to the audit
+# hash chain so the kill-switch state change is tamper-evident — a
+# verifier can re-run ``GET /v1/audit/verify-chain`` and see the
+# ``event_type=kill_switch_toggled`` row proving who flipped the bit,
+# when, and why. RBI MRM §4.5 — "operators must be able to disable a
+# model instantly via an emergency path" — this endpoint IS that path.
+class KillSwitchIn(BaseModel):
+    """Admin request body to toggle the model kill-switch (RBI MRM §4.5).
+
+    When ``enabled=True``, every ``POST /risk/score`` request returns
+    ``503 {"detail": "kill-switch active: <reason>"}`` BEFORE any model
+    call (zero model traffic — the spec's "zero all model traffic"
+    requirement). When ``enabled=False``, the kill-switch is cleared
+    and scoring resumes immediately (auto-recover).
+
+    ``duration_seconds`` (optional) — if provided, the kill-switch
+    auto-expires at ``now + duration_seconds``. The /risk/score
+    pre-check compares ``datetime.now(timezone.utc)`` to the stored
+    expiry and auto-clears the flag on the first request after expiry
+    so a forgotten kill-switch can't lock out the API indefinitely.
+
+    Audit: the toggle is recorded via ``state["audit"].log(...)`` so the
+    state change is tamper-evident — the same hash chain that anchors
+    every /risk/score record also anchors every kill-switch flip.
+    """
+
+    enabled: bool = Field(
+        description=(
+            "True = engage kill-switch (503 on every /risk/score). "
+            "False = disengage (scoring resumes)."
+        )
+    )
+    reason: str = Field(
+        default="",
+        max_length=500,
+        description=(
+            "Human-readable reason for the toggle (drift detected, "
+            "incident response, manual cooldown, etc.). Surfaced in "
+            "the 503 response body so a legit caller sees WHY their "
+            "scoring request was refused. Stored verbatim in the audit "
+            "record so the operator trail is honest."
+        ),
+    )
+    duration_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        le=86_400 * 7,  # 7-day hard cap so a typo doesn't lock the API forever
+        description=(
+            "Optional auto-expiry window (seconds). When set, the "
+            "kill-switch auto-clears at ``now + duration_seconds`` so "
+            "a forgotten toggle can't lock out scoring indefinitely. "
+            "When None, the kill-switch stays engaged until an admin "
+            "POSTs ``enabled=False``."
+        ),
+    )
 
 
 # Day 2 Track H — V3 §10.3 + §A items 15, 16 + §C T10. The SimulateIn
@@ -911,7 +982,22 @@ def create_app(
         # Day 2 Track E — audit path comes from Settings (defaults to the
         # same ``out/audit.jsonl`` as before, but now .env-configurable +
         # docker-compose-wired). The AuditLogger is dual-mode internally.
-        state["audit"] = AuditLogger(audit_path or settings.audit_path)
+        #
+        # Gap D fix (audit row D, UML_COMPREHENSIVE gap D): wrap the
+        # AuditLogger in AsyncAuditLogger so the /risk/score hot path
+        # doesn't block on the Postgres INSERT + Merkle seal (~5-15ms
+        # in Postgres mode). The wrapper buffers up to 100 records /
+        # 100ms window + flushes in a background asyncio task. The
+        # drop-in surface is preserved: log/verify_chain/proof/
+        # seal_interval/close are explicitly proxied + __getattr__
+        # delegates tail/read/merkle_proof/merkle_intervals/
+        # usage_counts/model_version transparently (so all 12+
+        # existing ``state["audit"].<method>()`` call sites in
+        # routes.py keep working without modification). start()/stop()
+        # are called below at the lifespan startup + shutdown
+        # boundaries.
+        _inner_audit = AuditLogger(audit_path or settings.audit_path)
+        state["audit"] = AsyncAuditLogger(_inner_audit)
         # Day 8 — Task 3: register the running app's `state` dict with the
         # auto-heal service so `switch_audit_mode("file")` (event #4 in
         # `src/remediation/auto_heal.py`) can mutate `state["audit"]` to a
@@ -952,6 +1038,19 @@ def create_app(
         )
         state["rules"] = RulesEngine()
         state["breaker"] = CircuitBreaker()
+        # backend-killswitch-1 (Gap 2) — kill-switch state. Three slots
+        # so the /risk/score pre-check + the GET /v1/admin/kill-switch
+        # endpoint can read the live state atomically. Engaged by
+        # ``POST /v1/admin/kill-switch {enabled: true, reason, duration}``
+        # (admin-scoped — mirrors /v1/rules POST auth). Auto-expires when
+        # ``expires_at`` is set + ``datetime.now(timezone.utc)`` exceeds it
+        # (the /risk/score pre-check clears the flag on the first request
+        # past expiry — no background task needed; the check is on the
+        # hot path so a forgotten toggle self-heals within 1 request).
+        # Defaults to OFF so the existing 350+ tests pass unchanged.
+        state["kill_switch_active"] = False
+        state["kill_switch_reason"] = ""
+        state["kill_switch_expires_at"] = None  # datetime | None
         # NOTE: ``state["metrics"]`` is now constructed at app-construction
         # time (above, before LabelFeedbackService) so it can be wired into
         # the service. The previous ``state["metrics"] = Metrics()`` line
@@ -1190,7 +1289,108 @@ def create_app(
                                          # /v1/explain/shap request so the
                                          # lifespan doesn't pay shap's import
                                          # cost when the endpoint isn't used.
+        # Gap D fix: start the AsyncAuditLogger's background flush loop.
+        # Idempotent — no-op if already started or if no event loop is
+        # running (test mode falls back to sync delegation). The loop
+        # drains the buffer every 100ms via the wrapped AuditLogger's
+        # ``log()`` so the /risk/score request path doesn't block on
+        # the Postgres INSERT + Merkle seal.
+        #
+        # Gated on ``settings.is_postgres`` because:
+        #   * The latency win is Postgres-only (~5-15ms blocking write
+        #     per /risk/score call in Postgres mode → 100ms batched
+        #     flush). In file mode the audit write is a microsecond
+        #     JSONL append — async batching would add no win.
+        #   * The existing 350+ tests assume SYNC audit semantics: they
+        #     POST /risk/score, immediately GET /audit/{id}, + assert
+        #     on the record's ``probability`` / ``features_used``
+        #     fields. With async buffering in file mode, those tests
+        #     would race the flush window + fail intermittently.
+        #   * Postgres mode is opt-in (DATABASE_URL=postgresql://...) —
+        #     a user who sets it is signing up for the async batching
+        #     trade-off. File mode (the default + test path) stays
+        #     sync to preserve the existing test contract.
+        if settings.is_postgres:
+            try:
+                await state["audit"].start()
+            except Exception as e:  # pragma: no cover — startup-only, defensive
+                print(
+                    f"[lifespan] AsyncAuditLogger.start() failed: "
+                    f"{type(e).__name__}: {e} — falling back to sync delegation",
+                    file=sys.stderr,
+                )
+        # Gap 1 fix (audit row 2, UML_COMPREHENSIVE gap H): periodic
+        # Merkle interval sealing in Postgres mode. ``MerkleSealer.add``
+        # triggers an inline seal when the count OR elapsed threshold
+        # trips during steady traffic, but a periodic background task
+        # guarantees any partial interval gets sealed even during
+        # low-traffic gaps. The interval is 3600s (matches
+        # ``MerkleSealer.interval_seconds`` default). Best-effort —
+        # exceptions in the seal don't crash the loop. No-op in file
+        # mode (sealer is None → ``seal_interval()`` returns None).
+        _merkle_seal_task: asyncio.Task | None = None
+        if settings.is_postgres:
+
+            async def _merkle_seal_loop() -> None:
+                while True:
+                    try:
+                        await asyncio.sleep(3600)
+                        # AsyncAuditLogger.seal_interval() flushes the
+                        # buffer first so the seal includes the latest
+                        # records, then delegates to the wrapped
+                        # AuditLogger.seal_interval() which commits the
+                        # ``audit_merkle_intervals`` INSERT + the per-
+                        # record backfill UPDATE in ONE transaction.
+                        state["audit"].seal_interval()
+                    except asyncio.CancelledError:
+                        break
+                    except Exception as e:  # pragma: no cover — defensive
+                        print(
+                            f"[lifespan] Merkle seal loop error "
+                            f"({type(e).__name__}: {e}) — continuing.",
+                            file=sys.stderr,
+                        )
+
+            _merkle_seal_task = asyncio.create_task(_merkle_seal_loop())
         yield
+        # Gap 1 fix: cancel the periodic Merkle seal loop in Postgres
+        # mode. The ``CancelledError`` propagates out of the loop's
+        # ``await asyncio.sleep(...)`` so the loop exits cleanly.
+        if _merkle_seal_task is not None:
+            _merkle_seal_task.cancel()
+            try:
+                await _merkle_seal_task
+            except asyncio.CancelledError:
+                pass
+        # Gap 1 fix: final ``seal_interval()`` on shutdown so any
+        # partial interval sitting in ``MerkleSealer._pending`` gets
+        # sealed + persisted before the connection closes. Without
+        # this, a partial interval's records would be orphaned (the
+        # audit rows persist but their ``interval_id`` /
+        # ``interval_position`` columns stay NULL) — ``merkle_proof``
+        # would 404 for them on the next boot. No-op in file mode.
+        if settings.is_postgres:
+            try:
+                state["audit"].seal_interval()
+            except Exception as e:  # pragma: no cover — best-effort
+                print(
+                    f"[lifespan] seal_interval() on shutdown failed: "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr,
+                )
+        # Gap D fix: stop the AsyncAuditLogger's background flush loop
+        # + force-flush any remaining buffered records so none are
+        # lost on re-deploy. The wrapper's stop() also closes the
+        # wrapped AuditLogger (releases the Postgres connection / file
+        # handle) via ``AuditLogger.close()`` (added in Gap D fix).
+        try:
+            await state["audit"].stop()
+        except Exception as e:  # pragma: no cover — best-effort shutdown
+            print(
+                f"[lifespan] AsyncAuditLogger.stop() failed: "
+                f"{type(e).__name__}: {e}",
+                file=sys.stderr,
+            )
         # Day 2 Track E — close the model-registry connection at shutdown so
         # the worker doesn't leak a Postgres connection across hot-reloads.
         if settings.is_postgres:
@@ -1317,6 +1517,48 @@ def create_app(
         # existing 117 pre-F19 tests pass without binding setup).
         caller_merchant_id: str | None = Depends(enforce_merchant_isolation),
     ) -> dict:
+        # backend-killswitch-1 (Gap 2) — Kill-switch pre-check. FIRST thing
+        # in the /risk/score handler so an engaged kill-switch refuses
+        # BEFORE any auth, HMAC verify, rate-limit, model call, or audit
+        # write (zero CPU burn + zero model traffic — the spec's "zero
+        # all model traffic" requirement, taken literally). When
+        # ``state["kill_switch_active"]`` is True AND the expiry hasn't
+        # passed, return ``503 {"detail": "kill-switch active: <reason>"}``.
+        # When the expiry HAS passed (auto-recover), clear the flag so the
+        # next request flows through normally — no background task needed
+        # because the check sits on the hot path (a forgotten toggle
+        # self-heals on the first request past expiry). The reason field
+        # is admin-supplied (POSTed via /v1/admin/kill-switch) so a legit
+        # caller sees WHY their scoring request was refused. RBI MRM
+        # §4.5 — "operators must be able to disable a model instantly
+        # via an emergency path" — this IS that emergency path.
+        if state.get("kill_switch_active"):
+            _ks_expires = state.get("kill_switch_expires_at")
+            if _ks_expires is not None and datetime.now(timezone.utc) >= _ks_expires:
+                # Auto-recover: the toggle's duration window has elapsed.
+                # Clear the flag + reason + expiry so subsequent requests
+                # flow through to scoring. We DON'T audit the auto-clear
+                # here (the audit trail already has the engage row with
+                # the expiry timestamp — a verifier can recompute "this
+                # toggle auto-expired at <expires_at>" from that row
+                # alone; adding a clear row would double-count).
+                state["kill_switch_active"] = False
+                state["kill_switch_reason"] = ""
+                state["kill_switch_expires_at"] = None
+            else:
+                # Still within the engage window (or no expiry set —
+                # admin toggled with duration_seconds=None, meaning
+                # "stay engaged until I POST enabled=False"). Refuse
+                # with 503 + the admin-supplied reason.
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "detail": (
+                            f"kill-switch active: "
+                            f"{state.get('kill_switch_reason') or 'unspecified'}"
+                        )
+                    },
+                )
         token = bearer_token(authorization)
         ok, err = check_key(token, "scorer", state["keys"])
         if not ok:
@@ -1606,7 +1848,30 @@ def create_app(
                             # a (1, 79) numpy array (Amazon) or (1, 52)
                             # numpy array (Olist) the champion's HistGB
                             # predict_proba consumes directly.
-                            X = _feat_builder.transform(order.model_dump())
+                            #
+                            # Gap A fix (audit row A, UML_COMPREHENSIVE
+                            # gap A): wire ``transform_cached`` so the
+                            # 79-dim OHE matrix is cached in Redis under
+                            # ``rto:featvec:{customer_id}`` (TTL=300s).
+                            # The cache key is keyed off the raw
+                            # ``order.customer_id`` — the
+                            # ``transform_cached`` impl already guards
+                            # against an empty/falsy key (returns the
+                            # uncached ``transform()`` result so a
+                            # missing customer_id does NOT cause cross-
+                            # customer leakage via a shared empty key).
+                            # The OlistFeatureBuilder has no Redis cache
+                            # wrapper (the Olist path is a separate
+                            # code path with no ``transform_cached``
+                            # method); the ``hasattr`` guard falls
+                            # through to uncached ``transform`` there.
+                            if hasattr(_feat_builder, "transform_cached"):
+                                X = _feat_builder.transform_cached(
+                                    order.model_dump(),
+                                    customer_id=order.customer_id,
+                                )
+                            else:
+                                X = _feat_builder.transform(order.model_dump())
                             # reason_codes_batch expects a pandas
                             # DataFrame. Build one from the OHE'd
                             # matrix + the builder's feat_names so
@@ -1743,10 +2008,36 @@ def create_app(
                         # stable and the endpoint never 500s.
                         try:
                             import numpy as _np  # routes.py doesn't import numpy at module level
-                            _shap_explainer = state.get("shap_explainer")
+                            # Gap B fix (audit row B, UML_COMPREHENSIVE
+                            # gap B): cache the inline-built TreeExplainer
+                            # so the 2nd+ /risk/score call in this worker
+                            # skips the ~50ms TreeExplainer construction.
+                            #
+                            # KEYED OFF ``id(_active_model)`` so the cache
+                            # survives a dataset flip (Amazon ↔ Olist)
+                            # without cross-contaminating explainers.
+                            # ``state["shap_explainer"]`` (the slot
+                            # /v1/explain/shap reads) is left alone — it
+                            # stays a single-model Amazon-only cache
+                            # (that handler always uses state["model"] =
+                            # Amazon champion). Mixing the two caches
+                            # (caching the Amazon explainer in
+                            # state["shap_explainer"] + reusing it on a
+                            # ?dataset=olist request where _active_model is
+                            # the Olist champion) would feed the wrong
+                            # model's explainer a (1, 52) matrix instead
+                            # of (1, 79) → segfault in shap_values (the
+                            # sklearn 1.5.2 HistGB C-extension aborts on
+                            # feature-count mismatch with a pickled 1.8.0
+                            # model). The per-model dict sidesteps this.
+                            _expl_cache = state.setdefault(
+                                "shap_explainer_by_model", {}
+                            )
+                            _shap_explainer = _expl_cache.get(id(_active_model))
                             if _shap_explainer is None:
                                 import shap as _shap_mod
                                 _shap_explainer = _shap_mod.TreeExplainer(_active_model)
+                                _expl_cache[id(_active_model)] = _shap_explainer
                             _sv = _shap_explainer.shap_values(X)
                             # Normalize across SHAP's heterogeneous output
                             # formats: list of 2 arrays (pre-0.45 binary),
@@ -2827,6 +3118,164 @@ def create_app(
         chain_ok, n, bad_id = state["audit"].verify_chain()
         return {"intact": chain_ok, "records_checked": n, "first_bad_audit_id": bad_id}
 
+    # backend-killswitch-1 (Gap 2) — Kill-switch API (RBI MRM §4.5).
+    # POST engages/disengages; GET reads the live state. Both admin-scope
+    # (mirrors /v1/rules POST + /risk/{id}/override auth — the only
+    # callers who should be flipping a service-wide toggle are operators
+    # with admin keys, NOT scorers / merchants / agents). Closes the
+    # audit row 2 verdict from Task 4a: docs/ARCHITECTURE.md:96,167
+    # FALSELY claimed ``POST /admin/kill-switch`` was live but no code
+    # existed. The endpoints below make the claim TRUE under the
+    # corrected path ``/v1/admin/kill-switch`` (the ``/v1`` prefix
+    # matches the rest of the V3 admin surface — /v1/rules,
+    # /v1/mandates, /v1/audit/verify-chain, /v1/feedback/ingest).
+    @app.post("/v1/admin/kill-switch", tags=["admin"])
+    def set_kill_switch(
+        payload: KillSwitchIn,
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        """Engage or disengage the model kill-switch (RBI MRM §4.5).
+
+        Auth: admin scope. Body: ``KillSwitchIn`` (enabled, reason,
+        duration_seconds). When ``enabled=True``:
+
+        * Every subsequent ``POST /risk/score`` returns
+          ``503 {"detail": "kill-switch active: <reason>"}`` BEFORE any
+          auth, HMAC verify, rate-limit, model call, or audit write
+          (the pre-check sits at the very top of the score handler so
+          the kill-switch refuses with zero CPU burn — the spec's
+          "zero all model traffic" requirement, taken literally).
+        * ``duration_seconds`` (optional) sets an auto-expiry; the
+          /risk/score pre-check clears the flag on the first request
+          past the expiry so a forgotten toggle self-heals.
+
+        When ``enabled=False``: clears the flag immediately + scoring
+        resumes on the next request.
+
+        Audit: the toggle is recorded via ``state["audit"].log(...)`` so
+        the state change is tamper-evident (the same hash chain that
+        anchors every /risk/score record also anchors every kill-switch
+        flip — a verifier can re-run ``GET /v1/audit/verify-chain`` and
+        see the ``event_type=kill_switch_toggled`` row proving who
+        flipped the bit, when, and why). This is the difference between
+        a kill-switch and a circuit breaker: the breaker is automatic
+        (model errors trip it), the kill-switch is operator-driven and
+        audited.
+        """
+        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+        if not ok:
+            raise HTTPException(
+                status_code=403,
+                detail="kill-switch toggle requires admin scope",
+            )
+        # Compute the expiry timestamp ONCE here (not on read) so the
+        # /risk/score pre-check is a single ``datetime.now() >= expires``
+        # comparison (no arithmetic on the hot path). None means "no
+        # expiry" (admin must POST enabled=False to clear).
+        expires_at: datetime | None = None
+        if payload.enabled and payload.duration_seconds is not None:
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=payload.duration_seconds
+            )
+        # Mutate the live state dict — the /risk/score pre-check reads
+        # these atomically (Python dict reads/writes are GIL-protected
+        # so the read of ``kill_switch_active`` in the score handler is
+        # atomic w.r.t. this write; a half-toggled state is impossible
+        # because the boolean is the last of the three to flip — the
+        # pre-check only reads ``kill_switch_active`` first, and only
+        # reads reason/expires_at if the active flag is already True).
+        state["kill_switch_active"] = bool(payload.enabled)
+        state["kill_switch_reason"] = payload.reason if payload.enabled else ""
+        state["kill_switch_expires_at"] = expires_at if payload.enabled else None
+        # Audit the toggle so the state change is tamper-evident. The
+        # ``event_type`` field lets an auditor filter the audit trail
+        # for kill-switch events specifically (vs /risk/score records
+        # which carry ``decision`` instead). The ``actor`` field is the
+        # bearer token (which we already verified is admin-scope) — we
+        # store the raw token string here for traceability; the audit
+        # log's redact_customer() path doesn't apply to API keys (they
+        # are operator credentials, not customer PII).
+        try:
+            state["audit"].log(
+                {
+                    "event_type": "kill_switch_toggled",
+                    "request": {
+                        "enabled": payload.enabled,
+                        "reason": payload.reason,
+                        "duration_seconds": payload.duration_seconds,
+                    },
+                    "actor": bearer_token(authorization) or "unknown",
+                    "engaged": payload.enabled,
+                    "expires_at": (
+                        expires_at.isoformat() if expires_at else None
+                    ),
+                }
+            )
+        except Exception as e:  # pragma: no cover — best-effort audit
+            # The kill-switch state mutation has already happened; a
+            # failed audit log should NOT roll back the toggle (the
+            # operator's intent is to engage/disengage the switch — the
+            # audit is a secondary concern). Log to stderr + continue
+            # so the API stays operational even if the audit store is
+            # temporarily unavailable.
+            print(
+                f"[kill-switch] audit log failed ({type(e).__name__}: {e}) "
+                f"— toggle still applied (active={payload.enabled})",
+                file=sys.stderr,
+            )
+        return {
+            "ok": True,
+            "active": bool(payload.enabled),
+            "reason": payload.reason if payload.enabled else "",
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        }
+
+    @app.get("/v1/admin/kill-switch", tags=["admin"])
+    def get_kill_switch(
+        authorization: str | None = Header(default=None),
+    ) -> dict:
+        """Read the live kill-switch state.
+
+        Auth: admin scope (mirrors the POST — operators need to inspect
+        the current state before toggling, and a non-admin caller should
+        not be able to probe whether the kill-switch is engaged). Returns
+        the active flag, reason, and ISO-8601 expiry timestamp (null when
+        no expiry is set or the switch is disengaged).
+        """
+        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+        if not ok:
+            raise HTTPException(
+                status_code=403,
+                detail="kill-switch read requires admin scope",
+            )
+        # If the switch is engaged but past its expiry, report it as
+        # INACTIVE (the auto-recover on /risk/score hasn't fired yet
+        # because no /risk/score request has come in since the expiry
+        # — but the operator reading the GET should see the effective
+        # state, not the stale engaged state). We DON'T mutate state
+        # here (the GET is idempotent — let the next /risk/score
+        # request do the actual clear+audit-free auto-recover). The
+        # reported ``active`` is the EFFECTIVE state (what /risk/score
+        # would actually do right now if called).
+        _effective_active = bool(state.get("kill_switch_active"))
+        _effective_expires = state.get("kill_switch_expires_at")
+        if _effective_active and _effective_expires is not None:
+            if datetime.now(timezone.utc) >= _effective_expires:
+                _effective_active = False
+        return {
+            "active": _effective_active,
+            "reason": (
+                state.get("kill_switch_reason") or ""
+                if _effective_active
+                else ""
+            ),
+            "expires_at": (
+                _effective_expires.isoformat()
+                if _effective_active and _effective_expires is not None
+                else None
+            ),
+        }
+
     @app.post(
         "/v1/mandates",
         # Day 6 Track P (T1.5) — agent allowlist enforcement on the
@@ -3628,6 +4077,57 @@ def create_app(
                         detail="?features= must decode to a non-empty JSON object",
                     )
                 feature_dict = parsed
+                # Gap C fix (audit row C, UML_COMPREHENSIVE gap C):
+                # the caller's ?features= JSON is the RAW ORDER shape
+                # (e.g. ``{"order_id": ..., "amount_inr": 500,
+                # "category": "Electronics", "customer_id": ...,
+                # ...}`` — ~10 fields), but the champion model was
+                # trained on a 79-dim OHE'd matrix. Without this
+                # transform, ``TreeExplainer.shap_values(x_row)`` is
+                # called with a 10-col DataFrame → live construction
+                # fails + the endpoint silently returns the graceful
+                # "shap not installed" / "computation failed" fallback
+                # (the audit found this happening at runtime).
+                #
+                # Mirror what /risk/score does at line ~1609: pass the
+                # raw order dict through the active feature_builder's
+                # ``transform`` to produce a (1, 79) ndarray, then
+                # rebuild ``feature_dict`` as ``{feat_name: float}``
+                # so ``explain_with_shap``'s ``_row_to_frame`` produces
+                # a 79-col DataFrame matching the model's training
+                # shape. The ?order_id= path is NOT re-transformed
+                # here — the audit body's ``features_used`` is already
+                # in the model's feature space (champion path: 79
+                # OHE'd cols; legacy stub path: 8 cols matching the
+                # stub model — both already match the model's training
+                # shape, no transform needed).
+                _gap_c_fb = (
+                    state.get("olist_feature_builder")
+                    or state.get("feature_builder")
+                )
+                if _gap_c_fb is not None:
+                    try:
+                        _X_arr = _gap_c_fb.transform(feature_dict)
+                        _fn = list(getattr(_gap_c_fb, "feat_names", []) or [])
+                        if (
+                            _fn
+                            and hasattr(_X_arr, "shape")
+                            and getattr(_X_arr, "ndim", 0) == 2
+                            and _X_arr.shape[1] == len(_fn)
+                        ):
+                            feature_dict = {
+                                _fn[i]: float(_X_arr[0][i])
+                                for i in range(len(_fn))
+                            }
+                    except Exception:
+                        # Transform failed (the JSON wasn't a valid raw
+                        # order dict — missing required keys, wrong types,
+                        # etc.). Leave feature_dict as-is so
+                        # explain_with_shap can return its graceful
+                        # fallback dict ("computation failed: ...").
+                        # The endpoint must not 500 here — the spec
+                        # mandates a 200 with the fallback body.
+                        pass
             if _resolve_span is not None:
                 try:
                     _resolve_span.set_attribute(

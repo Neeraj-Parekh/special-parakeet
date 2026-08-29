@@ -68,12 +68,23 @@ import {
   type Decision,
 } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { useApiKeys, buildAuthHeader } from "@/components/api-key-context";
+import { MockModeBadge } from "@/components/app-header";
 
 interface CostCurveSliderProps {
   /** Last scored order's probability — slider default. Falls back to 0.64. */
   probability?: number | null;
   /** Show a mock badge (mock-mode — no Python backend). */
   mock?: boolean;
+}
+
+/** Backend sweep data fetched from /api/v1/policy/cost-curves on mount. */
+interface BackendSweep {
+  optimalThreshold: number | null;
+  nSamples: number | null;
+  nPos: number | null;
+  dataSource: string | null;
+  mock: boolean;
 }
 
 // BMR weight defaults match the deployed cost_optimizer.py constants.
@@ -109,11 +120,54 @@ export function CostCurveSlider({
   probability,
   mock = false,
 }: CostCurveSliderProps) {
+  const keys = useApiKeys();
+
   // Slider state.
   const [cFn, setCFn] = React.useState<number>(C_FN_DEFAULT);
   const [p, setP] = React.useState<number>(
     probability === null || probability === undefined ? P_DEFAULT : probability,
   );
+
+  // Backend sweep — fetched once on mount from the real /v1/policy/cost-curves
+  // endpoint (proxied via the Next.js API route). Proves the slider is wired
+  // to the live Python backend; falls back to mock-mode when the backend is
+  // unreachable (X-Mock-Mode header).
+  const [sweep, setSweep] = React.useState<BackendSweep>({
+    optimalThreshold: null,
+    nSamples: null,
+    nPos: null,
+    dataSource: null,
+    mock: true,
+  });
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/v1/policy/cost-curves?n_resamples=100", {
+          headers: buildAuthHeader(keys, "scorer"),
+        });
+        if (!r.ok || cancelled) return;
+        const data = await r.json();
+        if (data && Array.isArray(data.curves)) {
+          setSweep({
+            optimalThreshold:
+              typeof data.optimal_threshold === "number"
+                ? data.optimal_threshold
+                : null,
+            nSamples: typeof data.n_samples === "number" ? data.n_samples : null,
+            nPos: typeof data.n_pos === "number" ? data.n_pos : null,
+            dataSource: typeof data.data_source === "string" ? data.data_source : null,
+            mock: r.headers.get("X-Mock-Mode") === "true",
+          });
+        }
+      } catch {
+        /* keep mock defaults */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [keys]);
 
   // When the parent passes a new scored-order probability, adopt it
   // (one-shot — the user can still override via the slider afterwards
@@ -180,16 +234,26 @@ export function CostCurveSlider({
               demo #6
             </Badge>
           </CardTitle>
-          <a
-            href="https://doi.org/10.1109/ICMLA.2013.68"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
-            title="Bahnsen, Stojanovic, Aouada, Ottersten — Cost Sensitive Credit Card Fraud Detection using Bayes Minimum Risk, ICMLA 2013, Eq.(5)."
-          >
-            <BookOpen className="size-2.5" aria-hidden />
-            Bahnsen ICMLA 2013 · Eq.5
-          </a>
+          <div className="flex items-center gap-2">
+            {/* Live/mock badge — reflects the real /api/v1/policy/cost-curves fetch */}
+            {sweep.mock ? (
+              <MockModeBadge mock={true} />
+            ) : (
+              <Badge variant="outline" className="border-success/40 text-success text-[10px]">
+                live backend sweep
+              </Badge>
+            )}
+            <a
+              href="https://doi.org/10.1109/ICMLA.2013.68"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-muted/30 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+              title="Bahnsen, Stojanovic, Aouada, Ottersten — Cost Sensitive Credit Card Fraud Detection using Bayes Minimum Risk, ICMLA 2013, Eq.(5)."
+            >
+              <BookOpen className="size-2.5" aria-hidden />
+              Bahnsen ICMLA 2013 · Eq.5
+            </a>
+          </div>
         </div>
         <CardDescription>
           Dial the false-negative cost and watch the BMR decision flip live.
@@ -375,6 +439,20 @@ export function CostCurveSlider({
                 }}
               />
             ))}
+            {/* Backend optimal-threshold marker — from the real /v1/policy/cost-curves sweep */}
+            {sweep.optimalThreshold !== null && (
+              <ReferenceLine
+                x={sweep.optimalThreshold}
+                stroke="var(--chart-4)"
+                strokeWidth={2}
+                label={{
+                  value: `backend optimal t=${sweep.optimalThreshold.toFixed(2)}`,
+                  position: "insideTopRight",
+                  fill: "var(--chart-4)",
+                  fontSize: 9,
+                }}
+              />
+            )}
           </LineChart>
         </ChartContainer>
 
@@ -404,6 +482,22 @@ export function CostCurveSlider({
             C_fp = {formatInr(C_FP_DEFAULT)} · C_otp = {formatInr(C_OTP_DEFAULT)} · C_block = {formatInr(C_BLOCK_DEFAULT)} · otp_eff = {OTP_EFF_DEFAULT}
           </span>
         </div>
+
+        {/* Backend sweep meta — proves the fetch is wired (real n_samples + data_source) */}
+        {sweep.nSamples !== null && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border/60 bg-muted/20 p-2 text-[10px] text-muted-foreground">
+            <span className="font-mono">
+              backend sweep: n_samples={sweep.nSamples.toLocaleString("en-IN")}
+              {sweep.nPos !== null && ` · n_pos(RTO)=${sweep.nPos.toLocaleString("en-IN")}`}
+            </span>
+            {sweep.dataSource && (
+              <span className="font-mono">data_source: {sweep.dataSource}</span>
+            )}
+            <span className={`font-mono ${sweep.mock ? "text-warning" : "text-success"}`}>
+              {sweep.mock ? "(mock fallback — Python backend unreachable)" : "(live Drummond-Holte bootstrap sweep)"}
+            </span>
+          </div>
+        )}
 
         {/* Current-decision callout */}
         <div

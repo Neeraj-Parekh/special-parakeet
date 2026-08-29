@@ -138,22 +138,36 @@ first.
 
 The RBI MRM draft (see `docs/RBI_MRM_MAPPING.md` row 3) requires
 a "kill switch" — an operator action that disables a model
-instantly. Our dual-control override (`src/api/routes.py:2698`)
-is the override path; the kill-switch is the inverse — zero all
-model traffic.
+instantly. Our dual-control override (`src/api/routes.py`
+override endpoint) is the override path; the kill-switch is the
+inverse — zero all model traffic.
 
-```python
-# 📋 future — POST /v1/models/kill-switch
-# Implementation: a state["breaker"].force_open() that holds
-# OPEN until an operator clears it via a dual-control override.
-# Both halves (kill + clear) require 2 admin keys per RFC 5869.
-```
+**Kill-switch API (LIVE, not future):** `POST /v1/admin/kill-switch`
+(admin-scoped, body `{enabled, reason, duration_seconds?}`) +
+`GET /v1/admin/kill-switch` (read live state). Implementation in
+`src/api/routes.py`:
 
-The kill switch would set `state["breaker"].state = "OPEN"` +
-`state["breaker"].failures = 9999` so every model attempt
-short-circuits to rules-only REVIEW (see
-`src/api/routes.py:1415-1420`). This is the one RBI requirement
-we don't ship today — 📋 future, this doc owns the spec.
+* The POST mutates `state["kill_switch_active/reason/expires_at"]`
+  and writes a `kill_switch_toggled` row to the audit hash chain
+  (tamper-evident — the same chain that anchors every /risk/score
+  record).
+* `/risk/score` checks `state["kill_switch_active"]` at the VERY
+  TOP of the handler — before auth, HMAC verify, rate-limit, model
+  call, or audit write — and returns
+  `503 {"detail": "kill-switch active: <reason>"}`. Zero CPU burn,
+  zero model traffic. This is stricter than the original spec above
+  (which proposed piggy-backing on the circuit breaker's
+  rules-only REVIEW path — the live implementation refuses
+  outright with 503, the operator's intent is unambiguous).
+* `duration_seconds` sets an auto-expiry; the pre-check auto-clears
+  past-expiry flags on the next /risk/score request (no background
+  task needed — the check is on the hot path so a forgotten
+  toggle self-heals within 1 request).
+* The GET reports the EFFECTIVE state (engaged but past expiry =
+  reported inactive) for operator dashboards.
+
+This closes the §4.5 kill-switch requirement — DONE
+(backend-killswitch-1).
 
 ---
 
@@ -198,13 +212,13 @@ we don't ship today — 📋 future, this doc owns the spec.
 | 5 | Stream RedisError handling | ✅ shipped | `src/stream/processor.py:602-666` |
 | 6 | Dual-mode audit fallback | ✅ shipped | `src/api/routes.py:791-925` |
 | 7 | HMAC ±30s window | ✅ shipped | `src/api/routes.py:2698` |
-| 8 | Kill-switch API (`POST /v1/models/kill-switch`) | 📋 architecture-future | future (RBI MRM §4.5) |
+| 8 | Kill-switch API (`POST /v1/admin/kill-switch` + `GET /v1/admin/kill-switch`) | ✅ shipped (backend-killswitch-1) | `src/api/routes.py` (admin-scoped, audited, auto-expiry) |
 | 9 | Bayesian RCA (Pham et al. FSE'24 (ArXiv 2405.09330) stage 2) | 📋 architecture-future | future (needs 6 mo incident data) |
 | 10 | Trivy → Dependabot auto-merge | 🔧 (Trivy runs, exits 0 advisory; Dependabot not auto-merged) | future |
 
-**Bottom line:** 4 of 10 shipped (circuit breaker, stream
-RedisError, dual-mode audit, HMAC window); 1 skeleton (this
-task — auto_heal); 5 📋 future (chaos YAMLs, kill-switch API,
+**Bottom line:** 5 of 10 shipped (circuit breaker, stream
+RedisError, dual-mode audit, HMAC window, kill-switch API);
+1 skeleton (this task — auto_heal); 4 📋 future (chaos YAMLs,
 Bayesian RCA, full Docker/K8s wiring, Dependabot auto-merge).
 The skeleton is the deliverable that proves we understand the
 loop without the user adding more features.

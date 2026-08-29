@@ -93,7 +93,7 @@ Python 3.12 + FastAPI + ONNX Runtime + Redis Streams
 | Mandate guard | `src/api/mandates.py` | OC-201B UPI Circle caps |
 | Circuit breaker | `src/api/breaker.py` | OPEN → rules-only REVIEW |
 | Auto-heal | `src/remediation/auto_heal.py` | Docker/K8s pod restart (dry_run default) |
-| Kill-switch | `src/api/routes.py` `/admin/kill-switch` | Zero model traffic → rules-only |
+| Kill-switch | `src/api/routes.py` `POST /v1/admin/kill-switch` (admin scope) + `GET /v1/admin/kill-switch` | Zero model traffic via a top-of-handler 503 pre-check on `/risk/score` (operator-driven, audited, auto-expiry via `duration_seconds`) |
 | Security | `src/api/security.py` | Bearer auth + HMAC + IP rate-limit |
 | OTel | `src/api/otel.py` | Distributed tracing (dual-mode) |
 
@@ -164,7 +164,7 @@ Python 3.12 + FastAPI + ONNX Runtime + Redis Streams
 | "Merkle audit (RFC 6962)" | `src/audit/logger.py` `MerkleSealer` + `tests/test_v3_endpoints.py` |
 | "Async audit batching" | `src/audit/async_logger.py` — 7/7 tests pass (sync fallback + buffer + overflow + stop-flush) |
 | "Redis feature cache" | `src/models/feature_builder.py` `transform_cached()` — graceful fallback when Redis unset |
-| "Kill-switch (RBI MRM §3.2)" | `src/api/routes.py` `POST /admin/kill-switch` — zeroes model traffic |
+| "Kill-switch (RBI MRM §3.2)" | `src/api/routes.py` `POST /v1/admin/kill-switch` (admin scope, body `{enabled, reason, duration_seconds?}`) + `GET /v1/admin/kill-switch` (read live state). The POST mutates `state["kill_switch_active/reason/expires_at"]` + writes a `kill_switch_toggled` audit row; `/risk/score` checks the flag at the very top of the handler and returns `503 {"detail":"kill-switch active: <reason>"}` BEFORE any auth/HMAC/model/audit-write (zero CPU burn, zero model traffic). Auto-expires via `duration_seconds`; the pre-check auto-clears past-expiry flags (no background task needed). |
 
 ## References
 

@@ -624,6 +624,33 @@ class AuditLogger:
         return {str(h): counts[h] for h in since_hours}
 
     # ------------------------------------------------------------------ #
+    # Lifecycle — close (called by AsyncAuditLogger.stop() + tests)      #
+    # ------------------------------------------------------------------ #
+
+    def close(self) -> None:
+        """Release the Postgres connection (Postgres mode) or no-op
+        (file mode). Safe to call multiple times — subsequent calls are
+        no-ops because ``self._conn`` is set to ``None`` after the first
+        close.
+
+        Gap D fix (audit row D, UML_COMPREHENSIVE gap D): the
+        ``AsyncAuditLogger`` wrapper's ``stop()`` + ``close()`` both
+        call ``self._inner.close()``. Without this method on the real
+        ``AuditLogger``, wiring ``AsyncAuditLogger(AuditLogger(...))``
+        in the lifespan would ``AttributeError`` on shutdown. Adding
+        it makes the wrapped instance a true drop-in for the
+        ``_FakeInner`` test fixture (which already has ``close()``).
+        """
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception:  # pragma: no cover — best-effort shutdown
+            pass
+        self._conn = None
+
+    # ------------------------------------------------------------------ #
     # Postgres mode                                                      #
     # ------------------------------------------------------------------ #
 

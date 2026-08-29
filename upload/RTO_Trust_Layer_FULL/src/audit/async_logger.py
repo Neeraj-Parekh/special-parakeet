@@ -216,18 +216,37 @@ class AsyncAuditLogger:
     # Public API — drop-in replacement for AuditLogger                #
     # --------------------------------------------------------------- #
 
-    def log(self, record: dict) -> None:
+    def log(self, record: dict):
         """Buffer a record for async flush. If the wrapper isn't started
         (no event loop, test mode), delegate straight to inner.log() —
         sync fallback preserves the existing test behaviour.
+
+        Returns the ``audit_id`` (a string) in sync fallback mode — the
+        wrapped AuditLogger.log() returns this. In async mode the
+        record is buffered + the actual insert happens later, so the
+        audit_id isn't known yet (the wrapper returns ``None``); the
+        route's response body's ``audit_trail_url`` will be ``None``
+        in Postgres mode + the caller can look up the record later by
+        ``prediction_id`` (which the route generates BEFORE the
+        audit.log call + carries in the same response body).
+
+        Gap D fix (audit row D): the original signature was
+        ``def log(self, record) -> None`` which DISCARDED the inner
+        ``audit_id`` return value. File-mode tests that POST
+        /risk/score then immediately GET /audit/{audit_id} broke
+        because ``audit_id`` was Python ``None`` → the URL ended in
+        ``/None`` → the GET returned 404. Now the sync fallback
+        path returns the inner ``audit_id`` so the existing route
+        + test contract is preserved.
         """
         if not self._started:
             # Sync fallback — the wrapper wasn't started, so behave
             # exactly like the wrapped logger. This is the path the 248
             # passing tests take (they construct AuditLogger directly,
-            # not via AsyncAuditLogger).
-            self._inner.log(record)
-            return
+            # not via AsyncAuditLogger). Return the inner audit_id so
+            # the route's ``audit_id = state["audit"].log(payload)``
+            # call site keeps working.
+            return self._inner.log(record)
         with self._lock:
             self._buffer.append(record)
             overflow = len(self._buffer) > self._max_buffer * 2
@@ -237,18 +256,31 @@ class AsyncAuditLogger:
             # blocks, but we avoid unbounded memory growth). This is
             # the documented graceful-degradation path.
             self._flush_sync()
+        # Async mode: audit_id isn't known yet (the insert happens in
+        # the background flush). Return None so the caller can detect
+        # this + fall back to the prediction_id correlation key.
+        return None
 
     # Pass-through methods — delegate to the wrapped logger so the
     # wrapper is a true drop-in. These are NOT buffered (they're
     # read-side operations; buffering them would return stale data).
 
-    def verify_chain(self, start_id: int = 0, end_id: int | None = None) -> dict:
-        """Delegate to inner.verify_chain() — read operation, no buffering."""
-        return self._inner.verify_chain(start_id=start_id, end_id=end_id)
+    def verify_chain(self, *args, **kwargs):
+        """Delegate to inner.verify_chain() — read operation, no buffering.
 
-    def proof(self, record_id: int) -> dict | None:
+        Signature-flexible (``*args, **kwargs``) so this wrapper is a
+        true drop-in: the real ``AuditLogger.verify_chain`` takes no
+        args (returns ``tuple[bool, int, str]``); the test fixture
+        ``_FakeInner.verify_chain`` takes ``start_id`` / ``end_id``
+        kwargs (returns a dict). The wrapper passes whatever it
+        receives straight through, so both signatures work without
+        breaking the other.
+        """
+        return self._inner.verify_chain(*args, **kwargs)
+
+    def proof(self, *args, **kwargs):
         """Delegate to inner.proof() — read operation, no buffering."""
-        return self._inner.proof(record_id)
+        return self._inner.proof(*args, **kwargs)
 
     def seal_interval(self) -> dict | None:
         """Force-seal the current Merkle interval. Flushes the buffer
@@ -265,6 +297,40 @@ class AsyncAuditLogger:
             self._stopped = True
             self._flush_sync()
         self._inner.close()
+
+    # --------------------------------------------------------------- #
+    # Pass-through delegation — Gap D fix (audit row D,              #
+    # UML_COMPREHENSIVE gap D): the original wrapper only proxied    #
+    # ``log`` / ``verify_chain`` / ``proof`` / ``seal_interval`` /   #
+    # ``close``. But routes.py also calls ``state["audit"].tail()``, #
+    # ``.read()``, ``.merkle_proof()``, ``.merkle_intervals()``,     #
+    # ``.usage_counts()``, and reads the ``.model_version``          #
+    # attribute on the audit object (12+ call sites). Without        #
+    # delegation, wiring the wrapper would AttributeError on the     #
+    # first /risk/score call. ``__getattr__`` delegates any          #
+    # non-overridden attribute lookup to the wrapped inner logger    #
+    # — true drop-in semantics.                                      #
+    # --------------------------------------------------------------- #
+
+    def __getattr__(self, name: str):
+        """Delegate any attribute not explicitly overridden to the
+        wrapped inner logger. This is ONLY called when normal
+        attribute lookup fails (i.e. the attribute is not on the
+        AsyncAuditLogger instance nor on its class) — so the explicit
+        overrides above (``log``, ``verify_chain``, ``proof``,
+        ``seal_interval``, ``close``) and the explicit properties
+        below (``buffer_size``, ``inner``, ``started``) take
+        precedence; everything else (``tail``, ``read``,
+        ``merkle_proof``, ``merkle_intervals``, ``usage_counts``,
+        ``model_version``, ``path``, ``settings``, ``sealer``, etc.)
+        transparently delegates.
+
+        ``self._inner`` is set in ``__init__`` as the first statement,
+        so by the time ``__getattr__`` could be called for any other
+        attribute, ``self._inner`` already exists in the instance
+        ``__dict__`` (no infinite recursion risk).
+        """
+        return getattr(self._inner, name)
 
     # --------------------------------------------------------------- #
     # Introspection — for tests + the /health endpoint                #

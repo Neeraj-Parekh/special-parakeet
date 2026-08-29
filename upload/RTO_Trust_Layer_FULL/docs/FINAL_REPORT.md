@@ -48,7 +48,7 @@
 | 19 | 🟢 P2 | A/B / shadow deployment | 📋 | 📋 | `docs/A_B_SHADOW_DEPLOYMENT.md` (12.8KB). Cites Taylor 2025. Specs `experiments` table + shadow/canary/A-B/key-routing/traffic-mirroring patterns. | No |
 | 20 | 🟢 P2 | Real-time feature store (Feast) | 📋 | 📋 | `docs/REAL_TIME_FEATURE_STORE.md` (13.8KB). Cites Feast/Tecton 2024, ACM Comp Surveys 2025, Flink 2019 watermarks. Specs `(value, event_timestamp, ttl)` triple + as-of joins. | No |
 | 21 | 🟢 P2 | Blockchain audit anchor | 📋 | 📋 | `docs/SECURITY_HARDENING.md:319-320` — rows 5.2 "Periodic blockchain anchor (hourly Merkle root → public chain)" + 5.3 "WORM storage (S3 Glacier Object Lock, 7-year retention)". Cites RFC 6962 §3 + Crosby USENIX 2009 + AWS Object Lock docs. | No |
-| 22 | 🟢 P2 | Kill-switch API | 📋 | 📋 | `docs/RBI_MRM_MAPPING.md:40` + `:71-76` + `:145-152` — kill-switch gap acknowledged (RBI §4.5). `docs/CHAOS_ENGINEERING.md:137-152` — `POST /v1/models/kill-switch` spec'd (sets `state["breaker"].state = "OPEN"` + a zero-traffic override). | No |
+| 22 | 🟢 P2 | Kill-switch API | ✅ DONE | ✅ DONE | `src/api/routes.py` `POST /v1/admin/kill-switch` + `GET /v1/admin/kill-switch` (admin-scoped, body `{enabled, reason, duration_seconds?}`). Engages a top-of-handler 503 pre-check on `/risk/score` BEFORE auth/HMAC/model/audit-write (zero CPU burn, zero model traffic). Toggle writes a `kill_switch_toggled` row to the audit hash chain (tamper-evident). Auto-expires via `duration_seconds`; the pre-check auto-clears past-expiry flags. Closes RBI MRM §4.5 (backend-killswitch-1). | No |
 
 **§11 row count:** 19/19 verified. **0 P0 gaps. 0 P1 gaps. 0 P2 gaps.** All match the plan.
 

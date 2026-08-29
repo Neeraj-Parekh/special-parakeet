@@ -5,6 +5,19 @@
 > an audit trail regulators can verify, and an agent layer that cannot spend
 > money without a human co-sign.
 
+> **Companion artifacts in the sandbox root (one level up from this `upload/` directory):**
+> - [`../README.md`](../README.md) — sandbox-level README (dual codebase overview, honest status, quickstart for both surfaces).
+> - [`../AUDIT_REPORT.md`](../AUDIT_REPORT.md) — 1-to-1 audit of 37 features against all 16 prompts in `../upload/system design context.txt`, with `file:line` evidence. Verdicts: 25 real / 9 partial / 4 stub / 3 decorative / 5 missing.
+> - [`../UML_COMPREHENSIVE.md`](../UML_COMPREHENSIVE.md) — 12 code-verified Mermaid diagrams (component, sequence, state machine, flowchart). Every box annotated with `%% evidence: file:line`.
+> - [`../worklog.md`](../worklog.md) — every agent's work record (3,700+ lines).
+>
+> **Two-part SHAP fix shipped in this push** (commits `cddd200` + `101c2f2`):
+> the prior README claimed SHAP was fixed at `explain_with_shap` level, but
+> the runtime `/risk/score` response still returned `delta_prob: 0` for all
+> features. The audit (`AUDIT_REPORT.md` finding #3) caught it; the fix
+> inlines TreeSHAP into the `/risk/score` handler. See §"1. SHAP
+> explainability" below for the brutally honest write-up.
+
 | Decision | What it means | Demo order |
 |---|---|---|
 | **ACCEPT** | Ship normally. P(RTO) low enough that intervention cost > expected loss. | Prepaid repeat buyer, ₹1,200, complete address, tier-1 city. |
@@ -238,24 +251,56 @@ user-facing consolidation).
 This section is the honest delta from the most recent hardening pass. Three
 real bugs were closed; the audit trail for each is in `docs/`.
 
-### 1. SHAP explainability — fixed (was returning all 0.0)
+### 1. SHAP explainability — fixed end-to-end (was returning all 0.0)
 
-`src/models/explain.py` now prefers `shap.TreeExplainer` for the live
-`HistGradientBoostingClassifier` (shap 0.42+ supports HistGB directly;
-the original "NOT supported" comment was outdated). KernelExplainer
-remains the fallback for non-tree models.
+**Two-part fix (commits `cddd200` + `101c2f2`)** — the prior version of this
+section claimed SHAP was fixed at the `explain_with_shap` level, but an
+independent 1-to-1 audit (`AUDIT_REPORT.md` finding #3) found that the
+runtime `/risk/score` response still carried `explanation: [{delta_prob: 0,
+...}, ...]` because the score handler was using `reason_codes_batch`
+(perturbation with single-row median = degenerate) instead of TreeSHAP.
 
-The real root cause of "SHAP returns all 0.0" was NOT KernelExplainer
-itself — it was that KernelExplainer fell back to a 1-row background =
-the input itself when the lifespan background cache was empty, making
-every marginal contribution trivially zero. TreeExplainer sidesteps
-this entirely: it computes exact TreeSHAP values from the tree
-structure with the model's expected value as base, no background
-dataset needed.
+**Fix 1 — `/v1/explain/shap` cached explainer** (`src/api/routes.py:3608`):
+was building `shap.KernelExplainer(...)` and caching it as
+`state["shap_explainer"]`, so `src/models/explain.py:441`'s TreeExplainer
+branch never ran. Now builds `shap.TreeExplainer(state["model"])` first,
+falls back to `shap.KernelExplainer(...)` only on `InvalidModelError` for
+non-tree models.
 
-Verified: `explain_with_shap` on a real HistGB returns 8/8 non-zero
-values (was 0/8), max abs 1.07, `method=shap_tree`. Full suite:
-**397 passed, 11 skipped, 0 failures.**
+**Fix 2 — `/risk/score` inline TreeSHAP** (`src/api/routes.py:1724-1799`):
+the dashboard's `ShapWaterfall` reads `result.explanation[]` from
+`/risk/score`, but that handler was using `reason_codes_batch` which
+returns all-zero `delta_prob` on single-row inputs (the median-of-one-row
+is the row itself). Now inlines a TreeSHAP computation block right after
+`state["breaker"].record_success()`:
+
+  1. Use the cached `state["shap_explainer"]` (now a TreeExplainer from
+     Fix 1); else build a fresh TreeExplainer inline.
+  2. Call `.shap_values(X)` on the same OHE'd matrix `predict_proba` used.
+  3. Normalize across SHAP's heterogeneous output formats (list of 2
+     arrays pre-0.45, Explanation object new API, raw ndarray).
+  4. Convert to the `reason_codes` format the frontend already understands
+     (`{feature, value, delta_prob, direction}`) and overwrite the
+     perturbation-based `reasons` variable.
+  5. Filter `|delta_prob| < 0.001` (numerical noise) + sort by magnitude
+     + take top 5 (matches `reason_codes_batch`'s `k=5` contract).
+
+Self-contained `try/except` swallows any SHAP failure so `/risk/score`
+never 500s; falls back to the perturbation `reasons` on any error.
+
+**Verification** (post-fix): `shap.TreeExplainer(HistGradientBoostingClassifier)`
+on a tiny dataset returns 10/10 non-zero values (max abs 4.38). Production
+verify: `pytest tests/ -q` must remain `397 passed, 14 skipped, 0 failed`;
+`curl -X POST /risk/score -d '{...}' | jq .explanation` must show non-zero
+`delta_prob` per feature.
+
+**Known residual gap**: `/v1/explain/shap` itself still has an OHE mismatch
+(`AUDIT_REPORT.md` finding #1 / `UML_COMPREHENSIVE.md` diagram 4) — the
+endpoint accepts raw-order features (10 fields) but the champion expects 79
+OHE'd features, so KernelExplainer construction fails live. The TreeSHAP path
+in `/risk/score` is unaffected because it operates on the already-OHE'd
+matrix. Fix: route `/v1/explain/shap` through `_feat_builder.transform()`
+like the score path does (~1h).
 
 ### 2. Audit hash-chain — fixed (was reporting intact:false)
 
@@ -270,8 +315,19 @@ on the audit file before computing `previous_hash`, so concurrent
 writers serialize at the OS level. After acquiring the lock it
 re-derives the true last record's `raw_hash` (O(1) per write) so the
 chain links correctly even if another process appended since
-construction. Verified: 2 concurrent processes × 50 records = 100
-records, `intact=True, records_checked=100`.
+construction.
+
+**Test-mode verification**: 2 concurrent processes × 50 records = 100
+records, `intact=True, records_checked=100` (test fixture, isolated
+audit file).
+
+**Live-mode honest gap** (`AUDIT_REPORT.md` finding #2): the live
+file-mode backend still reports `intact:false, records_checked:44`
+because the running uvicorn + the running test writers race on the
+shared `out/audit.jsonl` and `fcntl.flock` only serializes within one
+process tree. The robust fix is to set `DATABASE_URL` to a real
+Postgres (e.g. Neon free tier) so the audit trail uses
+`SELECT ... FOR UPDATE` row-level locking — 30 min of work.
 
 The broken fragment was rotated to `out/audit.broken-fragment-2025-08-29.jsonl`
 (preserved for forensics; `out/` is gitignored so it stays local).

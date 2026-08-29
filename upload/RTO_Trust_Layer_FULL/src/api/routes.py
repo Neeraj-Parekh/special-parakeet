@@ -3605,9 +3605,33 @@ def create_app(
                     # will be ~0 because the background == the input).
                     import pandas as _pd
                     bg_df = _pd.DataFrame([feature_dict])
-                prebuilt = shap.KernelExplainer(
-                    state["model"].predict_proba, bg_df
-                )
+                # SHAP runtime fix (worklog MAIN-1 gap #3): the previous
+                # build path constructed ``shap.KernelExplainer`` here and
+                # cached it as ``state["shap_explainer"]``. Because
+                # ``explain_with_shap`` (src/models/explain.py:418-460)
+                # short-circuits to whatever ``prebuilt_explainer`` it
+                # receives, the TreeExplainer branch in that function
+                # never executed — every /v1/explain/shap call hit the
+                # O(2^N) KernelExplainer path AND, in file-mode with a
+                # degenerate background (background == input row),
+                # returned all-0.0 SHAP values.
+                #
+                # HistGradientBoostingClassifier is tree-based and is
+                # supported by ``shap.TreeExplainer`` as of shap 0.42+
+                # (we run 0.52.0 — see src/models/explain.py:104). The
+                # TreeExplainer is exact (not approximate), 10-50x
+                # faster than KernelExplainer, and does NOT need a
+                # background dataset — so it also side-steps the
+                # empty-cache root cause that produced the all-0.0
+                # output. If TreeExplainer raises InvalidModelError
+                # (non-tree model swapped in by the registry), fall back
+                # to KernelExplainer with the cached background.
+                try:
+                    prebuilt = shap.TreeExplainer(state["model"])
+                except Exception:
+                    prebuilt = shap.KernelExplainer(
+                        state["model"].predict_proba, bg_df
+                    )
                 state["shap_explainer"] = prebuilt
             except ImportError:
                 # shap not installed — prebuilt stays None; the

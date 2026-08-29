@@ -57,7 +57,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.api.mandates import (  # noqa: E402
     MandateVerdict,
-    _begin_db_counter_txn,
     _current_month_key,
     _DbCounterTxn,
     issue_mandate,

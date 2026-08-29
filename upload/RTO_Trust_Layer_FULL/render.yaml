@@ -1,0 +1,57 @@
+# Render.com Blueprint — RTO Trust Layer (single free-tier web service).
+#
+# Designed per the user's 2025-08-28 deployment directive: ONE Python web
+# service on the Render free "starter" plan, file-mode audit (no Postgres,
+# no Redis — the AuditLogger degrades to a JSONL file the container's
+# ephemeral disk accepts), and the dashboard served via FastAPI's
+# StaticFiles mount at /dashboard so the same origin serves both the API
+# + the demo UI (no CORS, no second service to cold-start).
+#
+# POST-deploy verification (run after the URL is live):
+#   curl -s https://<service>.onrender.com/health | jq
+#   curl -s https://<service>.onrender.com/dashboard/ | head
+#   curl -s -X POST https://<service>.onrender.com/risk/score \
+#        -H "Authorization: Bearer score-demo-key" \
+#        -H "Content-Type: application/json" \
+#        -d '{"order_id":"ORD-DEMO-1","prior_orders":3,"prior_returns":1,
+#             "is_cod":1,"category":"Electronics","device":"Mobile",
+#             "city_tier":"T1","address_quality":"verified"}'
+#
+# Honest caveats (per Render free-tier docs):
+#   • 750 free instance-hours per month — sufficient for the buildathon
+#     judging window but not for production traffic.
+#   • Free web services spin down after 15 min idle — first request after
+#     idle takes ~30s cold-start. Hit /health once to wake it before
+#     running a demo.
+#   • No persistent disk on free tier — audit JSONL is wiped on re-deploy.
+#     For RBI MRM compliance the production path uses Render-managed
+#     Postgres (set DATABASE_URL in the dashboard after first apply).
+services:
+  - type: web
+    name: rto-trust-layer
+    env: python
+    repo: https://github.com/Neeraj-Parekh/special-parakeet
+    branch: main
+    plan: starter
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.api.routes:create_app --factory --host 0.0.0.0 --port 10000
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: RTO_SCORER_KEYS
+        value: score-demo-key
+      - key: RTO_ADMIN_KEYS
+        value: admin-demo-key
+      - key: RTO_MANDATE_SECRET
+        value: ci-secret
+      - key: RTO_AUDIT_SALT
+        value: ci-salt
+      # Day 8 — Task 3: auto-heal backend selection. dry_run is the safe
+      # default — flip to "docker" when DOCKER_HOST is reachable OR
+      # "k8s" when KUBECONFIG points at a cluster. Without this, the
+      # auto-heal handlers log + open cases but take no real action.
+      - key: RTO_HEAL_BACKEND
+        value: dry_run

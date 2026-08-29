@@ -30,8 +30,6 @@ from collections import OrderedDict, deque
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.stream.processor import StreamProcessor  # noqa: E402
@@ -39,7 +37,6 @@ from src.stream.producer import (  # noqa: E402
     STREAM_MODEL_DRIFT,
     STREAM_RISK_SCORES,
 )
-
 
 # --- Shared test harness ----------------------------------------------------
 

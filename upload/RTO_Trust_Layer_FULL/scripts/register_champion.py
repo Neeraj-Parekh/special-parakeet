@@ -29,7 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from src.ml.registry import register_model, get_priors, current_champion  # noqa: E402
+from src.ml.registry import current_champion, get_priors, register_model  # noqa: E402
 
 
 def main() -> int:

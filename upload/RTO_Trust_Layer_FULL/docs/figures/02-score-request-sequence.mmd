@@ -1,0 +1,110 @@
+%% RTO Trust Layer — Sequence Diagram: POST /risk/score
+%% Grounded in: src/api/routes.py:960-1700 (score handler + lifespan state),
+%%   src/api/security.py (bearer_token/check_key/TokenBucket),
+%%   src/api/agent_allowlist.py (enforce_agent_action Depends + SCOPE_ACTION_MAP),
+%%   src/api/mandates.py (verify_mandate MandateVerdict),
+%%   src/rules/engine.py (RulesEngine.evaluate),
+%%   src/business/cost_optimizer.py (calibrate_probabilities + optimal_decision
+%%   + optimal_intervention), src/models/feature_builder.py (transform),
+%%   src/audit/logger.py (AuditLogger.log + MerkleSealer.add),
+%%   src/stream/producer.py (publish to risk.scores + audit.records +
+%%   cases.created), src/cases/service.py (open_case).
+sequenceDiagram
+  autonumber
+  actor Merchant as Merchant (dashboard)
+  participant Console as Merchant Console<br/>(dashboard/index.html)
+  participant NGINX as Nginx :80
+  participant App as FastAPI :8000<br/>src/api/routes.py
+  participant Auth as bearer_token + check_key<br/>src/api/security.py
+  participant Allow as enforce_agent_action<br/>SCOPE_ACTION_MAP
+  participant Idem as Idempotency-Key cache<br/>idempotency_keys (alembic 001)
+  participant Mandate as verify_mandate<br/>src/api/mandates.py
+  participant Rules as RulesEngine.evaluate<br/>src/rules/engine.py
+  participant Feat as KaggleFeatureBuilder.transform<br/>src/models/feature_builder.py
+  participant Model as state["model"]<br/>HistGB model.pkl (79-dim)
+  participant Priors as get_priors() p_orig/p_und<br/>src/ml/registry.py
+  participant Cost as optimal_decision + optimal_intervention<br/>Bahnsen Eq.5/6
+  participant Audit as AuditLogger.log + MerkleSealer.add<br/>src/audit/logger.py
+  participant Cases as CaseService.open_case<br/>src/cases/service.py
+  participant Stream as StreamProducer.publish<br/>src/stream/producer.py
+
+  Merchant->>Console: Enter order (amount ₹12499,<br/>address_quality=vague, tier_3, COD)
+  Console->>NGINX: POST /risk/score<br/>Authorization: Bearer score-demo-key<br/>Idempotency-Key: ORD-WEB-001:12499<br/>X-Channel: ecommerce<br/>Content-Type: application/json
+  NGINX->>App: reverse proxy to uvicorn :8000
+
+  App->>Allow: enforce_agent_action Depends<br/>(reads X-Agent-Action header)
+  alt header absent (legacy scorer path)
+    Allow-->>App: bypass (scorer/admin auth applies)
+  else X-Agent-Action declared
+    Allow->>Allow: lookup caller scope via get_key_scope()<br/>SCOPE_ACTION_MAP[scope] contains action?
+    alt action in scope (e.g. score_order for scorer)
+      Allow-->>App: permitted
+    else action out of scope
+      Allow-->>App: 403 scope 'scorer' cannot perform action 'block_order'
+    end
+  end
+
+  App->>Auth: bearer_token(authorization) + check_key(token, "scorer")
+  alt invalid key
+    Auth-->>App: 401 invalid key
+    App-->>NGINX: 401
+    NGINX-->>Console: HTTP 401
+  end
+  App->>App: TokenBucket.allow(client) (rate-limit / 429)
+
+  App->>Idem: lookup Idempotency-Key
+  alt cached response exists
+    Idem-->>App: replayed=True cached body
+    App-->>NGINX: 200 replayed
+    NGINX-->>Console: cached JSON
+  else fresh request
+    App->>Mandate: verify_mandate(X-Mandate, amount_inr, device_id, user_id)
+    alt MandateVerdict.TAMPERED or EXPIRED
+      Mandate-->>App: 422 mandate_invalid
+    else MandateVerdict.BREACH (cap exceeded)
+      Mandate-->>App: 422 mandate_breach
+    else MandateVerdict.REVIEW (24h cooling active)
+      Mandate-->>App: REVIEW cooling_period_active
+    else MandateVerdict.VALID
+      Mandate-->>App: fall through to cost-optimizer
+    end
+
+    App->>Rules: RulesEngine.evaluate(order)
+    alt RULE-001 amount > ₹50k
+      Rules-->>App: BLOCK
+    else RULE-002 high-value vague COD
+      Rules-->>App: REVIEW
+    end
+
+    App->>Feat: KaggleFeatureBuilder.transform(order)
+    Feat-->>App: X shape (1, 79)
+    App->>Priors: get_priors() → p_orig=0.01697 p_und=0.01697
+    App->>Model: state["model"].predict_proba(X)[:, 1]
+    Model-->>App: raw_proba (e.g. 0.0395)
+    App->>Cost: calibrate_probabilities([raw_proba], p_orig, p_und)<br/>(no-op when p_orig == p_und)
+    Cost-->>App: p_rto (calibrated)
+    App->>Cost: optimal_decision(p_rto, c_fp=50, c_fn=600,<br/>c_otp=5, c_block=1000, otp_eff=0.82,<br/>amount_inr=order.amount_inr)
+    Cost-->>App: decision ∈ {ACCEPT, REVIEW, REJECT}
+
+    alt decision == REVIEW
+      App->>Cost: optimal_intervention(...) → otp_verify / partial_cod / address_check / hold
+      Cost-->>App: intervention
+      App->>Cases: open_case(prediction_id, order_id,<br/>priority, reason="model_review_gate", actor)
+      Cases-->>App: case_id "CASE-<uuid>"
+    end
+
+    App->>Audit: AuditLogger.log({decision, p_rto, reasons,<br/>merchant_id, mandate_verdict, audit_id})
+    Audit->>Audit: raw_hash = sha256(canonical(body) + prev_hash)
+    Audit->>Audit: MerkleSealer.add(record_id, raw_hash)<br/>(seals when 1000 records or 3600s)
+    Audit-->>App: audit_id
+
+    App->>Stream: publish(STREAM_RISK_SCORES, {prediction_id,<br/>order_id, decision, score, ts})
+    App->>Stream: publish(STREAM_AUDIT_RECORDS, {audit_id,<br/>prediction_id, model_version})
+    alt decision == REVIEW
+      App->>Stream: publish(STREAM_CASES_CREATED, {case_id,<br/>prediction_id, order_id})
+    end
+
+    App-->>NGINX: 200 OK<br/>{prediction_id, probability, risk_score,<br/>decision, intervention, explanation[],<br/>audit_id, audit_trail_url, gate_thresholds,<br/>model_version}
+    NGINX-->>Console: 200 JSON
+    Console-->>Merchant: render P(RTO) gauge + decision pill<br/>+ top-4 SHAP reasons + audit link
+  end

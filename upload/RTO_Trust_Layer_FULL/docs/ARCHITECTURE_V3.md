@@ -553,7 +553,9 @@ Any external fact used in pitch/docs must carry status:
 | FN≈12×FP cost ratio | ASSUMPTION-model | keep as parameterized assumption, sensitivity-charted in cost table |
 | Patents cited in prior brief | SUSPECT-FABRICATED | do not cite; search Espacenet only if we claim novelty anywhere |
 | "RTO Shield is pincode-level black-box" | PUBLIC-MARKETING-derived | phrase as "public materials describe…", never assert internals |
-| E1/E2/E3 PR-AUC numbers | MEASURED (repo) | citable, reproducible via verify.sh |
+| E1/E2/E3 PR-AUC numbers | MEASURED (repo, **synthetic CODScore baseline** — NOT deployed) | citable, reproducible via verify.sh; live `/risk/score` serves the real Kaggle Amazon champion (0.1027) + the Olist champion (0.3950, `?dataset=olist`) |
+| Kaggle Amazon champion PR-AUC 0.1027 | MEASURED (`models/champion/metrics.json`) | default `/risk/score`; ceiling ~0.12 because Amazon has no `user_id` history |
+| Olist boleto champion PR-AUC 0.3950 | MEASURED (`data/olist/artifacts/metrics.json`) | `?dataset=olist`; 3.8× Amazon because real `user_id`/`merchant_id` history fires the rate features that are inert on Amazon |
 
 Rule: **measured > cited > assumed > omitted.**
 

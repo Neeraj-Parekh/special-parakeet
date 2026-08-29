@@ -86,5 +86,31 @@ opentelemetry-distro>=0.50
 opentelemetry-instrumentation-fastapi>=0.50
 opentelemetry-instrumentation-requests>=0.50
 opentelemetry-instrumentation-psycopg>=0.50
+# Day 7 — Agent A1 (ONNX + temporal) — ONNX Runtime for the champion HistGB
+# inference path. Microsoft ONNX Runtime (Microsoft 2019) — C++ backend with
+# graph optimizations, constant folding, operator fusion. The user already
+# converted the champion HistGB to ONNX (48.4KB, 79 features,
+# `FloatTensorType([None,79])`, `zipmap=False`, max diff 0.000000 PASS).
+# KaggleFeatureBuilder.predict_proba + predict_proba_batch prefer the ONNX
+# path (141× single 18ms→0.12ms, 40× batch 5.95s→0.14s) with a graceful
+# sklearn fallback (try/except ImportError + .onnx file-missing guard) so
+# the API still boots without onnxruntime installed.
+onnxruntime>=1.16
+# Day 8 — Task 3: real Docker / K8s calls in src/remediation/auto_heal.py.
+# Both are lazy-imported inside the handler functions so the API still boots
+# without them installed (the dry_run backend is the default). When
+# RTO_HEAL_BACKEND=docker, `docker` SDK reaches the local socket OR a remote
+# DOCKER_HOST. When RTO_HEAL_BACKEND=k8s, `kubernetes` SDK uses the in-cluster
+# service account OR the kubeconfig pointed at by KUBECONFIG.
+docker>=7.0
+kubernetes>=29.0
 pytest>=9.0
 ruff>=0.15
+
+# Phase 3 — Kafka compatibility (PRODUCTION_COMPARISON.md §5).
+# Optional: the kafka_producer.py stub falls back to Redis Streams when
+# this isn't installed (graceful ImportError). Install to enable the
+# Kafka transport:
+#   pip install confluent-kafka>=2.0
+# OR add to a [kafka] extras group for production deployments.
+confluent-kafka>=2.0  # optional — Kafka transport for src/stream/kafka_producer.py

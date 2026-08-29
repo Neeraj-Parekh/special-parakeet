@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import sys
 import threading
 import uuid
 from datetime import datetime, timezone

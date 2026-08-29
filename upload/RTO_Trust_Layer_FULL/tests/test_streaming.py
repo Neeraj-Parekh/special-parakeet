@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import sys
 import threading
-import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -41,6 +40,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.api.routes import create_app  # noqa: E402
+from src.stream.processor import StreamProcessor  # noqa: E402
 from src.stream.producer import (  # noqa: E402
     STREAM_AUDIT_RECORDS,
     STREAM_CASES_CREATED,
@@ -49,7 +49,6 @@ from src.stream.producer import (  # noqa: E402
     STREAM_RISK_SCORES,
     StreamProducer,
 )
-from src.stream.processor import StreamProcessor  # noqa: E402
 
 # --- Test fixtures ------------------------------------------------------
 

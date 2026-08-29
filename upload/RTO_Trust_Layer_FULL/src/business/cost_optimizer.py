@@ -39,7 +39,6 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
-
 # ---------------------------------------------------------------------------
 # 0. V3 §11.6 5-way intervention vocabulary + default weights (Track N)
 # ---------------------------------------------------------------------------
@@ -409,7 +408,6 @@ def cost_curve_sweep(
     p = [float(v) for v in probs]
 
     total_pos = sum(y)
-    total_neg = n - total_pos
 
     out: list[dict] = []
     for t in ts:

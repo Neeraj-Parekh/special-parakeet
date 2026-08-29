@@ -1,0 +1,61 @@
+%% RTO Trust Layer — State Diagram: Bounded Agent Dual-Control Override
+%% Grounded in: src/api/routes.py:2356 (POST /risk/{prediction_id}/override),
+%%   src/api/agent_allowlist.py (SCOPE_ACTION_MAP + OVERRIDE_ACTION +
+%%   check_agent_action), src/api/mandates.py (verify_mandate + MandateVerdict
+%%   REVIEW/BREACH for 24h cooling cap exceeded),
+%%   src/api/keys.py (derive_hmac_key via HKDF salt=rto-override-v1
+%%   info=dual-control), alembic/006_override_nonces.py
+%%   (override_nonces PK=nonce_hash, INSERT ON CONFLICT DO NOTHING → 409),
+%%   alembic/003_mandate_counters.py (mandate_counters cumulative_monthly cap).
+stateDiagram-v2
+  direction LR
+  [*] --> IDLE
+
+  IDLE --> PROPOSED : agent reads decision<br/>+ decides to suggest override
+
+  PROPOSED --> AWAITING_COSIGN : client builds body<br/>{prediction_id, decision, notes}<br/>+ generates fresh nonce<br/>(uuid4().hex 16-byte)
+  PROPOSED --> REJECTED_SCOPE : X-Agent-Action=override<br/>not in scope_action_map[scope]
+  note right of REJECTED_SCOPE : 403 Forbidden<br/>scope 'scorer' cannot perform action 'override'
+  PROPOSED --> REJECTED_APPROVAL : override requires admin scope<br/>(scorer/ops cannot self-approve)
+  note right of REJECTED_APPROVAL : 403 Forbidden<br/>(only admin scope may invoke override)
+
+  AWAITING_COSIGN --> SCOPE_CHECKED : admin_signature_1<br/>is a valid admin key<br/>(check_key admin scope passes)
+  AWAITING_COSIGN --> REJECTED_ADMIN1 : admin_signature_1<br/>invalid or non-admin
+  note right of REJECTED_ADMIN1 : 403 dual-control requires<br/>2 valid admin API keys
+
+  AWAITING_COSIGN --> REJECTED_SAMEKEY : admin_signature_1<br/>== admin_signature_2
+  note right of REJECTED_SAMEKEY : 400 cannot self-approve<br/>(V3 §12.1)
+
+  SCOPE_CHECKED --> REPLAY_CHECKED : INSERT INTO override_nonces<br/>(nonce_hash) ON CONFLICT DO NOTHING<br/>rowcount == 1 (first sighting)
+  SCOPE_CHECKED --> REPLAY_409 : rowcount == 0<br/>(nonce already seen)
+  note right of REPLAY_409 : 409 Conflict — replay detected<br/>(alembic 006, 24h prune window)
+
+  REPLAY_CHECKED --> HKDF_DERIVED : derive_hmac_key(<br/>  raw_key=admin2 candidate,<br/>  salt=b"rto-override-v1",<br/>  info=b"dual-control",<br/>  length=32<br/>)
+  note right of HKDF_DERIVED : RFC 5869<br/>(cached in src/api/keys.py)
+
+  HKDF_DERIVED --> HMAC_CHAIN : expected_sig2 = HMAC(<br/>  derived_admin2_key,<br/>  admin_signature_1|canonical_body|ts,<br/>  sha256)
+  HMAC_CHAIN --> APPLIED : hmac.compare_digest(<br/>sig2, expected_sig2) == True<br/>(tries ±30s clock skew)
+  HMAC_CHAIN --> REJECTED_HMAC : no admin2 candidate matches
+  note right of REJECTED_HMAC : 403 HMAC chain verification failed
+
+  APPLIED --> MANDATE_CHECKED : verify_mandate(X-Mandate,<br/>amount_inr, device_id, user_id)
+  MANDATE_CHECKED --> AUDITED : MandateVerdict.VALID<br/>(UPI Circle cap not breached)
+  MANDATE_CHECKED --> COOLING_REVIEW : MandateVerdict.REVIEW<br/>24h cooling active (₹5k)
+  note right of COOLING_REVIEW : case opens in REVIEW queue<br/>(requires human approval)
+  MANDATE_CHECKED --> MANDATE_403 : MandateVerdict.BREACH<br/>monthly ₹15k / per-txn ₹5k<br/>exceeded OR device_id_not_allowed
+  note right of MANDATE_403 : 422 mandate_breach<br/>(alembic 003 + 004<br/>mandate_counters.month_key<br/>FOR UPDATE row lock)
+
+  AUDITED --> CLOSED : AuditLogger.log(<br/>{override, admin1_digest, admin2_digest,<br/>admin2_key_found, prediction_id,<br/>new_decision, nonce_hash})<br/>→ raw_hash chain append<br/>→ MerkleSealer.add
+  note right of CLOSED : case updated to new decision<br/>+ audit_trail_url returned to dashboard
+
+  CLOSED --> [*]
+
+  %% failure terminals
+  REJECTED_SCOPE --> [*]
+  REJECTED_APPROVAL --> [*]
+  REJECTED_ADMIN1 --> [*]
+  REJECTED_SAMEKEY --> [*]
+  REPLAY_409 --> [*]
+  REJECTED_HMAC --> [*]
+  MANDATE_403 --> [*]
+  COOLING_REVIEW --> [*]

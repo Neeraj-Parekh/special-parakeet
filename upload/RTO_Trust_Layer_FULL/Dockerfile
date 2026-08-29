@@ -25,6 +25,15 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY requirements.txt .
+# Upgrade pip first: the bundled pip 25.0.1 refuses to install the
+# `opentelemetry-distro>=0.50` family because all matching PyPI versions
+# are pre-releases (`b0` suffix) and pip's pre-release resolver gate
+# refuses them unless `--pre` is passed OR pip is upgraded to ≥26.x
+# (the CI/mlops/screenshot runners upgrade pip before install + succeed;
+# the Dockerfile didn't, hence "No matching distribution found"). Upgrading
+# pip is the standard fix — it carries the resolver that picks the latest
+# pre-release when only pre-releases match the spec.
+RUN python -m pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src ./src

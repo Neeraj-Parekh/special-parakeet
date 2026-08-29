@@ -40,8 +40,8 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 import pandas as pd
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -55,7 +55,6 @@ from src.models.train import (  # noqa: E402
     compute_priors,
     write_priors_artifact,
 )
-
 
 # --------------------------------------------------------------------- #
 # Test 1 — first-class priors path                                      #

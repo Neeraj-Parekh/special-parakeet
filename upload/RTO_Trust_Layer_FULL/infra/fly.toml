@@ -1,0 +1,73 @@
+# Fly.io app definition — RTO Trust Layer API (Python FastAPI scorer).
+#
+# Deploys the Python scorer to Fly.io's free-tier (3 shared-cpu-1 VMs
+# with 256MB RAM each — enough for the HistGB champion + SQLite audit
+# trail). The Next.js dashboard can be deployed as a separate Fly app
+# (see Dockerfile.web + docker-compose.web.yml for the build context).
+#
+# Deploy commands (run from repo root):
+#   brew install flyctl        # macOS — or https://fly.io/docs/hands-on/install-flyctl/
+#   flyctl auth login
+#   flyctl apps create rto-trust-layer
+#   flyctl deploy              # uses this file as the config
+#
+# Once deployed:
+#   • API URL:        https://rto-trust-layer.fly.dev
+#   • /health probe:  https://rto-trust-layer.fly.dev/health
+#   • Score a demo order:
+#       curl -X POST https://rto-trust-layer.fly.dev/risk/score \
+#         -H "Content-Type: application/json" \
+#         -H "Authorization: Bearer $RTO_SCORER_KEYS" \
+#         -H "Idempotency-Key: demo-1" \
+#         -d '{"order_id":"ORD-FLY-1","amount_inr":12499,"category":"Electronics","customer_id":"CUST-1","address_quality":"vague","city_tier":"tier_3","payment_method":"COD","prior_orders":0,"prior_returns":0,"items":1,"order_hour":12,"device":"Android App"}'
+#
+# Set secrets after the first deploy (don't bake them in):
+#   flyctl secrets set RTO_SCORER_KEYS=score-demo-key
+#   flyctl secrets set RTO_ADMIN_KEYS=admin-demo-key
+#   flyctl secrets set RTO_MANDATE_SECRET=$(openssl rand -hex 32)
+#   flyctl secrets set RTO_AUDIT_SALT=$(openssl rand -hex 16)
+#
+# To also deploy the Next.js dashboard to Fly.io:
+#   flyctl apps create rto-trust-layer-dashboard
+#   flyctl deploy --dockerfile Dockerfile.web --app rto-trust-layer-dashboard \
+#     --env API_BASE_URL=https://rto-trust-layer.fly.dev
+#
+# Free-tier caveats:
+#   • Fly free-tier covers up to 3 shared-1x-256MB VMs per org.
+#   • Apps auto-stop after 1 hour idle + auto-start on the next request
+#     (similar to Render free tier, ~30s cold-start).
+#   • 3 GB outbound data transfer per month free.
+app = "rto-trust-layer"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  # Health probe hits /health so Fly knows when the scorer is ready.
+  min_machines_running = 0
+
+[http_service.concurrency]
+  type = "requests"
+  hard_limit = 250
+  soft_limit = 200
+
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/health"
+
+# 256MB shared-cpu-1 VM — the smallest Fly machine. The scorer idles
+# at ~80MB (FastAPI + sklearn HistGB + 79-dim feature builder); this
+# leaves headroom for ONNX Runtime + the SHAP KernelExplainer.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

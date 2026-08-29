@@ -1,0 +1,125 @@
+%% RTO Trust Layer — ER Diagram (10 tables, alembic migrations 001-007)
+%% Grounded in: alembic/versions/001_initial.py (audit_records, cases,
+%%   model_registry, idempotency_keys, psi_reference),
+%%   002_merkle_intervals.py (audit_merkle_intervals + audit_records
+%%   interval_id/interval_position columns),
+%%   003_mandate_counters.py (mandate_counters + mandate_counter_events),
+%%   004_mandate_counter_concurrency.py (mandate_counters.month_key column),
+%%   005_gin_audit_body.py (indexes only — audit_records),
+%%   006_override_nonces.py (override_nonces),
+%%   007_api_key_merchant_binding.py (api_keys).
+erDiagram
+  audit_records {
+    BIGINT    id PK
+    TEXT      audit_id UK
+    JSONB     body
+    TEXT      raw_hash
+    TEXT      prev_hash
+    TIMESTAMPTZ created_at
+    TEXT      model_version
+    TEXT      mandate_type
+    TEXT      bh_purpose_code
+    TEXT      device_id
+    TEXT      user_id
+    INT       interval_id FK
+    INT       interval_position
+  }
+
+  audit_merkle_intervals {
+    SERIAL   interval_id PK
+    BIGINT   start_record_id
+    BIGINT   end_record_id
+    TEXT     merkle_root
+    TEXT     prev_interval_root
+    INT      leaf_count
+    TIMESTAMPTZ sealed_at
+  }
+
+  cases {
+    TEXT      case_id PK
+    TEXT      prediction_id
+    TEXT      order_id
+    TEXT      merchant_id
+    TEXT      status
+    TEXT      priority
+    TEXT      assigned_to
+    TEXT      reason
+    TIMESTAMPTZ created_at
+    TIMESTAMPTZ updated_at
+    TIMESTAMPTZ resolved_at
+    TEXT      resolution_notes
+    TEXT      resolution_by
+    TEXT      resolution_decision
+  }
+
+  model_registry {
+    TEXT       version PK
+    TEXT       model_path
+    JSONB      metrics
+    BOOLEAN    is_champion
+    BOOLEAN    is_challenger
+    DOUBLE     traffic_split
+    TEXT       drift_status
+    TIMESTAMPTZ deployed_at
+    TIMESTAMPTZ promoted_at
+  }
+
+  idempotency_keys {
+    TEXT        key PK
+    TEXT        request_body
+    TEXT        response_body
+    INTEGER     status_code
+    TIMESTAMPTZ created_at
+    TIMESTAMPTZ expires_at
+  }
+
+  psi_reference {
+    SERIAL      id PK
+    TEXT        feature_name
+    JSONB       expected_distribution
+    INTEGER     n_bins
+    TEXT        model_version
+    TIMESTAMPTZ created_at
+  }
+
+  mandate_counters {
+    TEXT       mandate_sub PK
+    NUMERIC_14_2 cumulative_monthly
+    BIGINT     last_activity_ts
+    VARCHAR_7  month_key
+    TIMESTAMPTZ updated_at
+  }
+
+  mandate_counter_events {
+    BIGSERIAL  id PK
+    TEXT       mandate_sub
+    BIGINT     ts
+    NUMERIC_14_2 amount_inr
+    TIMESTAMPTZ created_at
+  }
+
+  override_nonces {
+    TEXT        nonce_hash PK
+    TIMESTAMPTZ created_at
+  }
+
+  api_keys {
+    TEXT        key_id PK
+    TEXT        key_hash UK
+    TEXT        scope
+    TEXT        merchant_id
+    TIMESTAMPTZ created_at
+    BOOLEAN     revoked
+  }
+
+  %% Tamper-evidence layer: per-record hash chain → Merkle interval sealing.
+  audit_records ||--o{ audit_merkle_intervals : "interval_id (sealed every 1000 recs / 3600s)"
+
+  %% UPI Circle cumulative state split: monotone current state + windowed events.
+  mandate_counters ||--o{ mandate_counter_events : "mandate_sub (24h cooling window)"
+
+  %% Logical relationships (no FK in schema but enforced in application logic).
+  cases }o--|| audit_records : "prediction_id (logical link)"
+  api_keys }o--o| cases : "merchant_id (enforce_merchant_isolation)"
+  api_keys }o--o| mandate_counters : "merchant_id (multi-tenant filter)"
+  model_registry ||--o| psi_reference : "model_version (drift reference baseline)"

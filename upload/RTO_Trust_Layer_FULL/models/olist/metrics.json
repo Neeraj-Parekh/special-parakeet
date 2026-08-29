@@ -1,0 +1,33 @@
+{
+  "pr_auc": 0.5678450055617913,
+  "roc_auc": 0.7944711690230362,
+  "threshold_best_f1": 0.6600403521772201,
+  "precision_at_threshold": 1.0,
+  "recall_at_threshold": 0.5492227979274611,
+  "f1_at_threshold": 0.7090301003339904,
+  "confusion": {
+    "tn": 19690,
+    "fp": 6,
+    "fn": 87,
+    "tp": 106
+  },
+  "n_train": 79552,
+  "n_test": 19889,
+  "base_return_rate": 0.012409368369183738,
+  "data_source": "data/olist/olist_merged_orders.csv",
+  "feature_count": 14,
+  "trained_at": "2026-08-28T06:20:22Z",
+  "model_config": "HistGB(max_iter=250,max_depth=4,lr=0.08,l2_reg=0.1,class_weight=balanced)",
+  "priors": {
+    "p_orig": 0.013085780370072405,
+    "p_und": 0.013085780370072405,
+    "n_train": 79552,
+    "n_pos_train": 1041,
+    "n_test": 19889,
+    "n_pos_test": 193,
+    "calibration_method": "identity",
+    "note": "class_weight=balanced does not resample labels; p_und = p_orig.",
+    "created_at": "2026-08-28T06:20:22Z",
+    "source": "github-actions:train.yml nightly cron"
+  }
+}

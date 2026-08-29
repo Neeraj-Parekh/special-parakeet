@@ -91,7 +91,6 @@ from src.api.routes import (  # noqa: E402
     create_app,
 )
 
-
 SCORER = {"Authorization": "Bearer score-demo-key"}
 ADMIN = {"Authorization": "Bearer admin-demo-key"}
 

@@ -1,0 +1,218 @@
+%% RTO Trust Layer — Class Diagram (key Python modules + state object)
+%% Grounded in: src/config/__init__.py (Settings), src/audit/logger.py
+%%   (AuditLogger + MerkleSealer), src/cases/service.py (CaseService),
+%%   src/ml/registry.py (register_model/current_champion/get_priors/psi),
+%%   src/api/mandates.py (MandateVerdict + verify_mandate + issue_mandate +
+%%   _FileState), src/rules/engine.py (Rule + RulesEngine),
+%%   src/business/cost_optimizer.py (optimal_decision + optimal_intervention
+%%   + calibrate_probabilities + cost_curve_sweep),
+%%   src/api/agent_allowlist.py (SCOPE_ACTION_MAP + check_agent_action),
+%%   src/api/keys.py (derive_hmac_key + _hkdf_extract + _hkdf_expand),
+%%   src/api/security.py (TokenBucket + check_key + default_keys),
+%%   src/api/routes.py (state dict assembled by lifespan),
+%%   src/stream/producer.py (StreamProducer),
+%%   src/models/feature_builder.py (KaggleFeatureBuilder).
+classDiagram
+  direction LR
+
+  class Settings {
+    +database_url
+    +redis_url
+    +rto_scorer_keys
+    +rto_admin_keys
+    +rto_mandate_secret
+    +rto_audit_salt
+    +audit_path
+    +cases_path
+    +model_registry_path
+    +idem_maxsize
+    +idem_ttl_seconds
+    +is_postgres
+    +get_settings Settings
+  }
+
+  class AuditLogger {
+    +path
+    +model_version
+    +conn
+    +sealer
+    +log payload str
+    +read audit_id dict
+    +verify_chain tuple
+    +merkle_proof record_id dict
+    +merkle_intervals limit list
+    +usage_counts since_hours dict
+    +redact_customer id str
+    +canonical payload str
+  }
+
+  class MerkleSealer {
+    +conn
+    +interval_size
+    +interval_seconds
+    +_pending list
+    +_interval_started_at
+    +add record_id raw_hash dict
+    +seal dict
+    +merkle_proof record_id dict
+  }
+
+  class CaseService {
+    +path
+    +settings
+    +_lock
+    +_conn
+    +store
+    +open_case prediction_id order_id priority reason actor str
+    +resolve case_id decision notes actor dict
+    +list_cases status list
+  }
+
+  class ModelRegistry {
+    <<module>>
+    +register_model version model_path metrics champion priors dict
+    +current_champion dict
+    +get_priors dict
+    +set_priors version priors
+    +psi expected actual float
+    +load_registry path dict
+    +_close_conn
+  }
+
+  class MandateVerifier {
+    <<module>>
+    +verify_mandate token amount device_id user_id tuple
+    +issue_mandate scope sub amount ttl mandate_type str
+    +reset_upi_counters
+    +_mandate_state _FileState
+    +MandateVerdict verdicts
+  }
+
+  class MandateVerdict {
+    +VALID
+    +TAMPERED
+    +EXPIRED
+    +BREACH
+    +REVIEW
+  }
+
+  class RulesEngine {
+    +_rules list
+    +_lock
+    +evaluate order Rule
+    +add rule
+    +remove rule_id bool
+    +list_active list
+  }
+
+  class Rule {
+    +rule_id
+    +name
+    +field
+    +op
+    +value
+    +action
+    +priority
+    +active
+    +created_by
+  }
+
+  class CostOptimizer {
+    <<module>>
+    +optimal_decision p c_fp c_fn c_otp c_block otp_eff amount tuple
+    +optimal_intervention p weights amount tuple
+    +calibrate_probabilities probas p_orig p_und list
+    +cost_curve_sweep y_true y_pred weights list
+    +bootstrap_cost_ci y_true y_pred weights n conf dict
+    +find_cost_crossover curves dict
+    +find_intervention_crossover interventions dict
+  }
+
+  class AgentAllowlist {
+    <<module>>
+    +ALLOWED_ACTIONS dict
+    +SCOPE_ACTION_MAP dict
+    +OVERRIDE_ACTION str
+    +check_agent_action action mandate_scope key_scope tuple
+    +get_key_scope key scorer_keys admin_keys str
+    +get_key_merchant_id key str
+  }
+
+  class KeyManager {
+    <<module>>
+    +derive_hmac_key raw_key salt info length bytes
+    +_hkdf_extract salt ikm hash_algo bytes
+    +_hkdf_expand prk info length hash_algo bytes
+    +clear_derived_key_cache
+    -_derived_cache dict
+  }
+
+  class TokenBucket {
+    +rate float
+    +capacity float
+    +buckets dict
+    +updated dict
+    +lock
+    +allow client bool
+  }
+
+  class StreamProducer {
+    +redis_url
+    +client
+    +_connect_attempted
+    +publish stream fields str
+    +close
+    -_ensure_client
+  }
+
+  class KaggleFeatureBuilder {
+    +model_bundle
+    +ohe_fitter
+    +rate_lookup dict
+    +feature_names list
+    +from_champion_dir dir KaggleFeatureBuilder
+    +transform raw_order ndarray
+    -_build_base_features order dict
+    -_bin_amount amt int
+    -_lookup_rate table key float
+  }
+
+  class FastAPIApp {
+    <<state>>
+    +model
+    +feature_builder
+    +audit
+    +cases
+    +rules
+    +stream
+    +tracer
+    +keys dict
+    +bucket
+    +idem
+    +settings
+  }
+
+  %% composition
+  AuditLogger *-- MerkleSealer : sealed per 1000 records or 3600s
+  FastAPIApp *-- AuditLogger : state.audit
+  FastAPIApp *-- CaseService : state.cases
+  FastAPIApp *-- RulesEngine : state.rules
+  FastAPIApp *-- StreamProducer : state.stream
+  FastAPIApp *-- TokenBucket : state.bucket
+  FastAPIApp *-- KaggleFeatureBuilder : state.feature_builder
+
+  %% dependency / consumption
+  CaseService ..> AuditLogger : uses as JSONL store in file mode
+  RulesEngine *-- Rule : default RULE-001 + RULE-002
+  MandateVerifier *-- MandateVerdict : returns verdict constants
+  MandateVerifier *-- _FileState : cross-process state 15-b
+  AgentAllowlist *-- SCOPE_ACTION_MAP : frozenset per scope
+  KeyManager ..> MandateVerifier : derived_admin2_key feeds HMAC chain
+  CostOptimizer ..> ModelRegistry : calibrate_probabilities priors
+  CostOptimizer ..> KaggleFeatureBuilder : predict_proba on transform
+  FastAPIApp ..> Settings : get_settings in lifespan
+  FastAPIApp ..> CostOptimizer : optimal_decision + optimal_intervention
+  FastAPIApp ..> AgentAllowlist : enforce_agent_action Depends
+  FastAPIApp ..> MandateVerifier : verify_mandate
+  FastAPIApp ..> KeyManager : derive_hmac_key on override
+  FastAPIApp ..> ModelRegistry : current_champion + get_priors

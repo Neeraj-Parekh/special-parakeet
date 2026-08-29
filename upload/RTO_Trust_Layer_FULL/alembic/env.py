@@ -17,8 +17,9 @@ import sys
 from logging.config import fileConfig
 from pathlib import Path
 
-from alembic import context
 from psycopg import connect
+
+from alembic import context
 
 # Make ``src.config`` importable regardless of CWD — alembic is run from the
 # project root (``alembic upgrade head``) or via ``docker compose run --rm

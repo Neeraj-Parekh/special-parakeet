@@ -29,6 +29,7 @@ still pass without a Redis fixture. With ``REDIS_URL`` set, the producer
 connects lazily on first ``publish`` via ``redis.from_url``.
 """
 
+from src.stream.consumer import StreamConsumer, run_consumer
 from src.stream.producer import (
     STREAM_AUDIT_RECORDS,
     STREAM_CASES_CREATED,
@@ -37,7 +38,6 @@ from src.stream.producer import (
     STREAM_RISK_SCORES,
     StreamProducer,
 )
-from src.stream.consumer import StreamConsumer, run_consumer
 
 __all__ = [
     "STREAM_AUDIT_RECORDS",

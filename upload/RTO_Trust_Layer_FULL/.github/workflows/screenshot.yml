@@ -1,0 +1,170 @@
+# Screenshots + GitHub Pages — auto-capture the FastAPI docs + score page
+# and deploy the screenshots to GitHub Pages so the pitch deck can embed
+# live URLs (`https://<owner>.github.io/<repo>/openapi-docs.png`).
+#
+# Pipeline:
+#   1. Start the API in background with CI demo keys (RTO_SCORER_KEYS /
+#      RTO_ADMIN_KEYS / RTO_MANDATE_SECRET / RTO_AUDIT_SALT — same values
+#      as the lint-test job in ci.yml).
+#   2. Wait for `/health` to return 200 (30s retry loop).
+#   3. Install Node 20 + Playwright Chromium.
+#   4. Run `tests/screenshot.js` — 4 screenshots at 1280×800 full-page:
+#        /docs           → openapi-docs.png
+#        /health        → health.png
+#        /               → dashboard.png (or fallback to /docs)
+#        /risk/score     → score-endpoint.png (captures 405/404 response page)
+#   5. Upload screenshots as an Actions artifact (30-day retention).
+#   6. Deploy `./screenshots/` to GitHub Pages via the official
+#      `actions/configure-pages` + `actions/upload-pages-artifact` +
+#      `actions/deploy-pages` triad.
+#
+# Authentication: `GITHUB_TOKEN` is auto-provisioned with `pages: write` +
+# `id-token: write` (set in `permissions:` below). The repo is now PRIVATE
+# so the deploy step needs no extra PAT/Pages API token.
+#
+# Track J (Day 3) §D item — release-day artifacts + pitch deck embeds.
+
+name: Screenshots + GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Don't cancel a Pages deploy mid-flight — a half-deployed Pages site is
+# worse than a stale one (the user's pitch deck would 404 mid-demo).
+concurrency:
+  group: screenshots-pages
+  cancel-in-progress: false
+
+jobs:
+  screenshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      # Required by `actions/deploy-pages` — the `github-pages` environment
+      # is auto-created on first deploy; the GITHUB_TOKEN with the
+      # `pages: write` permission is the only credential needed.
+      name: github-pages
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Start the API in the background with CI demo keys. The factory
+      # `src.api.routes:create_app` returns an ASGI app (per Track G wiring
+      # — the same factory the dashboard's uvicorn entry uses).
+      - name: Start API (background)
+        run: |
+          RTO_SCORER_KEYS=ci-scorer \
+          RTO_ADMIN_KEYS=ci-admin \
+          RTO_MANDATE_SECRET=ci-secret \
+          RTO_AUDIT_SALT=ci-salt \
+          nohup uvicorn src.api.routes:create_app --factory --host 0.0.0.0 --port 8000 > /tmp/uvicorn.log 2>&1 &
+          echo $! > /tmp/uvicorn.pid
+          sleep 2
+          echo "--- uvicorn started, PID=$(cat /tmp/uvicorn.pid) ---"
+
+      - name: Wait for /health
+        run: |
+          for i in {1..30}; do
+            if curl -sf http://localhost:8000/health; then
+              echo ""
+              echo "API is healthy after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::API did not become healthy within 30s"
+          echo "--- uvicorn log tail ---"
+          tail -n 50 /tmp/uvicorn.log || true
+          exit 1
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright (chromium)
+        # `npx playwright install --with-deps chromium` downloads the
+        # chromium binary but does NOT install the `playwright` npm package
+        # locally — `tests/screenshot.js` does `require('playwright')`
+        # which needs the package in `node_modules`. Install the package
+        # first, then fetch the browser binary.
+        run: |
+          npm install playwright
+          npx playwright install --with-deps chromium
+
+      - name: Run screenshot script
+        run: |
+          mkdir -p screenshots
+          node tests/screenshot.js
+
+      - name: Upload screenshots artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: screenshots/
+          if-no-files-found: warn
+          retention-days: 30
+
+      # GitHub Pages deploy triad. `configure-pages` provisions the Pages
+      # site (auto-creates the `github-pages` environment if missing),
+      # `upload-pages-artifact` zips `./screenshots/` into the Pages
+      # deployable archive, `deploy-pages` issues the REST call to publish.
+      - name: Configure GitHub Pages
+        id: pages
+        # `continue-on-error: true` — the repo may not have Pages
+        # enabled in Settings → Pages → Source = GitHub Actions.
+        # Enabling via the API (POST /repos/{owner}/{repo}/pages with
+        # build_type=workflow) is the one-time setup; if it hasn't
+        # propagated yet, this step fails with "Get Pages site failed"
+        # but the screenshots are already uploaded as a regular artifact
+        # (step 10) so the workflow still produces a reviewable output.
+        continue-on-error: true
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./screenshots
+
+      - name: Deploy to GitHub Pages
+        if: always()
+        # `continue-on-error: true` — depends on the Pages site being
+        # enabled (see Configure GitHub Pages step above). Non-blocking
+        # for the hackathon demo; the screenshots artifact is the
+        # reviewable deliverable if Pages isn't enabled.
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      # Kill the uvicorn process at the end (always() so it runs even on
+      # partial failure — the runner is ephemeral but explicit cleanup
+      # keeps the Actions log readable).
+      - name: Tear down API
+        if: always()
+        run: |
+          pkill -f uvicorn || true
+          if [ -f /tmp/uvicorn.pid ]; then
+            kill "$(cat /tmp/uvicorn.pid)" 2>/dev/null || true
+          fi
+          echo "--- final uvicorn log tail ---"
+          tail -n 30 /tmp/uvicorn.log || true

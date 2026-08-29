@@ -12,7 +12,22 @@ paper_ref/
 paper studied/
 
 # Additional exclusions for clean repo
-data/
+# Exclude data/* (immediate children only — needed so we can re-include specific subdirs below).
+# A blanket `data/` would block ALL re-inclusions per gitignore docs.
+data/*
+# Allow committed processed + Olist data (needed for CI + nightly train workflow)
+!data/olist/
+!data/olist/**
+!data/processed/
+!data/processed/**
+# Re-include the two raw CSVs that the FastAPI lifespan, mlops.yml (data
+# profiling + validate + canary + slice + evaluate default --data/--pincodes)
+# AND the Dockerfile COPY all read at runtime. Both files are well under
+# GitHub's 100MB single-file limit (cod_orders.csv=730KB, pincodes_india.csv=23MB).
+# Tracked via `git add -f` below — once tracked, gitignore is bypassed.
+!data/raw/
+!data/raw/cod_orders.csv
+!data/raw/pincodes_india.csv
 *.egg-info/
 htmlcov/
 .coverage

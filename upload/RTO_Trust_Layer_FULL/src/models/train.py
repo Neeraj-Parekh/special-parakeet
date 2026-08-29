@@ -222,8 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     # the registry's Postgres dependency chain).
     from src.features.cleaning import load_data  # noqa: E402
     from src.features.enrich import add_address_features  # noqa: E402
-    from src.models.splitting import group_leakage, group_split  # noqa: E402
     from src.ml.registry import current_champion, register_model  # noqa: E402
+    from src.models.splitting import group_leakage, group_split  # noqa: E402
 
     ap = argparse.ArgumentParser(
         description="Train the RTO model + register as champion with Bahnsen Eq.(6) priors.",

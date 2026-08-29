@@ -1,0 +1,66 @@
+# Dependabot config — daily pip scans + weekly GitHub-Actions scans.
+#
+# P1-4 (auto-remediation / vuln-scan-to-auto-patch). Dependabot opens PRs
+# for vulnerable / outdated dependencies; the auto-merge workflow at
+# .github/workflows/dependabot-auto-merge.yml squashes them on green CI.
+#
+# Paper / industry reference: GitHub's own guidance — "Dependabot security
+# updates" + "Keeping your actions up to date with Dependabot" (GitHub
+# Docs, 2024). The auto-merge-on-green pattern matches the GitHub
+# recommended flow for low-blast-radius dependency bumps (patch + minor
+# only; major bumps need a human reviewer per the SLSA Level 3 guidance).
+version: 2
+updates:
+  # Python (pip) — daily. Catches CVEs in scikit-learn, pandas, fastapi,
+  # pydantic, etc. as soon as GitHub's advisory DB syncs. The 10-PR limit
+  # is generous so a backlog of patch bumps doesn't get silently dropped.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "daily"
+      # Use the early morning UTC slot — fewer concurrent CI runs than
+      # the 09:00 / 17:00 defaults, so our CI queue is shorter.
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "automated"
+    # Group patch + minor bumps together so we get ONE PR per ecosystem
+    # per day (vs. one PR per package — too noisy for a small team).
+    # Major bumps (e.g. fastapi 0.100 → 0.110 with breaking changes) still
+    # open as separate PRs so the human reviewer can decide.
+    groups:
+      patch-and-minor:
+        update-types:
+          - "patch"
+          - "minor"
+    # Don't auto-rebase — the auto-merge workflow is the convergence
+    # mechanism. Rebase churn creates extra CI runs without value.
+    rebase-strategy: "disabled"
+    # Security-only bumps bypass the group (so a CVE patch doesn't wait
+    # for the next batched PR). Default behaviour; kept explicit for
+    # documentation.
+    security: "enabled"
+    commit-message:
+      prefix: "deps(pip)"
+      include: "scope"
+
+  # GitHub Actions — weekly. Catches outdated action versions
+  # (actions/checkout@v3 → v4, etc.) which often carry security fixes
+  # (e.g. the v3 → v4 transition hardened the runner-supplied NODE_OPTIONS
+  # parsing). Weekly is right-sized — actions release monthly at most.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "automated"
+      - "github-actions"
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"

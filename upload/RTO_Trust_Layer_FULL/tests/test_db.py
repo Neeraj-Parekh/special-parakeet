@@ -213,7 +213,6 @@ def test_model_registry_postgres(db_conn):
 
 def test_idempotency_postgres(db_conn):
     """Direct table test of the idempotency_keys insert + lookup + expiry."""
-    import json
     from datetime import datetime, timedelta, timezone
 
     from src.api.routes import _idem_lookup_postgres, _idem_store_postgres

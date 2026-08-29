@@ -1,0 +1,116 @@
+%% RTO Trust Layer — Deployment Topology
+%% Grounded in: git remote (Neeraj-Parekh/special-parakeet — repo is PRIVATE),
+%%   .github/workflows/ci.yml (lint-test + docker-build + load-test jobs),
+%%   .github/workflows/mlops.yml (7-stage TFX-style: data-analysis →
+%%   data-validation → model-training → model-gate (canary) → container-build
+%%   → deploy-staging → monitor-rollback),
+%%   .github/workflows/train.yml (Nightly Retrain Olist cron 0 2 * * *),
+%%   .github/workflows/docker.yml (Docker Release — tag v* → GHCR multi-arch
+%%   amd64+arm64),
+%%   .github/workflows/screenshot.yml (Screenshots → GitHub Pages deploy),
+%%   docker-compose.yml (api + postgres + redis + stream-worker +
+%%   stream-processor + drift-consumer + nginx + prometheus + grafana +
+%%   jaeger + alertmanager),
+%%   Dockerfile (python:3.12-slim → uvicorn on :8000),
+%%   requirements.txt + pyproject.toml (FastAPI + psycopg + scikit-learn +
+%%   shap + opentelemetry-sdk).
+flowchart TB
+  classDef github fill:#0d1117,color:#e6edf3,stroke:#58a6ff,stroke-width:2px
+  classDef runner fill:#161b22,color:#e6edf3,stroke:#3fb950
+  classDef registry fill:#1c2128,color:#e6edf3,stroke:#d29922
+  classDef host fill:#0d1117,color:#e6edf3,stroke:#58a6ff
+  classDef external fill:#21262d,color:#8b949e,stroke:#6e7681,stroke-dasharray:3 3
+  classDef pages fill:#1c2128,color:#e6edf3,stroke:#58a6ff
+
+  %% ===== Source =====
+  subgraph GH["GitHub — github.com/Neeraj-Parekh/special-parakeet (PRIVATE)"]
+    REPO[("Git repo<br/>main branch<br/>commits 1ab7f62 → 368ec19 →<br/>30d20d6 → 1f8b870")]
+    CODE["src/ + tests/ + alembic/<br/>+ models/champion/ +<br/>dashboard/index.html +<br/>monitoring/ + .github/workflows/"]
+  end
+
+  %% ===== Runners =====
+  subgraph RUN["GitHub Actions Runners (ubuntu-latest)"]
+    CI["ci.yml<br/>(every push/PR to main)<br/>job: lint-test<br/>job: docker-build<br/>job: load-test (k6)"]
+    MLOPS["mlops.yml<br/>(data/model/src change + weekly cron)<br/>7 stages:<br/>1 data-analysis<br/>2 data-validation<br/>3 model-training (HistGB + priors)<br/>4 model-gate (canary + slice)<br/>5 container-build<br/>6 deploy-staging<br/>7 monitor-rollback"]
+    TRAIN["train.yml<br/>(cron: 0 2 * * *)<br/>Nightly Retrain Olist<br/>PR-AUC ≥ 0.35 gate<br/>→ git-auto-commit to main"]
+    DOCKER["docker.yml<br/>(tag: v*)<br/>Docker Release<br/>multi-arch amd64+arm64<br/>tags: latest + semver + sha-<sha7>"]
+    SCREEN["screenshot.yml<br/>(push: main)<br/>4 screenshots at 1280×800:<br/>/docs, /health, /, /risk/score"]
+  end
+
+  %% ===== Registry =====
+  subgraph REG["Container Registry + Static Hosting"]
+    GHCR[("GHCR<br/>ghcr.io/neeraj-parekh/special-parakeet<br/>:latest + :vX.Y.Z + :sha-<sha7><br/>(amd64 + arm64 manifests)")]
+    PAGES["GitHub Pages<br/>https://neeraj-parekh.github.io/special-parakeet/<br/>openapi-docs.png · health.png ·<br/>dashboard.png · score-endpoint.png"]
+  end
+
+  %% ===== Docker host =====
+  subgraph HOST["Docker Host (single VM or laptop)"]
+    direction TB
+    NGINX["nginx:alpine<br/>:80 (profile=full)<br/>TLS + idempotency + rate-limit"]
+    API["api container (python:3.12-slim)<br/>uvicorn src.api.routes:create_app<br/>:8000"]
+    PG["postgres:15-alpine<br/>riskdb (alembic 001-007)"]
+    RD["redis:7-alpine<br/>5 streams"]
+    SW["stream-worker<br/>python -m src.stream.consumer<br/>group=rto-workers"]
+    SP["stream-processor<br/>python -m src.stream.processor<br/>group=rto-processors"]
+    DC["drift-consumer<br/>python -m src.feedback.drift_consumer<br/>group=rto-drift-detectors"]
+    PROM["prom/prometheus<br/>:9090 (profile=full)"]
+    GRAF["grafana/grafana<br/>:3001 (profile=full)"]
+    JAEGER["jaegertracing/all-in-one:1.55<br/>UI :16686 + OTLP gRPC :4317<br/>(profile=full)"]
+    AM["prom/alertmanager:v0.27.0<br/>:9093 (profile=full)"]
+    VOL[("audit-data volume<br/>/app/out (hash chain<br/>+ cases.jsonl)")]
+    PGDATA[("postgres-data volume<br/>(audit_records + cases<br/>+ model_registry +<br/>mandate_counters)")]
+  end
+
+  %% ===== External =====
+  subgraph EXT["External / Future"]
+    KAGGLE[("Kaggle COD dataset<br/>~97k orders 1.64% RTO<br/>reports/kaggle/")]
+    OLIST[("Olist Brazilian<br/>e-commerce dataset")]
+    RAZORPAY["Razorpay webhook<br/>(future — outcome<br/>labels close feedback loop)"]
+    PITCH["Pitch deck (PDF)<br/>embeds Pages screenshot URLs"]
+  end
+
+  REPO -->|triggers on push/PR| CI
+  REPO -->|triggers on data/model/src + weekly| MLOPS
+  REPO -->|triggers nightly 02:00 UTC| TRAIN
+  REPO -->|triggers on v* tag| DOCKER
+  REPO -->|triggers on push main| SCREEN
+
+  CI -->|docker/build-push-action push=false<br/>Trivy scan| DOCKER
+  MLOPS -->|"stage 5 container-build<br/>push=true sha-7chars"| GHCR
+  DOCKER -->|"multi-arch push<br/>latest + semver + sha-7chars"| GHCR
+
+  MLOPS -->|"stage 6 deploy hook<br/>kubectl set image<br/>(documented hook)"| API
+  GHCR -->|image pull| API
+  SCREEN -->|actions/deploy-pages| PAGES
+
+  %% internal docker compose wiring
+  NGINX --> API
+  API --> PG
+  API --> RD
+  API --> SW
+  API -.->|publish risk.scores + audit.records + cases.created| RD
+  RD --> SW
+  RD --> SP
+  SP -->|XADD model.drift| RD
+  RD --> DC
+  API --> PROM
+  PROM --> GRAF
+  PROM --> AM
+  API -->|OTLP gRPC :4317| JAEGER
+  API --> VOL
+  PG --> PGDATA
+
+  %% external inputs
+  KAGGLE -.->|scripts/ingest_kaggle.py<br/>-- train.py| REPO
+  OLIST -.->|train.yml nightly| REPO
+  RAZORPAY -.->|delayed is_returned label<br/>POST /v1/feedback/ingest| API
+  PAGES -.->|image URL embeds| PITCH
+
+  %% human consumers
+  PITCH -->|"judge + integrator reads"| EXT
+
+  class REPO,CODE github
+  class CI,MLOPS,TRAIN,DOCKER,SCREEN runner
+  class GHCR,PAGES registry
+  class NGINX,API,PG,RD,SW,SP,DC,PROM,GRAF,JAEGER,AM,VOL,PGDATA host
+  class KAGGLE,OLIST,RAZORPAY,PITCH external

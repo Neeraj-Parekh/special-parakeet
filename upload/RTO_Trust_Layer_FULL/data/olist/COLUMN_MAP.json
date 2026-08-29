@@ -1,0 +1,16 @@
+{
+  "order_id": "order_id",
+  "user_id": "user_id",
+  "merchant_id": "merchant_id",
+  "payment_mode": "payment_mode",
+  "pincode": "pincode",
+  "amount_inr": "amount_inr",
+  "order_status": "order_status",
+  "created_at": "created_at",
+  "category": "category",
+  "city": "city",
+  "state": "state",
+  "tentative_delivery_days": "tentative_delivery_days",
+  "shipping_days": "shipping_days",
+  "device_id": "device_id"
+}

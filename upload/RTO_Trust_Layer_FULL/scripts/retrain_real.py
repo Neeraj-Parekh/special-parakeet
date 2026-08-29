@@ -73,6 +73,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.features.cleaning import load_ingested_real  # noqa: E402
 from src.features.enrich import add_address_features  # noqa: E402
+from src.ml.registry import current_champion, register_model  # noqa: E402
 from src.models.explain import global_importance  # noqa: E402
 from src.models.splitting import group_leakage, group_split  # noqa: E402
 from src.models.train import (  # noqa: E402
@@ -82,7 +83,6 @@ from src.models.train import (  # noqa: E402
     save_model,
     write_priors_artifact,
 )
-from src.ml.registry import current_champion, register_model  # noqa: E402
 
 # CI gate — matches `.github/workflows/mlops.yml` Stage 3 (Fail if PR-AUC
 # < 0.60). The Kandula 2021 DSS paper benchmark is AUC 0.73-0.79 on real

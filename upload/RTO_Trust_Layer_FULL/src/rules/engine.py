@@ -1,8 +1,83 @@
-"""Deterministic rules engine evaluated before ML. Ops-tunable, no redeploy needed."""
+"""Deterministic rules engine evaluated before ML. Ops-tunable, no redeploy needed.
+
+P0-2 (Tramer USENIX 2016 — anti-evasion): numeric ``gt``/``lt`` rules on
+MONETARY fields (``amount_inr``) apply ±₹500 jitter to the threshold on
+every evaluation. This makes the effective threshold a moving target so
+binary-search attacks (e.g. recover the exact ``RULE-001`` threshold
+``amount > 50000`` in ``log₂(50000) = 16`` queries) fail — the attacker
+gets a slightly different boundary on every probe. Jitter is OFF for
+categorical rules (``op="eq"``, ``op="in"``) and for numeric rules on
+non-monetary fields (``items``, ``prior_orders``, ``prior_returns``).
+
+Paper: IEEE Access 2024 — "Adversarial Attacks and Defenses in ML for
+Tabular Data". §IV.A: "tabular features are interpretable → binary-search
+on numeric thresholds recovers them in O(log N) queries; randomized
+thresholds raise this to O(N) on average (the attacker must average many
+samples per probe)".
+
+Toggle: env var ``RULES_RANDOMIZE_THRESHOLDS`` (default ``"true"``).
+Set to ``"false"`` for deterministic test runs (none of the existing tests
+assert on boundary behaviour at the ±₹500 scale, so the default stays on).
+"""
 from __future__ import annotations
 
+import os
+import random
 import threading
 from dataclasses import dataclass
+
+
+# ---------------------------------------------------------------------------
+# Env flag (kept here next to the code that consumes it — same pattern as
+# ``src/api/security.py``).
+# ---------------------------------------------------------------------------
+
+
+def _randomize_thresholds_enabled() -> bool:
+    raw = os.environ.get("RULES_RANDOMIZE_THRESHOLDS")
+    if raw is None or raw == "":
+        return True  # default ON — anti-evasion defence
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+# Fields where the value is a monetary INR amount. The jitter applies to
+# numeric ``gt``/``lt`` rules on these fields ONLY — categorical rules
+# (``address_quality eq "vague"``) and non-monetary numerics (``items``,
+# ``prior_orders``) are left untouched so the demo's rule-toggling
+# behaviour (RULE-002 etc.) stays deterministic.
+_MONETARY_FIELDS: frozenset[str] = frozenset({
+    "amount_inr",
+    "order_value_inr",
+    "OrderValue",
+    "max_amount_inr",
+})
+
+# ±₹500 jitter per the IEEE Access 2024 spec. Tight enough that legit
+# high-value orders (₹50,001) still trip the rule on the +500 sample,
+# wide enough that the boundary is genuinely fuzzy to an attacker.
+_JITTER_AMPLITUDE: float = 500.0
+
+
+def _jitter_threshold(field: str, value: object) -> object:
+    """Apply ±₹500 jitter to a numeric threshold on a monetary field.
+
+    Returns the original ``value`` unchanged when:
+      * ``RULES_RANDOMIZE_THRESHOLDS=false`` is set in the env, OR
+      * ``field`` is not in ``_MONETARY_FIELDS`` (categorical or non-amount
+        numeric like ``items``), OR
+      * ``value`` can't be coerced to float (defensive — never raises).
+    """
+    if not _randomize_thresholds_enabled():
+        return value
+    if field not in _MONETARY_FIELDS:
+        return value
+    try:
+        base = float(value)
+    except (TypeError, ValueError):
+        return value
+    # ``uniform(-A, +A)`` — symmetric ±amplitude. Returns float; the
+    # comparison below coerces both operands via ``float(...)`` anyway.
+    return base + random.uniform(-_JITTER_AMPLITUDE, _JITTER_AMPLITUDE)
 
 
 @dataclass
@@ -66,14 +141,22 @@ class RulesEngine:
             if actual is None:
                 continue
             try:
-                if r.op == "gt" and float(actual) > float(r.value):
-                    return r
-                if r.op == "lt" and float(actual) < float(r.value):
-                    return r
-                if r.op == "eq" and actual == r.value:
-                    return r
-                if r.op == "in" and actual in r.value:
-                    return r
+                # P0-2 — apply ±₹500 jitter to numeric thresholds on
+                # monetary fields (amount_inr) ONLY. Categorical rules
+                # (``op="eq"``, ``op="in"``) + numeric rules on
+                # non-monetary fields (``items``, ``prior_orders``) keep
+                # the deterministic original threshold.
+                if r.op in ("gt", "lt"):
+                    effective_threshold = _jitter_threshold(r.field, r.value)
+                    if r.op == "gt" and float(actual) > float(effective_threshold):
+                        return r
+                    if r.op == "lt" and float(actual) < float(effective_threshold):
+                        return r
+                else:
+                    if r.op == "eq" and actual == r.value:
+                        return r
+                    if r.op == "in" and actual in r.value:
+                        return r
             except (TypeError, ValueError):
                 continue
         return None

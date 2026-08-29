@@ -113,8 +113,14 @@ A regulator can verify one decision without re-reading the whole table."
 
 *[2:30 — switch to Model Health tab. Grafana embed loads, 8 panels: PR-AUC, ROC-AUC, PSI, DDM state, ADWIN state, drift samples, decisions/min, latency p50.]*
 
-"Model health: PR-AUC = 0.55 on synthetic data, PSI under 0.1, DDM
-stable, ADWIN stable. Model version 2.1, active since August 25."
+"Model health: PR-AUC = 0.10 on the Amazon India champion — honestly
+low for 1.7% prevalence, but it's the best public Indian dataset without
+user history. Now watch this — I flip to ?dataset=olist, same endpoint,
+and the score jumps to PR-AUC 0.40. That's 3.8× Amazon. Why? Because
+Olist has real user_id history — the user_rto_rate feature that's inert
+on Amazon actually fires here. PSI under 0.1, DDM stable, ADWIN
+stable. Model version rto_kaggle_histgb_20260827, active since the
+Kaggle training run."
 
 *[2:42 — scroll to the cost-curve explorer; bars rendered live from /v1/policy/cost-curves; cost-optimal threshold (0.15) highlighted green.]*
 

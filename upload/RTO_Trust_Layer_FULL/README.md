@@ -45,7 +45,26 @@ Six demo moments. Every one is shippable as a 30-second live clip.
 | 3 | **Audit Trail** | Click any prediction ID → see the SHA-256 hash chain + the Merkle inclusion proof + the model version + the features used. CSV export for compliance. | You understand enterprise risk, not just data science. |
 | 4 | **Rules Engine** | Toggle "Block COD > ₹50K from new customers." Re-score the same order. Instant REJECT. No redeploy. | You understand deterministic gates beat ML in known cases. |
 | 5 | **Agent Console** | Type "Score order ORD-123." Agent responds. Type "Block order ORD-456." Agent says: *"I cannot perform this action. I have requested human approval."* Lands in the dual-control queue. | You understand unconstrained agents are dangerous. |
-| 6 | **Model Health** | Grafana: PR-AUC = 0.55, PSI < 0.1, DDM STABLE, ADWIN STABLE, "Model v2.1 active since Aug 25." Live cost-curve explorer wired to `/v1/policy/cost-curves`. | You understand MLOps, not just model training. |
+| 6 | **Model Health** | Grafana: PR-AUC = 0.1027 (Amazon India champion, 6.05× baseline) / 0.3950 (Olist boleto champion, 32× baseline, 3.8× Amazon — `?dataset=olist`), PSI < 0.1, DDM STABLE, ADWIN STABLE. Live cost-curve explorer wired to `/v1/policy/cost-curves`. | You understand MLOps, not just model training. **Honest** numbers: 0.10 is low because Amazon has no `user_id` history (ceiling ~0.12); Olist has real repeat-customer history so `user_rto_rate` actually fires there. |
+
+### Live dataset switch — `?dataset=amazon|olist`
+
+Every `POST /risk/score` accepts a `dataset` query param that selects which
+champion model answers. A judge can flip datasets mid-demo to watch the
+`user_rto_rate` lift in real time:
+
+| Param | Champion | PR-AUC | Why the lift | Sample request |
+|---|---|---|---|---|
+| `?dataset=amazon` (default) | `rto_kaggle_histgb_20260827` | **0.1027** | Amazon Sale Report has NO `user_id` history — `user_rto_rate` / `merchant_id_rto_rate` are inert. Ceiling ~0.12 for any model on this data. | `curl -X POST localhost:8000/risk/score?dataset=amazon -d '{"order_id":"A-1","amount_inr":12400,"category":"Fashion","customer_id":"C-1"}'` |
+| `?dataset=olist` | `rto_olist_histgb_20260828` | **0.3950** | Olist boleto subset has real `customer_unique_id` / `seller_id` history (494 repeat users). The expanding-window `user_id_rto_rate` / `merchant_id_rto_rate` features actually fire — 3.8× the Amazon champion. | `curl -X POST localhost:8000/risk/score?dataset=olist -d '{"order_id":"O-1","amount_inr":120,"category":"beleza_saude","customer_id":"C-1","merchant_id":"S-1","payment_method":"boleto","pincode":"01310","state":"SP","city":"sao_paulo","created_at":"2018-04-15T10:00:00"}'` |
+
+The response payload carries `dataset: "amazon"` or `dataset: "olist"` so the
+judge can verify which model answered. Both paths share the same downstream
+pipeline (calibrate → cost-optimal decision → rules engine → audit hash-chain
+append → Redis Streams publish) — only the feature builder + model + priors
+differ. See [`src/models/olist_feature_builder.py`](src/models/olist_feature_builder.py)
++ [`data/olist/README.md`](data/olist/README.md) for the honest
+caveats (boleto ≠ Indian COD; order_status canceled/unavailable ≠ true RTO).
 
 ---
 
@@ -115,30 +134,49 @@ Decision precedence (the heart of the system):
 
 ## Results
 
+**Deployed champion metrics (what the live `/risk/score` endpoint actually
+serves — measured from the committed artifacts, not aspirational):**
+
 | Metric | Value | Source |
 |---|---|---|
-| PR-AUC (synthetic CODScore, E2 features) | **0.5495** | `scripts/evaluate.py`, customer-grouped holdout (leakage=0) |
-| ROC-AUC (E2) | **0.808** | same |
-| Cost-optimal threshold | **0.15** | `docs/cost_table.md`, FN = 12x FP (Bahnsen Eq.1; Drummond-Holte 2006) |
+| **PR-AUC — Amazon India champion (default `/risk/score`)** | **0.1027** | `models/champion/metrics.json` (best=`QtyZero_Region_histgb`, 96,944 train rows / 24,236 test rows, RTO rate 1.70% — 6.05× baseline lift; honest for 1.7% prevalence; Amazon has NO `user_id` history so `user_rto_rate` is inert) |
+| **PR-AUC — Olist boleto champion (`/risk/score?dataset=olist`)** | **0.3950** | `data/olist/artifacts/metrics.json` (15,827 train / 3,957 test, Brier 0.0439, ROC-AUC 0.7676 — 32× baseline, **3.8× the Amazon champion**; Olist has real `user_id`/`merchant_id` history so `user_rto_rate`/`merchant_id_rto_rate` actually fire here) |
+| ROC-AUC — Amazon | 0.660 (champion) | `models/champion/` (low because 1.7% prevalence — PR-AUC is the primary metric) |
+| ROC-AUC — Olist | 0.7676 | `data/olist/artifacts/metrics.json` |
+| Cost-optimal threshold | dynamic per-order | `docs/cost_table.md`, Bahnsen Eq.1 + per-amount FN cost (Drummond-Holte 2006) |
 | Tests passing | **141/149** (+ 8 skipped on Postgres+Redis paths; full suite w/ Docker services = 149) | `./verify.sh` |
-| Endpoints | **22** (OpenAPI 3.1, auto-generated) | `docs/openapi.json` |
+| Endpoints | **23** (OpenAPI 3.1, auto-generated — incl. `?dataset=olist`) | `docs/openapi.json` |
 | Docker services (core) | **5** (api, postgres, redis, stream-worker, stream-processor) | `docker-compose.yml` |
 | Docker services (full stack) | **9** (+ nginx, prometheus, grafana, drift-consumer) | `docker-compose --profile full` |
 
-**Real-data upgrade path (Day 4 Track L):** Amazon India Sale Report on
-Kaggle (~129,000 orders, `Status=Returned → is_returned=1`). Target
-PR-AUC ≥ 0.72 — benchmark is Kandula et al. (DSS 2021) reporting
-AUC 73-79% on real Indian e-commerce delivery data. `docs/cost_table.md`
-+ `docs/feature_importance.md` will be regenerated on real data before
-the pitch video.
+**Honest framing — Indian real-COD true rate is 0.25–0.60 (Shiprocket,
+Delhivery NDA data); we report the best public-proxy metrics, not
+aspirational ones.** The Amazon Kaggle number (0.1027) is a ceiling
+check — there is no public Indian COD dataset with user history. The
+Olist number (0.3950) is the closest public proxy (Brazilian `boleto` ≈
+COD semantics) AND it validates the `user_rto_rate` / `merchant_id_rto_rate`
+features that are inert on Amazon (Amazon has zero repeat users). Flip
+`?dataset=amazon|olist` on the live endpoint to watch the lift in real
+time.
+
+**Synthetic-data baseline (legacy, NOT deployed):** the original
+`data/raw/cod_orders.csv` synthetic placeholder produced PR-AUC 0.5495 /
+ROC-AUC 0.808 on 7,235 rows with 23% positive rate (see
+`scripts/evaluate.py` + `docs/MODEL_CARD.md` §"Synthetic baseline").
+These numbers were superseded by the real Amazon Kaggle champion on Day
+4 (Track L); they remain in `MODEL_CARD.md` for traceability only — the
+live `/risk/score` endpoint does NOT serve the synthetic model.
 
 ### Real data — instructions for the user
 
 The synthetic 7,235-row CODScore CSV in `data/raw/cod_orders.csv` is a
-schema-compat placeholder; the model's headline PR-AUC (0.55) reflects
-synthetic labels, not real Indian e-commerce outcomes. Track L Day 4
-ships a drop-in upgrade path so the user can retrain on real Amazon
-India data without touching any source file.
+schema-compat placeholder (kept for the cost-curve precompute + the
+8-dim legacy stub path). The **deployed** `/risk/score` champion is
+the Kaggle Amazon India Sale Report model (PR-AUC 0.1027 — honestly low
+for 1.7% prevalence; Amazon has no `user_id` so the `user_rto_rate`
+feature is inert). The Olist boleto champion (PR-AUC 0.3950) is wired
+as the `?dataset=olist` alternate path — it carries real `user_id` /
+`merchant_id` history, which is the lift driver Amazon cannot test.
 
 ```bash
 # 1. Download the Amazon India Sale Report (~129k orders) from Kaggle:
@@ -158,8 +196,9 @@ python scripts/retrain_real.py
 
 After the retrain completes, the model-card + dashboard Model Health page
 will reflect the real-data champion (target PR-AUC ≥ 0.72 per Kandula
-2021). The synthetic-data fallback is preserved (the `load_data()`
-dispatcher in `src/features/cleaning.py` auto-detects
+2021 — needs NDA-gated Shiprocket/Delhivery data; the public-proxy
+ceiling is the Olist 0.3950). The synthetic-data fallback is preserved
+(the `load_data()` dispatcher in `src/features/cleaning.py` auto-detects
 `data/raw/ingested_real.csv` and falls back to `cod_orders.csv` when
 absent) so the project still runs out-of-the-box before the user
 downloads the Kaggle CSV. See [`data/raw/README.md`](data/raw/README.md)

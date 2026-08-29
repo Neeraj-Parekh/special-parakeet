@@ -107,7 +107,8 @@ exit code): PR-AUC < 0.60 blocks promotion.
 
 | Dataset | Source | Size | Expected lift |
 |---|---|---|---|
-| Amazon India Sale Report | Kaggle (user-uploaded, public) | ~129,000 orders | PR-AUC 0.55 → 0.72-0.78 (Kandula 2021 benchmark: AUC 73-79% on real Indian e-commerce delivery data, DSS vol. 147, DOI 10.1016/j.dss.2021.113584) |
+| Amazon India Sale Report | Kaggle (user-uploaded, public) | ~129,000 orders | **DEPLOYED as default champion** (`?dataset=amazon`) — measured PR-AUC **0.1027** (6.05× baseline 0.0170); honest for 1.7% prevalence. No `user_id` history → `user_rto_rate` / `merchant_id_rto_rate` are inert. Ceiling for any model on this data is ~0.12. Target after Shiprocket NDA data: ≥ 0.72 (Kandula 2021 DSS vol. 147, DOI 10.1016/j.dss.2021.113584) |
+| **Olist Brazilian e-commerce** | Kagglehub `olistbr/brazilian-ecommerce` | 99,441 orders (19,784 boleto subset) | **DEPLOYED as `?dataset=olist` alternate champion** — measured PR-AUC **0.3950** (32× baseline, **3.8× the Amazon champion**), ROC-AUC 0.7676, Brier 0.0439. Real `user_id`/`merchant_id` history (494 repeat users in the boleto subset) → expanding-window `user_id_rto_rate` / `merchant_id_rto_rate` features actually fire here. Honest caveat: `boleto` ≠ Indian COD (canceled/unavailable ≠ true RTO); 1.24% positive rate vs Indian 25–60%. Closest public proxy on Earth. |
 | Indian E-commerce Dataset | Kaggle | ~50,000 orders | Smaller but cleaner; explicit COD flag + return status |
 | Online Retail Dataset | UCI ML Repo / Kaggle | ~541,000 transactions | UK-based; no RTO labels but useful for RFM feature engineering patterns |
 
@@ -147,12 +148,20 @@ Full feature importance table: [`feature_importance.md`](feature_importance.md).
 
 ## 4. Evaluation
 
-### Metrics on synthetic CODScore holdout
+### Metrics on synthetic CODScore holdout (legacy — NOT deployed)
+
+The numbers below are the **synthetic-data baseline** from the
+7,235-row `data/raw/cod_orders.csv` placeholder (23% positive rate).
+The live `/risk/score` endpoint serves the **real** Kaggle Amazon
+champion (PR-AUC 0.1027 — see §1) and the Olist champion (PR-AUC
+0.3950 — `?dataset=olist`). These synthetic numbers are preserved
+here for traceability of the E1/E2/E3 experiments ladder; they are
+NOT the model in production.
 
 | Metric | Value | Notes |
 |---|---|---|
-| PR-AUC (E2 features) | **0.5495** | Primary metric — 23% positive rate makes accuracy meaningless |
-| ROC-AUC (E2) | **0.808** | Reported for parity with Kandula 2021 (AUC 73-79%) |
+| PR-AUC (E2 features, synthetic) | **0.5495** | Primary metric — 23% positive rate makes accuracy meaningless |
+| ROC-AUC (E2, synthetic) | **0.808** | Reported for parity with Kandula 2021 (AUC 73-79%) |
 | Recall @ cost-optimal threshold (0.15) | 0.789 | The fraction of true RTO orders we catch |
 | Precision @ cost-optimal threshold (0.15) | 0.406 | The fraction of flagged orders that are actually RTO |
 | FP share of flagged @ 0.15 | 52.4% | The cost of the wide-net strategy — accepted because FN costs 12x FP |
@@ -239,14 +248,19 @@ and real-data paths produce the same AP-drop table.
 
 ## 6. Limitations
 
-1. **Synthetic data.** No real Indian labeled data yet. The 7,235-row
-   CODScore dataset is synthetic-but-realistic; the schema mirrors
-   real e-commerce orders so the swap is drop-in, but the model's
-   headline PR-AUC (0.55) is on synthetic labels. Day 4 Track L
-   closes this — `scripts/ingest_kaggle.py` + `scripts/retrain_real.py`
-   wire the real-data ingestion + retrain pipeline; user runs them
-   after downloading the Amazon Sale Report (~129k orders) from Kaggle.
-   Target PR-AUC ≥ 0.72 (Kandula 2021 DSS benchmark: AUC 0.73-0.79).
+1. **Synthetic data + Amazon-as-ceiling.** The 7,235-row CODScore
+dataset is a synthetic-but-realistic placeholder (kept for the
+cost-curve precompute). The **deployed** model is the real Kaggle
+Amazon India Sale Report champion (PR-AUC 0.1027 — honestly low
+for 1.7% prevalence; ceiling ~0.12 because Amazon has no `user_id`
+history so `user_rto_rate` is inert). The Olist boleto champion
+(PR-AUC 0.3950, 3.8× Amazon) is the closest public-proxy benchmark
+with real user history — wired as `?dataset=olist` so the lift is
+visible live. Indian real-COD PR-AUC of 0.60+ needs NDA-gated
+Shiprocket/Delhivery data. Day 4 Track L closes the synthetic-to-real
+gap via `scripts/ingest_kaggle.py` + `scripts/retrain_real.py`;
+the user runs them after downloading the Amazon Sale Report from
+Kaggle.
 2. **Single model, no ensemble.** V3 §11.6 prescribes a hybrid
    multi-stage ensemble (per Alsagri 2025 IEEE Access, DOI
    10.1109/ACCESS.2025.3565612 — Layer 1: 6 models, Layer 2: Linear
@@ -374,11 +388,16 @@ and real-data paths produce the same AP-drop table.
 
 ## 9. Caveats and open questions
 
-- **Headline PR-AUC (0.55) is on synthetic data.** The real-data
-  PR-AUC (target ≥ 0.72, Kandula 2021 benchmark) will be reported
-  after the user runs `scripts/ingest_kaggle.py` +
-  `scripts/retrain_real.py` (Track L Day 4 pipeline). Until then, all
-  metrics in this card carry the "synthetic" qualifier.
+- **Headline PR-AUC truth.** Three honest numbers, all measured from
+  committed artifacts: (a) synthetic CODScore baseline = 0.5495
+  (NOT deployed — see §4 above); (b) real Kaggle Amazon India
+  champion = **0.1027** (deployed as default `/risk/score`); (c) real
+  Olist boleto champion = **0.3950** (deployed as `?dataset=olist`,
+  3.8× Amazon because it carries real `user_id`/`merchant_id`
+  history). Indian real-COD true rate is 0.25–0.60 (Shiprocket /
+  Delhivery NDA data) — we report the best public-proxy metrics, not
+  aspirational ones. The 0.72+ Kandula 2021 benchmark requires the
+  NDA dataset.
 - **The `otp_effectiveness = 0.82` weight is industry-reported, not
   measured.** Per V3 §21 claims ledger, the selective-OTP
   effectiveness range (0.78-0.84) is UNVERIFIED-industry until a

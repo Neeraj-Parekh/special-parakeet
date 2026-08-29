@@ -59,7 +59,6 @@ from src.api.routes import (  # noqa: E402
     create_app,
 )
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -672,8 +671,11 @@ def test_no_unanchored_regex_patterns_with_unbounded_quantifiers():
     found = pattern_re.findall(src)
     # Every pattern must start with `^` (or be the empty-string pattern).
     # Note: Pydantic auto-anchors, but the spec mandates explicit anchors.
-    unanchored = [p for p in found
-                  if p and not p.startswith("^") and not p.startswith("(")]
+    # `unanchored` warning list is intentionally not surfaced as a hard
+    # failure (some patterns may be intentionally non-anchored). Only the
+    # `no_end_anchor` list below is a hard assertion.
+    _ = [p for p in found
+         if p and not p.startswith("^") and not p.startswith("(")]
     # Pydantic auto-anchors internally so missing `^` is still safe — but
     # the spec explicitly mandates explicit anchors. We surface them as a
     # WARNING list, not a hard failure (some patterns may be intentionally

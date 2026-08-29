@@ -761,7 +761,6 @@ def verify_mandate(
       * ``VALID``                           → fall through to the cost-optimizer
         decision path (Track C's optimal_decision / Bahnsen BMR)
     """
-    empty: dict = {}
     if not token:
         return MandateVerdict.TAMPERED, {"verdict_reason": "missing_mandate"}
     try:

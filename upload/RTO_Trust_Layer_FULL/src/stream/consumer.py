@@ -33,8 +33,6 @@ from typing import Any, Callable
 from src.stream.producer import (
     STREAM_AUDIT_RECORDS,
     STREAM_CASES_CREATED,
-    STREAM_MODEL_DRIFT,
-    STREAM_NOTIFICATIONS,
     STREAM_RISK_SCORES,
 )
 

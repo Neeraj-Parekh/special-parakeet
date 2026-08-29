@@ -1,0 +1,287 @@
+# Nightly Retrain (Olist) — daily 2am UTC cron + manual.
+#
+# Retrains a HistGradientBoostingClassifier on the committed Olist e-commerce
+# orders (`data/olist/olist_merged_orders.csv`, committed by Agent 1-a — the
+# `data/` tree's gitignore exception list excludes `data/olist/*.csv`). Saves
+# the artifact triplet (`model.pkl` + `metrics.json` + `priors.json`) to
+# `models/olist/`, gates on PR-AUC ≥ 0.35 (per the user's spec — a more
+# lenient floor than `mlops.yml`'s 0.60 hard gate because the Olist dataset
+# is Brazilian cross-border, not Indian COD, and the RTO base-rate differs).
+#
+# If the gate passes, `stefanzweifel/git-auto-commit-action@v5` commits the
+# artifact triplet back to `main` as `rto-bot` so the dashboard's Model
+# Health page can pick it up next push. If the gate fails, the commit is
+# skipped (the workflow exits 1 but the run is preserved in the Actions
+# log so the failure is debuggable).
+#
+# Why an inline Python step instead of `scripts/retrain_real.py`? That script
+# expects the unified Kaggle Amazon-India schema produced by
+# `scripts/ingest_kaggle.py` (load_ingested_real — see scripts/retrain_real.py
+# line 232). The Olist schema differs (Brazilian e-commerce, columns named
+# `order_purchase_timestamp` / `customer_state` / `payment_type` etc.) so the
+# script's `load_ingested_real` would KeyError. The inline step below is a
+# self-contained, schema-adaptive trainer — pragmatic for the nightly cron.
+# The mlops.yml pipeline remains the canonical Kaggle-data path.
+#
+# Track J (Day 3) §A item 12 — production ML deployment patterns.
+
+name: Nightly Retrain (Olist)
+
+on:
+  schedule:
+    - cron: "0 2 * * *"  # 2 AM UTC nightly
+  workflow_dispatch: {}  # manual trigger for release-day dry-runs
+
+concurrency:
+  group: train-olist
+  cancel-in-progress: false  # let a started training run finish — model
+                             # artifact generation is expensive.
+
+permissions:
+  contents: write  # required by stefanzweifel/git-auto-commit-action@v5
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install scikit-learn pandas numpy joblib
+
+      # Train a HistGradientBoostingClassifier on the committed Olist merged
+      # orders CSV. The inline Python is schema-adaptive: it auto-detects the
+      # target column (is_returned / returned / rto / order_status), the time
+      # column (order_purchase_timestamp / order_date / created_at), drops
+      # high-cardinality ID columns, one-hot encodes categoricals, and
+      # applies an 80/20 chronological time-split (no customer leakage). If
+      # `data/olist/olist_merged_orders.csv` is absent (e.g. on a fresh
+      # checkout before Agent 1-a commits), the step exits 0 with a clear
+      # message — the cron then has nothing to do that night.
+      - name: Train Olist champion
+        continue-on-error: false
+        run: |
+          mkdir -p models/olist
+          python - <<'PY'
+          import json, os, pickle, sys, time, warnings
+          from pathlib import Path
+          import numpy as np
+          import pandas as pd
+          from sklearn.ensemble import HistGradientBoostingClassifier
+          from sklearn.metrics import average_precision_score, roc_auc_score, precision_recall_curve, confusion_matrix
+          warnings.filterwarnings('ignore')
+
+          DATA = Path('data/olist/olist_merged_orders.csv')
+          OUT = Path('models/olist'); OUT.mkdir(parents=True, exist_ok=True)
+
+          if not DATA.exists():
+              print(f'::notice::Olist data {DATA} not present — nothing to train tonight.')
+              # Write a stub metrics.json so the PR-AUC gate step doesn't crash.
+              (OUT / 'metrics.json').write_text(json.dumps({
+                  'pr_auc': 0.0, 'data_source': str(DATA),
+                  'note': 'Olist CSV not committed yet — training skipped.',
+                  'trained_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+              }, indent=2))
+              sys.exit(0)
+
+          print(f'[load] reading {DATA} ({DATA.stat().st_size // 1024} KB) ...')
+          df = pd.read_csv(DATA)
+          print(f'[load] {len(df):,} rows × {len(df.columns)} cols')
+
+          # ---- target detection ----
+          TARGET_CANDIDATES = ['is_returned', 'returned', 'rto', 'is_rto',
+                               'return_flag', 'order_returned']
+          target = next((c for c in TARGET_CANDIDATES if c in df.columns), None)
+          if target is None and 'order_status' in df.columns:
+              # Olist proxy: canceled/unavailable orders are the "return" class.
+              statuses = df['order_status'].astype(str).str.lower()
+              df['is_returned'] = statuses.isin(['canceled', 'unavailable']).astype(int)
+              target = 'is_returned'
+              print(f'[target] derived {target} from order_status (proxy)')
+          if target is None:
+              print('::error::no target column found (is_returned | returned | rto | order_status)')
+              sys.exit(1)
+          y = df[target].astype(int)
+          print(f'[target] {target}: {int(y.sum()):,} positives / {len(y):,} ({y.mean():.2%})')
+          if y.sum() == 0:
+              print('::error::0 positive class — cannot train')
+              sys.exit(1)
+
+          # ---- time column detection (for chronological split) ----
+          TIME_CANDIDATES = ['order_purchase_timestamp', 'order_purchase_date',
+                             'order_date', 'created_at', 'order_approved_at',
+                             'purchase_timestamp', 'timestamp']
+          time_col = next((c for c in TIME_CANDIDATES if c in df.columns), None)
+          if time_col:
+              df['_t'] = pd.to_datetime(df[time_col], errors='coerce')
+              df = df.sort_values('_t').dropna(subset=['_t']).reset_index(drop=True)
+              y = df[target].astype(int)
+              print(f'[time] sorted by {time_col} ({df["_t"].min()} → {df["_t"].max()})')
+          else:
+              print('[time] no time column found — using row order (assumes already chronological)')
+
+          # ---- feature selection ----
+          DROP = {target, time_col, '_t', 'order_id', 'customer_id',
+                  'customer_unique_id', 'product_id', 'seller_id',
+                  'review_id', 'review_comment_message'}
+          feature_cols = [c for c in df.columns if c not in DROP]
+          X = df[feature_cols].copy()
+
+          # Cast categoricals (object / string / low-cardinality int) to category.
+          for c in X.columns:
+              if X[c].dtype == 'object' or str(X[c].dtype) == 'string':
+                  X[c] = X[c].astype('category').fillna('missing').astype(str)
+              elif X[c].dtype.name in ('int64', 'int32'):
+                  # Treat low-cardinality ints as categorical, keep high-card as numeric.
+                  if X[c].nunique() <= 20 and c not in ('qty', 'price', 'freight_value',
+                      'payment_value', 'payment_installments', 'product_name_lenght',
+                      'product_description_lenght', 'product_photos_qty', 'product_weight_g'):
+                      X[c] = X[c].fillna(-1).astype(str)
+                  else:
+                      X[c] = pd.to_numeric(X[c], errors='coerce')
+              else:
+                  X[c] = pd.to_numeric(X[c], errors='coerce')
+
+          # Encode categoricals with simple OneHot via pandas get_dummies (cheap
+          # and robust for the nightly cron; the live path uses the proper
+          # ColumnTransformer in models/champion/model.pkl).
+          X = pd.get_dummies(X, dummy_na=True)
+          X = X.fillna(0)
+          print(f'[features] X={X.shape} after one-hot')
+
+          # ---- 80/20 chronological split ----
+          n_train = int(len(X) * 0.8)
+          X_tr, X_te = X.iloc[:n_train], X.iloc[n_train:]
+          y_tr, y_te = y.iloc[:n_train], y.iloc[n_train:]
+          print(f'[split] train={len(X_tr):,} (pos {int(y_tr.sum()):,}) | test={len(X_te):,} (pos {int(y_te.sum()):,})')
+
+          if y_tr.sum() == 0 or y_te.sum() == 0:
+              print('::error::train or test split has 0 positives — cannot compute PR-AUC')
+              sys.exit(1)
+
+          # ---- train HistGB with the user-specified hyperparams ----
+          # sklearn 1.9+ renamed `l2_penalty` → `l2_regularization` (PEP 8
+          # consistency). Pin to the new name so the nightly cron doesn't
+          # crash on the runner's resolved `scikit-learn>=1.8` floor.
+          clf = HistGradientBoostingClassifier(
+              max_iter=250,
+              max_depth=4,
+              learning_rate=0.08,
+              l2_regularization=0.1,
+              class_weight='balanced',
+              random_state=42,
+              categorical_features=None,  # already one-hot encoded above
+          )
+          print('[train] fitting HistGradientBoostingClassifier(max_iter=250, max_depth=4, lr=0.08, l2=0.1, class_weight=balanced) ...')
+          t0 = time.time()
+          clf.fit(X_tr, y_tr)
+          print(f'[train] done in {time.time() - t0:.1f}s')
+
+          proba = clf.predict_proba(X_te)[:, 1]
+          pr_auc = float(average_precision_score(y_te, proba))
+          roc = float(roc_auc_score(y_te, proba))
+          prec, rec, thr = precision_recall_curve(y_te, proba)
+          f1 = 2 * prec * rec / (prec + rec + 1e-12)
+          i = int(f1.argmax())
+          best_thr = float(thr[max(i - 1, 0)]) if len(thr) else 0.5
+          pred = (proba >= best_thr).astype(int)
+          tn, fp, fn, tp = confusion_matrix(y_te, pred, labels=[0, 1]).ravel()
+          print(f'[eval] PR-AUC={pr_auc:.4f} | ROC-AUC={roc:.4f} | '
+                f'F1={f1[i]:.4f} (thr={best_thr:.3f}) | TP={tp} FP={fp} FN={fn} TN={tn}')
+
+          # ---- priors (Bahnsen 2013 Eq.(6) — identity calibration since
+          #      class_weight='balanced' doesn't resample the labels) ----
+          n_pos_tr = int(y_tr.sum())
+          p_orig = float(y_tr.mean())
+          priors = {
+              'p_orig': p_orig,
+              'p_und': p_orig,
+              'n_train': int(len(y_tr)),
+              'n_pos_train': n_pos_tr,
+              'n_test': int(len(y_te)),
+              'n_pos_test': int(y_te.sum()),
+              'calibration_method': 'identity',
+              'note': 'class_weight=balanced does not resample labels; p_und = p_orig.',
+              'created_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+              'source': 'github-actions:train.yml nightly cron',
+          }
+
+          # ---- save artifacts ----
+          artifact = {
+              'model': clf,
+              'feat_names': list(X.columns),
+              'best_thr': best_thr,
+              'pr_auc': pr_auc,
+              'config': 'HistGB(max_iter=250,max_depth=4,lr=0.08,l2_reg=0.1,class_weight=balanced)',
+          }
+          with open(OUT / 'model.pkl', 'wb') as f:
+              pickle.dump(artifact, f)
+          (OUT / 'priors.json').write_text(json.dumps(priors, indent=2))
+          metrics = {
+              'pr_auc': pr_auc,
+              'roc_auc': roc,
+              'threshold_best_f1': best_thr,
+              'precision_at_threshold': float(prec[i]),
+              'recall_at_threshold': float(rec[i]),
+              'f1_at_threshold': float(f1[i]),
+              'confusion': {'tn': int(tn), 'fp': int(fp), 'fn': int(fn), 'tp': int(tp)},
+              'n_train': int(len(X_tr)),
+              'n_test': int(len(X_te)),
+              'base_return_rate': float(y.mean()),
+              'data_source': str(DATA),
+              'feature_count': int(X.shape[1]),
+              'trained_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+              'model_config': artifact['config'],
+              'priors': priors,
+          }
+          (OUT / 'metrics.json').write_text(json.dumps(metrics, indent=2))
+          print(f'[save] {OUT}/model.pkl + metrics.json + priors.json written')
+          PY
+
+      # PR-AUC gate — block promotion if the nightly run is below the user's
+      # 0.35 floor (a model worse than random on the positive class is NOT
+      # worth committing). Below this floor the commit-back step is skipped
+      # (gated via `if:` below).
+      - name: PR-AUC gate
+        id: pr_gate
+        run: |
+          python - <<'PY'
+          import json, sys
+          m = json.load(open('models/olist/metrics.json'))
+          pr = m.get('pr_auc', 0)
+          print(f"Olist PR-AUC = {pr}")
+          if pr < 0.35:
+              print(f"::error::PR-AUC {pr} below gate 0.35 — not committing champion"); sys.exit(1)
+          print("PR-AUC gate passed")
+          PY
+
+      # Commit the artifact triplet back to main as rto-bot ONLY if the gate
+      # passed. The `if:` guards against committing a sub-floor model.
+      - name: Commit champion artifacts
+        if: success()
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "nightly retrain: olist champion updated"
+          file_pattern: "models/olist/*.json models/olist/*.pkl"
+          commit_user_name: "rto-bot"
+          commit_user_email: "bot@rto-trust.local"
+
+      - name: Upload metrics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: olist-metrics
+          path: models/olist/metrics.json
+          if-no-files-found: ignore
+          retention-days: 30

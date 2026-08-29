@@ -1,0 +1,13 @@
+{
+  "created_at": "2026-08-28T00:45:37.402697",
+  "dataset": "olist_boleto_COD_proxy",
+  "train_rows": 15827,
+  "test_rows": 3957,
+  "train_rto": 0.013647564288873443,
+  "test_rto": 0.007328784432650998,
+  "best_model": "histgb",
+  "pr_auc": 0.3950047863348404,
+  "roc_auc": 0.7676188636842475,
+  "brier": 0.0438925593212936,
+  "note": "Real external Olist data, boleto as COD proxy, canceled/unavailable as RTO proxy. Has true user_id/merchant_id history."
+}

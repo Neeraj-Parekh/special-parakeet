@@ -1,0 +1,88 @@
+%% RTO Trust Layer — Merchant User Journey / Flowchart
+%% Grounded in: dashboard/index.html (form fields, /risk/score call,
+%%   /v1/policy/cost-curves fetch, /audit/{id} lookup),
+%%   src/api/routes.py (POST /risk/score, POST /risk/{id}/override,
+%%   GET /v1/explain/shap, GET /audit/{audit_id}, POST /v1/cases/{id}/resolve,
+%%   POST /v1/rules, DELETE /v1/rules/{id}),
+%%   src/rules/engine.py (RulesEngine.add/remove),
+%%   src/business/cost_optimizer.py (optimal_decision → ACCEPT/REVIEW/REJECT),
+%%   src/cases/service.py (open_case, resolve),
+%%   src/models/explain.py (explain_with_shap, reason_codes_batch).
+flowchart TD
+  START([Merchant opens dashboard/index.html]) --> KEYS
+
+  KEYS["Enter Scorer API key + Admin API key<br/>(two text inputs at top)"] --> FILL_FORM
+
+  FILL_FORM["Fill order form:<br/>order_id · amount_inr · category ·<br/>payment_method · address_quality<br/>· city_tier · prior_orders · prior_returns"] --> CLICK
+
+  CLICK["Click 'Score order' button"] --> CALL_SCORE
+
+  CALL_SCORE["Browser POST /risk/score<br/>headers: Authorization + Idempotency-Key<br/>body: OrderIn (Pydantic)"] --> SCORE_RESPONSE{HTTP response?}
+
+  SCORE_RESPONSE -- 401 --> SHOW_ERR["Show error:<br/>'HTTP 401: invalid key'"]
+  SHOW_ERR --> KEYS
+
+  SCORE_RESPONSE -- 429 --> RATE_ERR["Show rate-limit message"]
+  RATE_ERR --> WAIT[("Wait + retry")]
+  WAIT --> CLICK
+
+  SCORE_RESPONSE -- 200 --> RENDER
+
+  RENDER["Render result panel:<br/>P(RTO) gauge + decision pill<br/>(ACCEPT green / REVIEW amber / REJECT red)<br/>+ top-4 SHAP reasons (delta_prob arrows)<br/>+ audit_trail_url link"] --> DECISION{decision?}
+
+  DECISION -- ACCEPT --> SHIP["Action: ship normal<br/>(cost = c_ship_fp only)"]
+  SHIP --> DONE([Order placed in audit trail])
+
+  DECISION -- REJECT --> BLOCK["Action: manual review<br/>(cost = c_block ₹1000)"]
+  BLOCK --> DONE
+
+  DECISION -- REVIEW --> INTERVENTION{Intervention shown}
+  INTERVENTION --> |otp_verify| OTP["Send selective OTP<br/>(c_otp=₹5, eff=0.82)"]
+  INTERVENTION --> |partial_cod| P_COD["Collect partial amount upfront"]
+  INTERVENTION --> |address_check| ADDR["Call-center address verification"]
+  INTERVENTION --> |hold| HOLD["Hold for manual review queue<br/>(opens case in cases table)"]
+
+  OTP --> CASE_OPEN
+  P_COD --> CASE_OPEN
+  ADDR --> CASE_OPEN
+  HOLD --> CASE_OPEN
+
+  CASE_OPEN["CaseService.open_case()<br/>case_id = CASE-<uuid10><br/>status=OPENED reason=model_review_gate"] --> RULE_TUNE{Merchant wants to tune rules?}
+
+  RULE_TUNE -- Yes --> ADJUST_RULES["Adjust rule thresholds<br/>POST /v1/rules<br/>DELETE /v1/rules/{rule_id}"]
+  ADJUST_RULES --> CLICK
+
+  RULE_TUNE -- No --> AGENT_OVERRIDE{Agent suggested<br/>dual-control override?}
+
+  AGENT_OVERRIDE -- No --> RESOLVE_CASE
+  AGENT_OVERRIDE -- Yes --> COSIGN["Ops reviewer co-signs<br/>client generates nonce +<br/>admin_signature_1 (raw key)<br/>admin_signature_2 (HMAC chain)"]
+
+  COSIGN --> OVERRIDE["POST /risk/{prediction_id}/override<br/>(server-side checks:<br/>scope allowlist + nonce uniqueness<br/>+ HKDF-derived HMAC chain +<br/>mandate counter FOR UPDATE lock)"]
+
+  OVERRIDE --> OVERRIDE_RESULT{Override outcome?}
+  OVERRIDE_RESULT -- 200 --> MANDATE_INC["MandateCounter increments<br/>(monthly ₹15k cap updated<br/>+ 24h event row INSERTed)"]
+  MANDATE_INC --> RESOLVE_CASE
+  OVERRIDE_RESULT -- 403 scope --> SHOW_ERR
+  OVERRIDE_RESULT -- 409 replay --> SHOW_ERR
+  OVERRIDE_RESULT -- 422 mandate_breach --> SHOW_ERR
+
+  RESOLVE_CASE["Merchant approves intervention in dashboard<br/>POST /v1/cases/{case_id}/resolve<br/>body: {decision: APPROVED, notes}"] --> CASE_CLOSE
+  CASE_CLOSE["CaseService.resolve()<br/>cases.status → APPROVED<br/>resolved_at = NOW()"] --> DONE
+
+  DONE --> AUDIT_LOOKUP{Merchant clicks audit link?}
+  AUDIT_LOOKUP -- Yes --> FETCH_AUDIT["GET /audit/{audit_id}<br/>(admin key) → raw audit body<br/>(hash chain verified)"]
+  FETCH_AUDIT --> VERIFY["Optionally GET /v1/audit/{audit_id}/proof<br/>→ Merkle inclusion proof<br/>(leaf + path to interval root)"]
+  VERIFY --> DONE
+  AUDIT_LOOKUP -- No --> END([End of journey])
+
+  classDef start fill:#0d1117,color:#e6edf3,stroke:#3fb950,stroke-width:2px
+  classDef err fill:#47201f,color:#e6edf3,stroke:#f85149
+  classDef ok fill:#123b23,color:#e6edf3,stroke:#3fb950
+  classDef review fill:#3d2e00,color:#e6edf3,stroke:#d29922
+  classDef neutral fill:#161b22,color:#e6edf3,stroke:#30363d
+  class START,DONE,END start
+  class SHOW_ERR,RATE_ERR err
+  class SHIP ok
+  class BLOCK,CASE_OPEN,CASE_CLOSE review
+  class KEYS,FILL_FORM,CLICK,CALL_SCORE,RENDER,OTP,P_COD,ADDR,HOLD,RESOLVE_CASE,COSIGN,OVERRIDE,MANDATE_INC,ADJUST_RULES,FETCH_AUDIT,VERIFY,WAIT neutral
+  class INTERVENTION,SCORE_RESPONSE,DECISION,RULE_TUNE,AGENT_OVERRIDE,OVERRIDE_RESULT,AUDIT_LOOKUP neutral

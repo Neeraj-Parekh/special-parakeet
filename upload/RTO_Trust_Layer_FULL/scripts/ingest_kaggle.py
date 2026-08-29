@@ -119,7 +119,6 @@ STATUS_LABEL_MAP = {
     "rto - returned to seller": "Returned",
     "rejected by buyer": "Returned",
     "shipped - rejected by buyer": "Returned",
-    "shipped - returned to buyer": "Returned",
     "undeliverable": "Returned",
     # Cancelled → DROP (handled in normalize_labels, not mapped here)
 }

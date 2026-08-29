@@ -1,0 +1,141 @@
+%% RTO Trust Layer — Component Diagram (C4-L2 style)
+%% Grounded in: src/api/routes.py (FastAPI app, 28 endpoints),
+%%   src/api/agent_allowlist.py (SCOPE_ACTION_MAP), src/api/mandates.py
+%%   (MandateVerdict + UPI Circle caps), src/api/keys.py (HKDF derive),
+%%   src/audit/logger.py (MerkleSealer), src/cases/service.py (CaseService),
+%%   src/ml/registry.py (current_champion/register_model), src/rules/engine.py
+%%   (RulesEngine), src/business/cost_optimizer.py (optimal_decision),
+%%   docker-compose.yml (api/postgres/redis/stream-worker/stream-processor/
+%%   drift-consumer/prometheus/grafana/jaeger/alertmanager), alembic 001-007.
+flowchart TB
+  classDef edge fill:#21262d,color:#e6edf3,stroke:#30363d
+  classDef app fill:#0d1117,color:#e6edf3,stroke:#58a6ff,stroke-width:2px
+  classDef domain fill:#161b22,color:#e6edf3,stroke:#3fb950
+  classDef data fill:#1c2128,color:#e6edf3,stroke:#d29922
+  classDef infra fill:#21262d,color:#e6edf3,stroke:#f85149
+  classDef external fill:#0d1117,color:#8b949e,stroke:#6e7681,stroke-dasharray:3 3
+
+  %% -------- Edge layer --------
+  subgraph EDGE["Edge Layer — browsers / agents / external traffic"]
+    direction LR
+    MERCH["Merchant Console<br/>dashboard/index.html<br/>(vanilla JS SPA)"]
+    AGENT["Bounded Dispatch Agent<br/>scripts/demo_agent.py<br/>X-Agent-Action header"]
+    SIM["Ingest Simulators<br/>scripts/run_simulators.py"]
+  end
+
+  %% -------- Application layer --------
+  subgraph APP["Application Layer — FastAPI modular monolith (src/api/routes.py)"]
+    direction TB
+    ROUTES["FastAPI App (28 routes)<br/>/risk/score · /v1/cases<br/>/v1/explain/shap · /v1/audit/{id}/proof<br/>/risk/{id}/override · /v1/feedback/ingest"]
+    SEC["AuthMiddleware<br/>src/api/security.py<br/>bearer_token + check_key + TokenBucket (429)"]
+    ALLOWLIST["AgentAllowlist<br/>src/api/agent_allowlist.py<br/>SCOPE_ACTION_MAP scorer/ops/admin<br/>7 actions + override pseudo-action"]
+    KEYS["KeyManager<br/>src/api/keys.py<br/>HKDF-Extract+Expand (RFC 5869)<br/>salt=rto-override-v1 info=dual-control"]
+    MANDATES["MandateCounter<br/>src/api/mandates.py<br/>UPI Circle caps: ₹5k/txn ₹15k/mo<br/>₹5k 24h cooling 5 devices 6-mo"]
+    AUDIT["AuditLogger<br/>src/audit/logger.py<br/>SHA-256 hash chain + MerkleSealer<br/>(every 1000 records / 3600s)"]
+    CASES["CaseService<br/>src/cases/service.py<br/>OPENED→UNDER_REVIEW→<br/>APPROVED/REJECTED/ESCALATED"]
+    RULES["RulesEngine<br/>src/rules/engine.py<br/>RULE-001 (₹50k BLOCK)<br/>RULE-002 (vague addr REVIEW)"]
+    COSTOPT["CostOptimizer<br/>src/business/cost_optimizer.py<br/>Bahnsen BMR Eq.5/6<br/>optimal_decision ACCEPT/REVIEW/REJECT"]
+    REGISTRY["ModelRegistry<br/>src/ml/registry.py<br/>champion/challenger<br/>priors blob (E14)"]
+    OTEL["OTel + CircuitBreaker<br/>src/api/otel.py + breaker.py<br/>5 risk.score sub-spans + circuit state"]
+    STREAM["StreamProducer<br/>src/stream/producer.py<br/>5 streams fire-and-forget"]
+  end
+
+  %% -------- Domain layer (model + features) --------
+  subgraph DOMAIN["Domain Layer — ML + Features"]
+    direction LR
+    MODEL["Champion HistGB<br/>models/champion/model.pkl<br/>+ feature_list.json (79-dim OHE)"]
+    FB["KaggleFeatureBuilder<br/>src/models/feature_builder.py<br/>from_champion_dir() → transform(raw)"]
+    PRIORS["priors.json<br/>p_orig=0.01697 p_und=0.01697<br/>calibration_method=bahnsen_eq6"]
+    SHAP["SHAPExplainer<br/>src/models/explain.py<br/>reason_codes_batch + serialize"]
+  end
+
+  %% -------- Data plane --------
+  subgraph DATA["Data Plane"]
+    direction LR
+    PG[("PostgreSQL 15<br/>alembic 001-007<br/>10 tables<br/>audit_records · cases ·<br/>model_registry · api_keys ·<br/>mandate_counters · override_nonces")]
+    RD[("Redis 7<br/>5 streams:<br/>risk.scores · audit.records ·<br/>cases.created · model.drift ·<br/>notifications")]
+  end
+
+  %% -------- Infra layer (workers + observability) --------
+  subgraph INFRA["Infra Layer — workers + observability"]
+    direction TB
+    SW["stream-worker<br/>src/stream/consumer.py<br/>XREADGROUP rto-workers"]
+    SP["stream-processor<br/>src/stream/processor.py<br/>HyperLogLog + sliding-window<br/>3σ spike-factor (15-a)"]
+    DC["drift-consumer<br/>src/feedback/drift_consumer.py<br/>DDM + ADWIN (Gama 2014)"]
+    LS["LabelFeedbackService<br/>src/feedback/label_service.py<br/>late-label feedback loop"]
+    PROM["Prometheus<br/>monitoring/prometheus.yml"]
+    GRAF["Grafana<br/>monitoring/grafana/<br/>rto-dashboard.json"]
+    JAEGER["Jaeger :16686<br/>OTLP gRPC :4317"]
+    AM["Alertmanager v0.27"]
+  end
+
+  %% -------- External sources --------
+  subgraph EXT["External Sources"]
+    direction LR
+    KAGGLE[("Kaggle COD dataset<br/>reports/kaggle/")]
+    SIMATM["ATM sim<br/>src/ingest/atm.py"]
+    SIMCC["Callcenter sim<br/>src/ingest/callcenter.py"]
+    SIMMOB["Mobile sim<br/>src/ingest/mobile.py"]
+    SIMEC["Ecommerce<br/>(= /risk/score itself)"]
+  end
+
+  %% -------- Edge → App --------
+  MERCH -->|POST /risk/score + Bearer scorer-key| ROUTES
+  AGENT -->|POST + X-Agent-Action| ROUTES
+  SIM --> ROUTES
+
+  %% -------- App internal wiring --------
+  ROUTES --> SEC
+  ROUTES --> ALLOWLIST
+  ROUTES --> KEYS
+  ROUTES --> MANDATES
+  ROUTES --> AUDIT
+  ROUTES --> CASES
+  ROUTES --> RULES
+  ROUTES --> COSTOPT
+  ROUTES --> REGISTRY
+  ROUTES --> OTEL
+  ROUTES --> STREAM
+
+  %% -------- App → Domain --------
+  COSTOPT --> MODEL
+  COSTOPT --> PRIORS
+  ROUTES --> FB
+  ROUTES --> SHAP
+  FB --> MODEL
+
+  %% -------- App → Data --------
+  AUDIT --> PG
+  CASES --> PG
+  REGISTRY --> PG
+  MANDATES --> PG
+  KEYS --> PG
+  STREAM --> RD
+
+  %% -------- App → Infra --------
+  STREAM -->|XADD risk.scores / audit.records / cases.created| RD
+  RD --> SW
+  RD --> SP
+  SP -->|XADD model.drift| RD
+  RD --> DC
+  DC --> LS
+  LS -->|/v1/feedback/ingest| ROUTES
+  ROUTES --> PROM
+  PROM --> GRAF
+  PROM --> AM
+  OTEL --> JAEGER
+
+  %% -------- External → App/Domain --------
+  KAGGLE -->|train.py + scripts/ingest_kaggle.py| MODEL
+  KAGGLE --> PRIORS
+  SIMATM -->|X-Channel: atm + OrderIn| ROUTES
+  SIMCC -->|X-Channel: call_center + OrderIn| ROUTES
+  SIMMOB -->|X-Channel: mobile + OrderIn| ROUTES
+  SIMEC -->|X-Channel: ecommerce + OrderIn| ROUTES
+
+  class EDGE,EXT edge
+  class ROUTES,SEC,ALLOWLIST,KEYS,MANDATES,AUDIT,CASES,RULES,COSTOPT,REGISTRY,OTEL,STREAM app
+  class MODEL,FB,PRIORS,SHAP domain
+  class PG,RD data
+  class SW,SP,DC,LS,PROM,GRAF,JAEGER,AM infra
+  class MERCH,AGENT,SIM,SIMATM,SIMCC,SIMMOB,SIMEC,KAGGLE external

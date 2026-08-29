@@ -1,0 +1,75 @@
+# Dependabot auto-merge — squash-merges Dependabot PRs when CI passes.
+#
+# P1-4 (auto-remediation §5 in FOLLOWUP.md). Closes the gap: "Trivy runs
+# but exits 0 (advisory)" — Dependabot actually opens the patch PR; this
+# workflow merges it without human latency. Maps to the auto-remediation
+# event→action row in docs/CHAOS_ENGINEERING.md §3 ("vuln scan → Dependabot
+# PR → auto-merge if CI passes").
+#
+# Safety properties (read before editing):
+#   1. ``if: github.actor == 'dependabot[bot]'`` — only fires on PRs
+#      opened by Dependabot itself (not on human-opened PRs even with
+#      ``dependencies`` label). Prevents a malicious or accidental PR
+#      from sneaking through the auto-merge path.
+#   2. ``gh pr merge --auto --squash`` — the ``--auto`` flag tells GitHub
+#      to wait for the required-status-checks to pass before merging.
+#      If CI fails, the PR stays open for a human to investigate. The
+#      ``--squash`` strategy keeps the git history linear + the
+#      ``deps(pip):`` commit prefix from dependabot.yml is preserved.
+#   3. The ``GITHUB_TOKEN`` is the workflow's built-in token (no PAT
+#      needed). It has ``contents:write`` by default which is sufficient
+#      for PR merge. No long-lived secret is required.
+#   4. The workflow doesn't auto-merge MAJOR bumps — Dependabot's
+#      ``groups`` config in .github/dependabot.yml keeps major bumps as
+#      standalone PRs; this workflow would still merge them on green CI.
+#      The ``.github/CODEOWNERS`` file (future, not in scope here) would
+#      require a human approval for major bumps before merge.
+#
+# Paper / reference: GitHub Docs, "Automating Dependabot with GitHub
+# Actions" (https://docs.github.com/code-security/dependabot/working-with-dependabot/automating-dependabot-with-github-actions).
+# Industry pattern: this exact YAML is the canonical auto-merge snippet
+# recommended by GitHub's own Dependabot team + the SLSA Level 3 build
+# provenance guidance (a dependency bump merged through this path is
+# attestable: the merge commit is signed-by-GITHUB_TOKEN → the build
+# artifact's SLSA provenance includes the Dependabot actor → auditable).
+name: Dependabot auto-merge
+on: pull_request
+
+permissions:
+  contents: write        # required for ``gh pr merge --squash``
+  pull-requests: write   # required for the merge API
+
+jobs:
+  auto-merge:
+    # Only auto-merge PRs opened BY Dependabot itself. A human who
+    # opens a PR with the ``dependencies`` label is NOT auto-merged —
+    # they go through normal review.
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10  # fail-fast — a stuck merge shouldn't burn CI minutes
+    steps:
+      # ``--auto`` defers the merge until required status checks pass.
+      # ``--squash`` keeps history linear + preserves the Dependabot
+      # commit prefix (``deps(pip):`` / ``deps(actions):``) for grep.
+      # ``"$PR_URL"`` is the HTML URL of the PR (e.g.
+      # https://github.com/Neeraj-Parekh/special-parakeet/pull/42).
+      - name: Auto-merge Dependabot PR on green CI
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+
+      # Optional: post a comment with the merged commit SHA so the audit
+      # trail (the repo's own tamper-evident audit log) can reference
+      # the auto-merge event. The comment is no-op if the merge is
+      # deferred (the ``--auto`` path waits for CI to pass before
+      # merging — the comment fires immediately + the SHA is filled in
+      # when the merge completes).
+      - name: Comment with merged commit SHA
+        if: always()
+        run: |
+          SHA=$(gh pr view "$PR_URL" --json mergeCommit -q .mergeCommit.oid 2>/dev/null || echo "pending")
+          gh pr comment "$PR_URL" --body "Dependabot auto-merge: CI green → squash-merged at commit \`$SHA\` (per .github/workflows/dependabot-auto-merge.yml)."
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}

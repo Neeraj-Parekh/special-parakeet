@@ -68,7 +68,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.api.routes import create_app  # noqa: E402
 from src.audit.logger import MerkleSealer  # noqa: E402
 
-
 SCORER = {"Authorization": "Bearer score-demo-key"}
 ADMIN = {"Authorization": "Bearer admin-demo-key"}
 
@@ -450,8 +449,8 @@ def test_dual_control_two_different_keys_succeeds():
     sent (a fresh one per request — the server stores SHA-256 hash +
     409 on reuse).
     """
-    import hmac
     import hashlib
+    import hmac
     import json
     import os
     import time

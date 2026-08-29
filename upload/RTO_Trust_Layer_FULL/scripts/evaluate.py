@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.features.cleaning import load_orders  # noqa: E402
 from src.features.enrich import add_address_features  # noqa: E402
+
 # NOTE: `add_geo_features` was removed from `src/features/enrich.py` as dead
 # code (no pincodes CSV in the repo, never called from the API lifespan).
 # `--feature-set full` now silently trains on order+addr features only; the

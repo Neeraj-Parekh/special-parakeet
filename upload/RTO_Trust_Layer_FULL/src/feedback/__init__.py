@@ -35,7 +35,7 @@ Source: Gama, Žliobaitė, Bifet, Pechenizkiy, Bouchachia,
 ACM Computing Surveys (CSUR) 46(4), Article 44, March 2014.
 DOI 10.1145/2523813.
 """
-from src.feedback.label_service import LabelFeedbackService  # noqa: F401
 from src.feedback.drift_consumer import run_drift_consumer  # noqa: F401
+from src.feedback.label_service import LabelFeedbackService  # noqa: F401
 
 __all__ = ["LabelFeedbackService", "run_drift_consumer"]

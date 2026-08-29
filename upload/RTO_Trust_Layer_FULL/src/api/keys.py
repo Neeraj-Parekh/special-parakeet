@@ -29,7 +29,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import threading
-from typing import Any
 
 # ---------------------------------------------------------------------------
 # Module-level derived-key cache. Keyed by (raw_key_bytes, salt, info,

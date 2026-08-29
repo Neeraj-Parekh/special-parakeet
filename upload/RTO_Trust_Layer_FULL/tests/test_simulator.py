@@ -37,11 +37,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.api.routes import OrderIn  # noqa: E402
 from src.ingest.simulator_data import (  # noqa: E402
-    CALL_OUTCOMES,
     CARD_NETWORKS,
     CITIES,
     DEFAULT_SOURCE_WEIGHTS,
-    MOBILE_EVENT_TYPES,
     PRODUCT_CATEGORIES,
     SOURCE_TO_STREAM,
     STREAM_INGEST_ATM,
@@ -58,7 +56,6 @@ from src.ingest.simulator_data import (  # noqa: E402
     normalize_for_source,
     pick_source,
 )
-
 
 # ---------------------------------------------------------------------------
 # Customer generator tests.
@@ -315,6 +312,7 @@ def test_source_to_stream_mapping_covers_all_4_sources():
 def _build_ingest_app():
     """Build a bare FastAPI app with just the ingest router mounted."""
     from fastapi import FastAPI
+
     from src.api.ingest_routes import router
 
     app = FastAPI()

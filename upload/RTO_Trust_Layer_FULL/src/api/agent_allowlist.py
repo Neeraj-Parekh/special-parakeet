@@ -45,11 +45,9 @@ Wave 2 (Subagent 14-e — F19 + D13) — this module is extended with:
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import threading
 from typing import Any
-
 
 # ---------------------------------------------------------------------------
 # Agent allowlist — prompt-razor §5 lines 1003-1050 (BoundedAgent class).

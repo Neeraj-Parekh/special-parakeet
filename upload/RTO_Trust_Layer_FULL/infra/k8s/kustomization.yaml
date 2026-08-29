@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: rto-trust-layer
+
+# Namespace + labels applied to all resources via commonLabels.
+namespace: rto-trust-layer
+commonLabels:
+  app.kubernetes.io/name: rto-trust-layer
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - postgres-secret.yaml
+  - api-keys-secret.yaml
+  - postgres-statefulset.yaml
+  - postgres-service.yaml
+  - redis-deployment.yaml
+  - redis-service.yaml
+  - api-configmap.yaml
+  - api-deployment.yaml
+  - api-service.yaml
+  - hpa.yaml

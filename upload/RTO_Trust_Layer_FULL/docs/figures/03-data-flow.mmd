@@ -1,0 +1,103 @@
+%% RTO Trust Layer — Data Flow Diagram (DFD L0 → L1)
+%% Grounded in: src/ingest/{atm,callcenter,ecommerce,mobile}.py,
+%%   scripts/ingest_kaggle.py, src/models/train.py, src/ml/registry.py,
+%%   src/stream/producer.py + consumer.py + processor.py,
+%%   src/feedback/label_service.py + drift_consumer.py,
+%%   src/business/cost_optimizer.py, src/api/routes.py /risk/score,
+%%   src/audit/logger.py, alembic 001-007.
+flowchart LR
+  classDef source fill:#161b22,color:#e6edf3,stroke:#58a6ff
+  classDef store fill:#1c2128,color:#e6edf3,stroke:#d29922
+  classDef process fill:#0d1117,color:#e6edf3,stroke:#3fb950
+  classDef external fill:#21262d,color:#8b949e,stroke:#6e7681,stroke-dasharray:3 3
+  classDef loop fill:#0d1117,color:#e6edf3,stroke:#f85149
+
+  %% ===== External sources =====
+  KAGGLE[("Kaggle COD dataset<br/>data/raw/cod_orders.csv<br/>~97k rows 1.64% RTO")]
+  ATM["ATM switch log CSV<br/>src/ingest/atm.py<br/>(batch daily 02:00 IST)"]
+  CC["CRM webhook<br/>src/ingest/callcenter.py<br/>~720 flags/day"]
+  MOB["Kafka mobile.orders<br/>src/ingest/mobile.py<br/>~2/sec peak"]
+  EC["Merchant web checkout<br/>src/ingest/ecommerce.py<br/>(identity normalize)"]
+  RAZORPAY[("Razorpay webhook<br/>(future — outcome labels")]
+
+  %% ===== Ingest / training stores =====
+  RAW[("Raw feature frame<br/>src/models/train.py<br/>build_feature_frame + group_split")]
+  MODEL[("Champion artifact<br/>models/champion/<br/>model.pkl + priors.json<br/>+ rate_lookup.json<br/>+ ohe_fitter.joblib")]
+  REG[("ModelRegistry<br/>out/model_registry.json<br/>or alembic 001 model_registry<br/>(is_champion partial-unique)")]
+  PRIORS[("priors blob<br/>p_orig=0.01697 p_und=0.01697<br/>calibration_method=bahnsen_eq6")]
+
+  %% ===== Hot path stores =====
+  PG[("PostgreSQL 15<br/>alembic 001-007<br/>audit_records · cases ·<br/>mandate_counters · api_keys<br/>override_nonces · idempotency_keys")]
+  RD[("Redis 7 Streams<br/>5 streams:<br/>risk.scores · audit.records ·<br/>cases.created · model.drift ·<br/>notifications")]
+
+  %% ===== Processes =====
+  TRAIN["train.py<br/>fit_model(HistGB,<br/>max_iter=300 lr=0.08 depth=6)<br/>+ compute_priors + save_model"]
+  REGISTER["register_model(version,<br/>model_path, metrics, priors)<br/>src/ml/registry.py"]
+  SCORE["POST /risk/score<br/>src/api/routes.py:960<br/>feature_builder.transform<br/>→ predict_proba<br/>→ calibrate_probabilities<br/>→ optimal_decision"]
+  AUDIT["AuditLogger.log<br/>src/audit/logger.py<br/>hash chain + Merkle interval"]
+  CASES["CaseService.open_case<br/>src/cases/service.py"]
+
+  %% ===== Stream consumers =====
+  SW["stream-worker<br/>src/stream/consumer.py<br/>XREADGROUP rto-workers group"]
+  SP["stream-processor<br/>src/stream/processor.py<br/>HyperLogLog + sliding-window<br/>3-sigma spike-factor (15-a)"]
+  DC["drift-consumer<br/>src/feedback/drift_consumer.py<br/>DDM Level + ADWIN"]
+
+  %% ===== Feedback loop =====
+  LABELS["LabelFeedbackService<br/>src/feedback/label_service.py<br/>late-label prequential eval"]
+  DRAIN["Drain (3+ same-reason<br/>-- retrain_request notification)"]
+  RETRAIN["retrain_real.py<br/>scripts/retrain_real.py<br/>+ canary_gate.py"]
+  PROMOTE["Promotion (MLOps)<br/>mlops.yml workflow<br/>relative PR-AUC gate 3x baseline"]
+  SHAP["SHAPExplainer<br/>src/models/explain.py<br/>/v1/explain/shap"]
+
+  %% ===== Hot path external consumer =====
+  DASH["Merchant Console<br/>dashboard/index.html"]
+  COMPL["Compliance Auditor<br/>/v1/audit/{id}/proof<br/>+ /v1/compliance/audit-export"]
+
+  %% ===== Training flow =====
+  KAGGLE --> RAW
+  RAW --> TRAIN
+  TRAIN --> MODEL
+  TRAIN --> PRIORS
+  MODEL --> REGISTER
+  PRIORS --> REGISTER
+  REGISTER --> REG
+
+  %% ===== Hot path (inference) =====
+  MODEL -.->|lifespan loads at boot| SCORE
+  PRIORS -.->|"get_priors() at request time"| SCORE
+  REG -.->|"current_champion() lookup"| SCORE
+  EC -->|POST /risk/score| SCORE
+  SCORE --> AUDIT
+  SCORE --> CASES
+  AUDIT --> PG
+  CASES --> PG
+  SCORE -.->|publish risk.scores + audit.records + cases.created| RD
+  DASH -->|POST /risk/score| SCORE
+  SCORE -->|200 decision + p_rto + reasons + audit_id| DASH
+  SHAP -.->|/v1/explain/shap| DASH
+  AUDIT --> COMPL
+
+  %% ===== Cold path (feedback loop) =====
+  ATM -->|POST /risk/score X-Channel: atm| SCORE
+  CC -->|POST /risk/score X-Channel: call_center| SCORE
+  MOB -->|POST /risk/score X-Channel: mobile| SCORE
+
+  RD --> SW
+  RD --> SP
+  SP -->|XADD model.drift| RD
+  RD --> DC
+  DC --> LABELS
+  LABELS --> DRAIN
+  RAZORPAY -.->|delayed is_returned label T+30d| LABELS
+  DRAIN -->|3+ consecutive anomalies<br/>-- retrain PR| RETRAIN
+  LABELS -->|DDM 99% drift confirmed<br/>-- /v1/feedback/ingest| RETRAIN
+  RETRAIN --> PROMOTE
+  PROMOTE -.->|"register_model(new version, champion=True)"| REG
+  REG -.->|champion swap on next /risk/score lifespan| SCORE
+
+  %% styling
+  class KAGGLE,RAZORPAY external
+  class ATM,CC,MOB,EC source
+  class RAW,MODEL,REG,PRIORS,PG,RD store
+  class TRAIN,REGISTER,SCORE,AUDIT,CASES,SW,SP,DC,LABELS,DRAIN,RETRAIN,PROMOTE,SHAP process
+  class DASH,COMPL source

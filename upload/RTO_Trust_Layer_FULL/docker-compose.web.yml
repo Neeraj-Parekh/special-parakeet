@@ -1,0 +1,80 @@
+# docker-compose.web.yml — local dashboard run.
+#
+# Brings up the Next.js dashboard (port 3000) + the Python scorer
+# (port 8000) together so a judge can `docker compose -f docker-compose.web.yml up`
+# and see the full stack without touching a Dockerfile.
+#
+# This is a *thin* compose file — for the full-stack dev experience
+# (Postgres + Redis + Jaeger + Prometheus + Grafana + nginx + the
+# stream workers) use the repo root's `docker-compose.yml --profile full`.
+# This file only covers what a judge needs to see the dashboard
+# talking to a live scorer: 2 services, 2 ports, 1 env var.
+#
+# Usage:
+#   export RTO_SCORER_KEYS=score-demo-key
+#   export RTO_ADMIN_KEYS=admin-demo-key
+#   export RTO_MANDATE_SECRET=$(openssl rand -hex 32)
+#   export RTO_AUDIT_SALT=$(openssl rand -hex 16)
+#   docker compose -f docker-compose.web.yml up --build
+#
+# Then open http://localhost:3000/ — the dashboard will auto-discover
+# the scorer at http://api:8000 via the API_BASE_URL env var below.
+#
+# Why a separate compose file:
+#   • The repo-root `docker-compose.yml` builds only the Python scorer
+#     (the legacy `dashboard/index.html` was served by nginx under the
+#     `full` profile, which made a bare `docker compose up` feel empty
+#     to a judge). This file gives the NEW Next.js dashboard a
+#     first-class compose entry point without disturbing the
+#     existing 12-service stack.
+services:
+  # --- Python scorer (FastAPI at :8000) -----------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - RTO_SCORER_KEYS=${RTO_SCORER_KEYS:-score-demo-key}
+      - RTO_ADMIN_KEYS=${RTO_ADMIN_KEYS:-admin-demo-key}
+      - RTO_MANDATE_SECRET=${RTO_MANDATE_SECRET:-dev-only-secret}
+      - RTO_AUDIT_SALT=${RTO_AUDIT_SALT:-local-demo-salt}
+      # No DATABASE_URL → the scorer falls back to file-mode audit
+      # (writes tamper-evident JSONL to /app/out — ephemeral in the
+      # container). For a 30-min buildathon demo this is fine; for
+      # production add a Postgres service + DATABASE_URL.
+      # No REDIS_URL → stream publishes fail silently — the
+      # /risk/score response is unaffected.
+    volumes:
+      - audit-data:/app/out
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # --- Next.js 16 Risk Console (port 3000) --------------------------
+  web:
+    build:
+      # Build context = repo root, so Dockerfile.web can `COPY web/ .`
+      # without needing the host path to be named `web/`.
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "3000:3000"
+    environment:
+      # The Next.js API routes (src/app/api/risk/score/route.ts etc.)
+      # call this URL to reach the Python backend. The docker
+      # network exposes the api service as `http://api:8000`.
+      - API_BASE_URL=http://api:8000
+      - NODE_ENV=production
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  audit-data:

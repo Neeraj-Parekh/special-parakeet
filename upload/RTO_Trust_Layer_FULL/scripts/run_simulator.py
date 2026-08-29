@@ -73,7 +73,6 @@ from typing import Any
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.ingest.simulator_data import (  # noqa: E402
-    DEFAULT_RATES_PER_SOURCE,
     DEFAULT_SOURCE_WEIGHTS,
     SOURCE_TO_STREAM,
     generate_atm_event,
@@ -86,7 +85,6 @@ from src.ingest.simulator_data import (  # noqa: E402
     normalize_for_source,
     pick_source,
 )
-
 
 # ---------------------------------------------------------------------------
 # Publisher abstraction.
@@ -229,7 +227,7 @@ def _build_publisher(args: argparse.Namespace) -> Any:
     Priority: --dry-run > Redis > HTTP > stdout.
     """
     if args.dry_run:
-        print(f"[simulator] --dry-run mode — printing events to stdout", file=sys.stderr)
+        print("[simulator] --dry-run mode — printing events to stdout", file=sys.stderr)
         return _StdoutPublisher()
 
     # Try Redis first.
@@ -268,8 +266,8 @@ def _build_publisher(args: argparse.Namespace) -> Any:
 
     # Final fallback — stdout.
     print(
-        f"[simulator] ⚠️  no Redis, no API — printing events to stdout. "
-        f"Use --dry-run to silence this warning.",
+        "[simulator] ⚠️  no Redis, no API — printing events to stdout. "
+        "Use --dry-run to silence this warning.",
         file=sys.stderr,
     )
     return _StdoutPublisher()
@@ -519,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
         f"({event_count / max(elapsed, 1):.1f}/sec)",
         file=sys.stderr,
     )
-    print(f"[simulator] source breakdown:", file=sys.stderr)
+    print("[simulator] source breakdown:", file=sys.stderr)
     for src, n in source_counts.items():
         print(f"  {src:12} → {n} events", file=sys.stderr)
     print(f"[simulator] RTO-injected orders: {rto_count}", file=sys.stderr)

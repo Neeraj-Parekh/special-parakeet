@@ -1,0 +1,12 @@
+{
+  "p_orig": 0.013085780370072405,
+  "p_und": 0.013085780370072405,
+  "n_train": 79552,
+  "n_pos_train": 1041,
+  "n_test": 19889,
+  "n_pos_test": 193,
+  "calibration_method": "identity",
+  "note": "class_weight=balanced does not resample labels; p_und = p_orig.",
+  "created_at": "2026-08-28T06:20:22Z",
+  "source": "github-actions:train.yml nightly cron"
+}

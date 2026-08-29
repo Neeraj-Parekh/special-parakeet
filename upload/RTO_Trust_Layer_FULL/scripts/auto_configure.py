@@ -57,7 +57,7 @@ def main() -> int:
     # If not check-only, write the config to disk for other services.
     if not check_only:
         config = write_port_config()
-        print(f"Port config written to out/port_config.json:")
+        print("Port config written to out/port_config.json:")
     else:
         print("CHECK-ONLY mode — no file written. (use without --check to write)")
 

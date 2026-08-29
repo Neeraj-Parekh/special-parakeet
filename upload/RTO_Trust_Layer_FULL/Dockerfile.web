@@ -1,0 +1,70 @@
+# Dockerfile.web — Next.js 16 standalone build for the Risk Console.
+#
+# Multi-stage per Next.js 16 docs (https://nextjs.org/docs/app-router-building-your-application/optimizing/bundle-analysis#copy-the-standalone-folder-to-a-docker-image)
+# — keeps the final image at ~180MB (vs 1.2GB for the dev image).
+#
+# Build context is the repo root, so the build command is:
+#   docker build -t rto-trust-layer-dashboard -f Dockerfile.web .
+# or via docker-compose.web.yml (which sets context to the repo root +
+# passes the web/ folder as the build context):
+#   docker compose -f docker-compose.web.yml up --build
+#
+# The standalone output (`next.config.ts` has `output: "standalone"`)
+# produces a self-contained `.next/standalone/server.js` that has
+# every runtime dependency bundled — so the final `runner` stage only
+# needs `node server.js` + the static assets folder.
+
+# ----------------------------------------------------------------------------
+# Stage 1: deps — install production + dev deps for the build
+# ----------------------------------------------------------------------------
+FROM node:20-alpine AS deps
+WORKDIR /app
+# Bun or npm — the lockfile presence decides. The repo commits
+# package-lock.json (not bun.lockb), so npm ci is the deterministic
+# install path. The fallback `|| npm install` handles the case where
+# a judge clones without the lockfile.
+COPY web/package.json web/package-lock.json* web/bun.lockb* ./
+RUN if [ -f package-lock.json ]; then npm ci; \
+    elif [ -f bun.lockb ]; then npm install; \
+    else npm install; fi
+
+# ----------------------------------------------------------------------------
+# Stage 2: builder — compile the Next.js app
+# ----------------------------------------------------------------------------
+FROM node:20-alpine AS builder
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY --from=deps /app/node_modules ./node_modules
+# Copy the entire web/ folder so next.config.ts + tsconfig.json +
+# tailwind/postcss configs are all in place.
+COPY web/ .
+# `next build` produces .next/standalone + .next/static when
+# output: "standalone" is set in next.config.ts (it is — see
+# web/next.config.ts).
+RUN npm run build
+
+# ----------------------------------------------------------------------------
+# Stage 3: runner — minimal production image
+# ----------------------------------------------------------------------------
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV PORT=3000
+# Run as the `next` non-root user (built into node:20-alpine) so a
+# container escape lands in a sandboxed uid.
+RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001 -G nodejs 2>/dev/null || true
+# Copy the standalone server + the static assets + the public/ folder.
+# The standalone output doesn't bundle static assets or public/, so
+# we copy them separately — otherwise the page renders without CSS or
+# the favicon 404s.
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+USER nextjs
+EXPOSE 3000
+# Next standalone server.js listens on $PORT (env var above). Fly +
+# Render both probe / — Next responds 200 on the home route.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
+  CMD node -e "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+CMD ["node", "server.js"]

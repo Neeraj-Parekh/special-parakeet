@@ -1,0 +1,78 @@
+# Render.com Blueprint — RTO Trust Layer
+#
+# Renders both the Python FastAPI scorer + the Next.js 16 Risk Console
+# as two independent web services. Judges can click the URLs and get
+# a live dashboard + a working /risk/score endpoint without touching
+# their laptops.
+#
+# Deploy (one-click): https://render.com/dashboard#/infrastructure/blueprint/new?source=repo&repo=Neeraj-Parekh/special-parakeet&branch=main&blueprintPath=infra/render.yaml
+#
+# Or via CLI:
+#   pip install render
+#   render blueprint apply infra/render.yaml
+#
+# Service topology:
+#   • rto-trust-layer-api        — FastAPI scorer at :8000 (Dockerfile)
+#   • rto-trust-layer-dashboard  — Next.js standalone at :3000 (Dockerfile.web)
+#
+# The dashboard service's `API_BASE_URL` env var must point at the api
+# service's internal Render URL (https://rto-trust-layer-api.onrender.com)
+# so the Next.js API routes can proxy /risk/score through. Render auto-
+# provisions a free TLS certificate + a *.onrender.com hostname.
+#
+# Free-tier caveats (per Render docs):
+#   • Free web services spin down after 15 min idle — first request
+#     after idle takes ~30s cold-start. For a buildathon demo this is
+#     fine; for production use the Standard plan.
+#   • 750 free instance-hours per month — the two services above fit
+#     inside that envelope.
+#   • No persistent disk on free tier — set `DATABASE_URL` to a managed
+#     Postgres (Render's own or Neon/AWS RDS) if you want audit records
+#     to survive a re-deploy.
+services:
+  - type: web
+    name: rto-trust-layer-api
+    env: docker
+    repo: https://github.com/Neeraj-Parekh/special-parakeet
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      # Secrets — set these in the Render dashboard after the first apply
+      # so they don't sit in plaintext in the YAML:
+      - key: RTO_SCORER_KEYS
+        sync: false
+      - key: RTO_ADMIN_KEYS
+        sync: false
+      - key: RTO_MANDATE_SECRET
+        sync: false
+      - key: RTO_AUDIT_SALT
+        sync: false
+      # The scorer degrades gracefully to file-mode when DATABASE_URL
+      # is unset — tamper-evident audit is written to /app/out on the
+      # container's ephemeral disk. For production durability, point
+      # this at a Render-managed Postgres (free tier available).
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+  - type: web
+    name: rto-trust-layer-dashboard
+    env: docker
+    repo: https://github.com/Neeraj-Parekh/special-parakeet
+    branch: main
+    dockerfilePath: ./Dockerfile.web
+    dockerContext: ./web
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      # Point the Next.js API proxy at the api service's internal Render
+      # URL. Render auto-allocates <service-name>.onrender.com, so this
+      # is deterministic once the api service exists.
+      - key: API_BASE_URL
+        value: https://rto-trust-layer-api.onrender.com
+      - key: NODE_ENV
+        value: production

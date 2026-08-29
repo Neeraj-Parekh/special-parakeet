@@ -280,7 +280,9 @@ pitch + docs carries a status:
 | Velocity controls block 89-93% of COD fraud (Paper 4) | UNVERIFIED-industry |
 | Address validation prevents 42-48% of COD returns (Paper 4) | UNVERIFIED-industry |
 | Gartner predicts 40% of CIOs demand guardian agents by 2028 (Paper 5) | PUBLIC-MARKETING-derived — phrase as "industry analysts predict…" |
-| E1/E2/E3 PR-AUC numbers (0.524 / 0.550 / 0.545) | **MEASURED** (repo) — citable, reproducible via `./verify.sh` |
+| E1/E2/E3 PR-AUC numbers (0.524 / 0.550 / 0.545) | **MEASURED** (repo, **synthetic CODScore baseline** — NOT deployed; see caveat below) — citable, reproducible via `./verify.sh` |
+| **Deployed Kaggle Amazon champion PR-AUC = 0.1027** | **MEASURED** (`models/champion/metrics.json`) — 96,944 train rows / 24,236 test rows, RTO rate 1.70%, 6.05× baseline lift. Default `/risk/score` champion. Ceiling ~0.12 because Amazon has no `user_id` history. |
+| **Olist boleto champion PR-AUC = 0.3950** | **MEASURED** (`data/olist/artifacts/metrics.json`) — 15,827 train / 3,957 test, Brier 0.0439, ROC-AUC 0.7676, 32× baseline, **3.8× the Amazon champion**. Wired as `?dataset=olist`. Real `user_id`/`merchant_id` history fires the rate features that are inert on Amazon. |
 | 141/149 tests pass | **MEASURED** (repo) — 141 passed + 8 skipped (Postgres+Redis path; full suite w/ Docker services = 149). Final count locked by Track V 11-g. |
 | Patent numbers US20240012345A1, US20230187654B2, WO2024/098765A1 | **SUSPECT-FABRICATED** — DO NOT CITE in pitch deck (per V3 §21) |
 

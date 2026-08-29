@@ -60,7 +60,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from src.api.otel import optional_span  # noqa: E402
 from src.api.routes import create_app  # noqa: E402
 
-
 # ===========================================================================
 # Mock tracer / span — records every set_attribute + record_exception call
 # ===========================================================================

@@ -1,0 +1,1290 @@
+     1→"""Train + evaluate RTO risk model. Prints JSON metrics; writes model + report."""
+     2→from __future__ import annotations
+     3→
+     4→import sys
+     5→import time
+     6→import uuid
+     7→from contextlib import asynccontextmanager
+     8→from datetime import datetime, timezone
+     9→from pathlib import Path
+    10→from typing import Any
+    11→
+    12→import pandas as pd
+    13→from fastapi import FastAPI, Header, HTTPException
+    14→from pydantic import BaseModel, Field
+    15→
+    16→sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    17→
+    18→# Day 2 Track E — dual-mode (Postgres + file fallback) config + idempotency.
+    19→# cachetools provides TTLCache for the file-mode idempotency cache (closes
+    20→# §A item 2 — unbounded ``state["idem"]`` dict memory leak). Postgres mode
+    21→# uses the ``idempotency_keys`` table instead.
+    22→from cachetools import TTLCache  # noqa: E402
+    23→
+    24→from src.api.breaker import CircuitBreaker  # noqa: E402
+    25→from src.api.mandates import MandateVerdict, issue_mandate, verify_mandate  # noqa: E402
+    26→from src.api.metrics import Metrics, now_ms  # noqa: E402
+    27→from src.api.security import TokenBucket, bearer_token, check_key, default_keys  # noqa: E402
+    28→from src.audit.logger import AuditLogger, redact_customer  # noqa: E402
+    29→from src.business.cost_optimizer import (  # noqa: E402
+    30→    bootstrap_cost_ci,
+    31→    calibrate_probabilities,
+    32→    cost_curve_sweep,
+    33→    find_cost_crossover,
+    34→    optimal_decision,
+    35→)
+    36→from src.config import get_settings  # noqa: E402
+    37→# Day 2 Track F — Redis Streams producer (fire-and-forget). Closes §A item
+    38→# 18 + driver G2 (REST-only, no event/streaming backbone). Lazy connect:
+    39→# StreamProducer(None) is a no-op so the 63 existing tests still pass without
+    40→# a Redis fixture. The 5 stream-name constants come from the producer module
+    41→# so consumer.py + processor.py share the same source of truth (V2 §5).
+    42→from src.stream.producer import (  # noqa: E402
+    43→    STREAM_AUDIT_RECORDS,
+    44→    STREAM_CASES_CREATED,
+    45→    STREAM_RISK_SCORES,
+    46→    StreamProducer,
+    47→)
+    48→# Day 2 Track G — LabelFeedbackService wraps DDM + ADWIN over the delayed
+    49→# is_returned label stream (Gama 2014 survey §3.2/§3.3). On DRIFT, fires a
+    50→# retrain_request notification (the MLOps-DevOps paper's
+    51→# plan_drift_triggered_retraining capability). The service is constructed
+    52→# once at app boot so the in-memory DDM/ADWIN state persists across requests
+    53→# within one worker process.
+    54→from src.feedback.label_service import LabelFeedbackService  # noqa: E402
+    55→
+    56→# Legacy static-threshold constants (replaced as the PRIMARY decision path on
+    57→# Day 1 Track C by ``optimal_decision()`` — Bahnsen Bayes Minimum Risk, ICMLA
+    58→# 2013, DOI 10.1109/ICMLA.2013.68). Kept here for backward compatibility in
+    59→# the ``gate_thresholds`` response field (so existing dashboards / consumers
+    60→# that read accept_below / reject_above still get a sensible value), and as
+    61→# the fallback threshold surface when ``optimal_decision`` is somehow skipped
+    62→# (degraded mode below falls back to REVIEW regardless).
+    63→ACCEPT_T, REJECT_T = 0.15, 0.60
+    64→# Cost weights for the Bahnsen BMR decision layer — must stay in lockstep
+    65→# with the defaults in ``src.business.cost_optimizer.optimal_decision`` so that
+    66→# the ``/v1/policy/cost-curves`` endpoint reports the same cost model the
+    67→# live decision path actually uses.
+    68→DEFAULT_COST_WEIGHTS: dict[str, float] = {
+    69→    "c_fp": 50.0,            # false-positive (good order held) admin / review fee, INR
+    70→    "c_fn": 600.0,           # false-negative (missed RTO) reverse-logistics + refund, INR
+    71→    "c_otp": 5.0,            # REVIEW-gate selective-OTP verification cost, INR
+    72→    "c_block": 1000.0,       # false-block (good order blocked) goodwill / churn, INR
+    73→    "otp_effectiveness": 0.82,  # published selective-OTP RTO-catch rate (0.78-0.84)
+    74→}
+    75→from src.cases.service import CaseService  # noqa: E402
+    76→from src.features.cleaning import load_orders  # noqa: E402
+    77→from src.features.enrich import add_address_features  # noqa: E402
+    78→from src.ml.registry import (  # noqa: E402
+    79→    _close_conn as _close_registry_conn,
+    80→    current_champion,
+    81→    psi,
+    82→    register_model,
+    83→)
+    84→from src.models.explain import reason_codes_batch  # noqa: E402
+    85→from src.models.splitting import group_split  # noqa: E402
+    86→from src.models.train import build_feature_frame, fit_model, save_model  # noqa: E402
+    87→from src.rules.engine import (
+    88→    Rule,  # noqa: E402
+    89→    RulesEngine,  # noqa: E402
+    90→)
+    91→
+    92→# Default bootstrap CI parameters for the cost-curve endpoint (Drummond & Holte
+    93→# 2006 — skill.yaml recommends ≥500 resamples preserving row marginals).
+    94→DEFAULT_COST_CURVE_RESAMPLES = 500
+    95→DEFAULT_COST_CURVE_CONFIDENCE = 0.90
+    96→
+    97→
+    98→class OrderIn(BaseModel):
+    99→    order_id: str = Field(min_length=3, max_length=64)
+   100→    amount_inr: float = Field(gt=1, le=1_000_000)
+   101→    category: str = Field(min_length=2, max_length=32)
+   102→    customer_id: str = Field(min_length=3, max_length=64)
+   103→    address_quality: str = Field(default="complete", pattern="^(complete|partial|vague)$")
+   104→    city_tier: str = Field(default="tier_2", pattern="^tier_[123]$")
+   105→    payment_method: str = Field(default="COD", pattern="^(COD|Prepaid)$", max_length=16)
+   106→    prior_orders: int = Field(default=0, ge=0, le=10_000)
+   107→    prior_returns: int = Field(default=0, ge=0, le=10_000)
+   108→    items: int = Field(default=1, ge=1, le=100)
+   109→    order_hour: int = Field(default=12, ge=0, le=23)
+   110→    device: str = Field(default="Android App", max_length=32)
+   111→
+   112→
+   113→class RuleIn(BaseModel):
+   114→    rule_id: str = Field(min_length=3, max_length=32)
+   115→    name: str = Field(min_length=3, max_length=64)
+   116→    field: str = Field(max_length=48)
+   117→    op: str = Field(pattern="^(gt|lt|eq|in)$")
+   118→    value: float | str | bool | list
+   119→    action: str = Field(pattern="^(BLOCK|REVIEW)$")
+   120→    priority: int = Field(default=100, ge=1, le=1000)
+   121→    created_by: str = "admin"
+   122→
+   123→
+   124→class FeedbackIn(BaseModel):
+   125→    """Delayed is_returned label (Track G Day 2 — closes §A item 18 feedback
+   126→    loop + driver G3 partial). Auth: admin scope (merchants can't self-report
+   127→    labels — prevents poisoning). Source: Gama 2014 ACM CSUR 46(4) §6.
+   128→    """
+   129→    prediction_id: str = Field(min_length=1, max_length=128)
+   130→    is_returned: bool
+   131→    # ISO 8601 timestamp the label was recorded at (chargeback-style delay
+   132→    # — days-weeks after the prediction was made). If None, the endpoint uses
+   133→    # ``datetime.now(timezone.utc)``. Used by future prequential evaluation
+   134→    # (Gama 2014 §5 — interleaved test-then-train with landmark window).
+   135→    returned_at: str | None = None
+   136→
+   137→
+   138→def create_app(
+   139→    scorer_rate_per_min: int = 120, audit_path: str = "out/audit.jsonl"
+   140→) -> FastAPI:
+   141→    state: dict[str, Any] = {}
+   142→
+   143→    # Day 2 Track E — load Settings once at app-construction time. The
+   144→    # ``database_url`` field selects between Postgres mode (full DB-backed
+   145→    # audit/cases/registry/idempotency) and file-mode fallback (the 63
+   146→    # existing tests run this way). The Settings object itself is cached
+   147→    # via ``@lru_cache`` in ``src.config`` so we don't re-read env vars on
+   148→    # every TestClient build.
+   149→    settings = get_settings()
+   150→    state["settings"] = settings
+   151→
+   152→    # Day 2 Track F — Redis Streams producer (fire-and-forget). Constructed
+   153→    # eagerly here (cheap — just stores the URL; lazy-connects on first
+   154→    # ``publish``) so the /risk/score handler can call it after the audit
+   155→    # write + case open. When ``settings.redis_url`` is None (test mode,
+   156→    # local dev without REDIS_URL) the producer is a no-op: ``publish()``
+   157→    # returns None silently — the API response is unaffected. This is the
+   158→    # pragmatic fire-and-forget contract; V3 §10.3 prescribes a full
+   159→    # transactional outbox table drained by a worker (deferred; see
+   160→    # worklog Day 2 Track F deferral list).
+   161→    state["stream"] = StreamProducer(settings.redis_url)
+   162→
+   163→    # Day 2 Track G — LabelFeedbackService (DDM + ADWIN over the delayed
+   164→    # is_returned label stream). Constructed eagerly (cheap — just stores
+   165→    # the URLs + creates the DDM/ADWIN instances) so the
+   166→    # /v1/feedback/ingest handler can call ``ingest_label`` per request +
+   167→    # the /metrics endpoint can read ``current_state()`` for the drift
+   168→    # gauges. The lazy StreamProducer inside the service is constructed
+   169→    # only on first DRIFT publish — so the 67 existing tests + 7 feedback
+   170→    # tests still pass without a Redis fixture.
+   171→    state["feedback"] = LabelFeedbackService(
+   172→        redis_url=settings.redis_url,
+   173→        database_url=settings.database_url,
+   174→    )
+   175→
+   176→    # Idempotency cache. File mode: TTLCache (bounded + auto-expiring —
+   177→    # closes §A item 2 memory leak). Postgres mode: the ``idempotency_keys``
+   178→    # table; ``state["idem"]`` is unused (kept as an empty dict for backward-
+   179→    # compat with any test that asserts the key exists).
+   180→    if settings.is_postgres:
+   181→        state["idem"] = TTLCache(maxsize=1, ttl=3600)  # placeholder, real cache is the DB
+   182→    else:
+   183→        state["idem"] = TTLCache(
+   184→            maxsize=settings.idem_maxsize, ttl=settings.idem_ttl_seconds
+   185→        )
+   186→
+   187→    @asynccontextmanager
+   188→    async def lifespan(_: FastAPI):
+   189→        df = add_address_features(load_orders("data/raw/cod_orders.csv"))
+   190→        train_df, _ = group_split(df)
+   191→        X_tr, y_tr = build_feature_frame(train_df, "order+addr")
+   192→        model_path = Path("out/model_api.joblib")
+   193→        if not model_path.exists():
+   194→            save_model(fit_model(X_tr, y_tr), str(model_path))
+   195→        from src.models.train import load_model
+   196→
+   197→        state["model"] = load_model(str(model_path))
+   198→        state["reference"] = X_tr.mode().iloc[0]
+   199→        state["base_rate"] = float(y_tr.mean())
+   200→        # Day 2 Track E — audit path comes from Settings (defaults to the
+   201→        # same ``out/audit.jsonl`` as before, but now .env-configurable +
+   202→        # docker-compose-wired). The AuditLogger is dual-mode internally.
+   203→        state["audit"] = AuditLogger(audit_path or settings.audit_path)
+   204→        # Pass Settings-backed CSV keys to default_keys so the .env file is
+   205→        # honored (Track B's Dockerfile change removed the baked ENV defaults;
+   206→        # docker-compose now sets them via the environment block).
+   207→        state["keys"] = default_keys(
+   208→            scorer_keys=settings.rto_scorer_keys,
+   209→            admin_keys=settings.rto_admin_keys,
+   210→        )
+   211→        state["bucket"] = TokenBucket(scorer_rate_per_min)
+   212→        state["rules"] = RulesEngine()
+   213→        state["breaker"] = CircuitBreaker()
+   214→        state["metrics"] = Metrics()
+   215→        state["cases"] = CaseService(settings.cases_path)
+   216→        num_cols = [c for c in X_tr.columns if str(X_tr[c].dtype) != "category"]
+   217→        state["psi_sample"] = {
+   218→            c: X_tr[c].dropna().sample(n=min(2000, len(X_tr)), random_state=7).tolist()
+   219→            for c in num_cols
+   220→        }
+   221→        # Day 2 Track E — §A item 4 (register_model dead in prod). Register
+   222→        # the in-process HistGB with the model registry on every worker boot.
+   223→        # File mode: this writes to ``out/model_registry.json`` (the existing
+   224→        # behaviour — no-op for tests since they call register_model directly
+   225→        # via tmp_path). Postgres mode: INSERT into the ``model_registry``
+   226→        # table; the partial-unique index enforces single-champion. PR-AUC
+   227→        # + ROC-AUC are surfaced as the metrics payload so the model-card
+   228→        # + drift endpoints can read them.
+   229→        if settings.is_postgres:
+   230→            try:
+   231→                from sklearn.metrics import average_precision_score, roc_auc_score
+   232→                _p = state["model"].predict_proba(X_tr)[:, 1]
+   233→                _pr = float(average_precision_score(y_tr, _p))
+   234→                _roc = float(roc_auc_score(y_tr, _p))
+   235→                register_model(
+   236→                    version=f"v{int(time.time())}",
+   237→                    model_path=str(model_path),
+   238→                    metrics={"pr_auc": _pr, "roc_auc": _roc},
+   239→                    champion=True,
+   240→                )
+   241→            except Exception as e:  # pragma: no cover — startup-only, defensive
+   242→                print(
+   243→                    f"model-registry registration skipped: "
+   244→                    f"{type(e).__name__}: {e}",
+   245→                    file=sys.stderr,
+   246→                )
+   247→        # Pre-compute labeled (y, p) sequences for the /v1/policy/cost-curves
+   248→        # endpoint (Drummond & Holte 2006). The training set carries ground-
+   249→        # truth is_returned labels; running the model over it once at startup
+   250→        # lets the endpoint respond in O(1) for the per-threshold sweep and
+   251→        # ~3-5 sec for the 500-resample bootstrap (per-row performance only).
+   252→        # Note: this is in-sample — Day 2 Track E + G will swap in a held-out
+   253→        # test slice + delayed-label feedback so the curve reflects deployment
+   254→        # conditions, not training fit.
+   255→        try:
+   256→            _cost_curve_p = state["model"].predict_proba(X_tr)[:, 1].tolist()
+   257→            _cost_curve_y = [int(v) for v in y_tr.tolist()]
+   258→            state["cost_curve"] = {
+   259→                "y_true": _cost_curve_y,
+   260→                "probs": _cost_curve_p,
+   261→                "n": len(_cost_curve_y),
+   262→                "source": "train_df_in_sample",
+   263→            }
+   264→        except Exception as e:  # pragma: no cover — startup-only, defensive
+   265→            print(f"cost-curve warmup skipped: {type(e).__name__}: {e}", file=sys.stderr)
+   266→            state["cost_curve"] = None
+   267→        yield
+   268→        # Day 2 Track E — close the model-registry connection at shutdown so
+   269→        # the worker doesn't leak a Postgres connection across hot-reloads.
+   270→        if settings.is_postgres:
+   271→            _close_registry_conn()
+   272→        # Day 2 Track G — close the LabelFeedbackService's lazy StreamProducer
+   273→        # so the worker doesn't leak a Redis connection across hot-reloads.
+   274→        # Safe to call on a service whose producer was never constructed.
+   275→        try:
+   276→            state["feedback"].close()
+   277→        except Exception:  # pragma: no cover — best-effort shutdown
+   278→            pass
+   279→
+   280→    app = FastAPI(title="RTO Trust Layer", version="0.2.0", lifespan=lifespan)
+   281→    app.state.core = state
+   282→
+   283→    def to_frame(o: OrderIn) -> pd.DataFrame:
+   284→        row = {
+   285→            "log_order_value": _log1p(o.amount_inr),
+   286→            "discount_pct": 0.0,
+   287→            "Items": o.items,
+   288→            "OrderDay": 180,
+   289→            "OrderHour": o.order_hour,
+   290→            "PriorOrders": o.prior_orders,
+   291→            "PriorReturns": o.prior_returns,
+   292→            "is_cod": int(o.payment_method.upper() == "COD"),
+   293→            "category": o.category,
+   294→            "device": o.device,
+   295→            "city_tier": o.city_tier,
+   296→            "address_quality": o.address_quality,
+   297→        }
+   298→        return pd.DataFrame([row])
+   299→
+   300→    @app.post("/risk/score")
+   301→    def score(
+   302→        order: OrderIn,
+   303→        authorization: str | None = Header(default=None),
+   304→        idempotency_key: str | None = Header(default=None),
+   305→        x_mandate: str | None = Header(default=None),
+   306→        # Day 1 Track D (V3 §13): per-txn device_id + user_id for UPI Circle
+   307→        # mandates (NPCI OC-201B §3.7 Issuer Bank duty + §3.3 Secondary PSP
+   308→        # duty). Both default to None and are ignored for cod_order mandates.
+   309→        x_device_id: str | None = Header(default=None),
+   310→        x_user_id: str | None = Header(default=None),
+   311→    ) -> dict:
+   312→        token = bearer_token(authorization)
+   313→        ok, err = check_key(token, "scorer", state["keys"])
+   314→        if not ok:
+   315→            raise HTTPException(status_code=401, detail=err)
+   316→        client = token
+   317→        if not state["bucket"].allow(client):
+   318→            raise HTTPException(status_code=429, detail="rate limit exceeded")
+   319→
+   320→        # Day 2 Track E — idempotency cache (§A item 2: was an unbounded dict;
+   321→        # now TTLCache in file mode, Postgres ``idempotency_keys`` table in
+   322→        # db mode). File mode preserves the original (key, body) tuple key
+   323→        # so two different request bodies with the same Idempotency-Key
+   324→        # don't silently cross-pollute. Postgres mode uses the header value
+   325→        # alone as the PK (the standard idempotency contract — same key,
+   326→        # same response).
+   327→        if settings.is_postgres:
+   328→            cached = _idem_lookup_postgres(state, idempotency_key)
+   329→            if cached is not None:
+   330→                # 1% probabilistic cleanup of expired rows.
+   331→                if (uuid.uuid4().int % 100) == 0:
+   332→                    _idem_cleanup_postgres(state)
+   333→                return dict(cached, replayed=True)
+   334→        else:
+   335→            cache_key = (idempotency_key or "", order.model_dump_json())
+   336→            if idempotency_key and cache_key in state["idem"]:
+   337→                return dict(state["idem"][cache_key], replayed=True)
+   338→
+   339→        try:
+   340→            t0 = time.monotonic()
+   341→            # Mandate verification (cheap; always run; enforcement happens
+   342→            # later). Day 1 Track D extended the signature to pass device_id
+   343→            # + user_id so UPI Circle mandates can enforce OC-201B §3.3/§3.7
+   344→            # per-txn identity validation. cod_order mandates ignore both.
+   345→            mandate_verdict, mandate_payload = verify_mandate(
+   346→                x_mandate,
+   347→                order.amount_inr,
+   348→                device_id=x_device_id,
+   349→                user_id=x_user_id,
+   350→            )
+   351→            fired = state["rules"].evaluate(order.model_dump())
+   352→            rule_fired = fired.rule_id if fired else None
+   353→
+   354→            proba: float | None = None
+   355→            reasons: list[dict] = []
+   356→            degraded = False
+   357→            breach_note: str | None = None
+   358→            cost_breakdown: dict | None = None
+   359→            decision: str | None = None
+   360→            # ``decision_source`` records which layer actually chose the
+   361→            # decision, for the audit trail + dashboard explainability.
+   362→            # One of: rules_engine_block | mandate_breach | mandate_invalid
+   363→            # | mandate_review_required | degraded_review | cost_optimal_bmr
+   364→            # | cost_optimal_bmr_review_rule
+   365→            decision_source: str
+   366→
+   367→            # ------------------------------------------------------------------
+   368→            # Decision precedence (per Day 1 Track C spec):
+   369→            #   1. Rules fast-path (BLOCK)         → short-circuit REJECT
+   370→            #   2. Mandate enforcement (BREACH /
+   371→            #      TAMPERED / EXPIRED w/ header)   → short-circuit REJECT
+   372→            #   2c. Mandate REVIEW (UPI Circle 24h
+   373→            #      cooling period, OC-201B)        → short-circuit REVIEW
+   374→            #      (Day 1 Track D — mandate action-class expansion)
+   375→            #   3. Circuit breaker OPEN            → degraded rules-only REVIEW
+   376→            #   4. optimal_decision(p, ...)         → PRIMARY decision path
+   377→            #      (replaces legacy static 0.15 / 0.60 thresholds)
+   378→            # REVIEW rules don't short-circuit; they gate step 4 to never ACCEPT.
+   379→            # ------------------------------------------------------------------
+   380→            if fired is not None and fired.action == "BLOCK":
+   381→                # 1. Rules-engine BLOCK short-circuits — no model invocation.
+   382→                decision = "REJECT"
+   383→                decision_source = "rules_engine_block"
+   384→            elif mandate_verdict == MandateVerdict.BREACH:
+   385→                # 2a. Mandate amount-breach short-circuits.
+   386→                decision = "REJECT"
+   387→                breach_note = "mandate_amount_breach"
+   388→                decision_source = "mandate_breach"
+   389→            elif x_mandate is not None and mandate_verdict == MandateVerdict.REVIEW:
+   390→                # 2c. UPI Circle 24h cooling-period gate (OC-201B). The txn
+   391→                # is permitted in principle; the cooling circuit requires a
+   392→                # human to approve before the issuer debits. Routes to the
+   393→                # case queue like other REVIEW decisions. verdict_reason
+   394→                # (e.g. "cooling_period_active") flows into the audit trail
+   395→                # for compliance traceability.
+   396→                decision = "REVIEW"
+   397→                breach_note = "mandate_review_required"
+   398→                decision_source = "mandate_review_required"
+   399→            elif x_mandate is not None and mandate_verdict != MandateVerdict.VALID:
+   400→                # 2b. Tampered / expired mandate with a header present.
+   401→                # Covers OC-201B 6-month inactivity auto-revoke (verdict_reason
+   402→                # = "inactivity_auto_revoke") and standard TTL expiry.
+   403→                decision = "REJECT"
+   404→                breach_note = f"mandate_{mandate_verdict}"
+   405→                decision_source = "mandate_invalid"
+   406→            else:
+   407→                # 3. Circuit breaker guards model invocation.
+   408→                use_model = state["breaker"].allow_attempt()
+   409→                if use_model:
+   410→                    try:
+   411→                        X, _ = build_feature_frame(to_frame(order), "order+addr")
+   412→                        reasons = reason_codes_batch(
+   413→                            state["model"],
+   414→                            X,
+   415→                            list(X.columns),
+   416→                            state["base_rate"],
+   417→                            state["reference"],
+   418→                        )
+   419→                        proba = float(state["model"].predict_proba(X)[0, 1])
+   420→                        state["breaker"].record_success()
+   421→                    except Exception:
+   422→                        state["breaker"].record_failure()
+   423→                        proba = None
+   424→                if proba is None:
+   425→                    # 3. Degraded path: model unavailable → rules-only REVIEW.
+   426→                    degraded = True
+   427→                    decision = "REVIEW"
+   428→                    decision_source = "degraded_review"
+   429→                else:
+   430→                    # 4. Bahnsen Bayes Minimum Risk decision layer (ICMLA 2013,
+   431→                    #    DOI 10.1109/ICMLA.2013.68). Per-order argmin of expected
+   432→                    #    cost over {ACCEPT, REVIEW (selective-OTP), REJECT}.
+   433→                    decision, costs = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)
+   434→                    cost_breakdown = costs
+   435→                    # REVIEW rule gate: never ACCEPT when a REVIEW rule fired
+   436→                    # (still uses BMR cost math, but the rule forces REVIEW).
+   437→                    if fired is not None and fired.action == "REVIEW" and decision == "ACCEPT":
+   438→                        decision = "REVIEW"
+   439→                        decision_source = "cost_optimal_bmr_review_rule"
+   440→                    else:
+   441→                        decision_source = "cost_optimal_bmr"
+   442→
+   443→            # Legacy ``policy_hint`` is the BMR-optimal action string (kept for
+   444→            # dashboard / consumer backward compat; the actual decision is the
+   445→            # body's ``decision`` field — which equals ``policy_hint`` whenever
+   446→            # the cost-optimizer was the decision source).
+   447→            policy_hint = None
+   448→            if proba is not None:
+   449→                policy_hint = optimal_decision(proba, **DEFAULT_COST_WEIGHTS)[0]
+   450→
+   451→            features_used = (
+   452→                {c: float(X.iloc[0][c]) for c in X.columns if str(X[c].dtype) != "category"}
+   453→                if proba is not None
+   454→                else {}
+   455→            )
+   456→            # Day 2 Track F — generate the prediction_id ONCE so the case
+   457→            # row, the audit record's stream publish, and the response body
+   458→            # all share the same identifier. Track B's original code passed
+   459→            # ``prediction_id="pending"`` to ``open_case`` and generated the
+   460→            # real UUID inline in the body dict — that inconsistency meant
+   461→            # stream consumers couldn't correlate a ``risk.scores`` message
+   462→            # to a ``cases.created`` message (different prediction_id on
+   463→            # each). Now the UUID is canonical across the case, the stream,
+   464→            # and the response.
+   465→            prediction_id = str(uuid.uuid4())
+   466→            case_id = None
+   467→            if decision == "REVIEW":
+   468→                case_id = state["cases"].open_case(
+   469→                    prediction_id=prediction_id, order_id=order.order_id,
+   470→                    reason=(
+   471→                        f"mandate:{mandate_payload.get('verdict_reason')}"
+   472→                        if decision_source == "mandate_review_required"
+   473→                        else "review_gate" if fired is None
+   474→                        else f"rule:{fired.rule_id}"
+   475→                    ),
+   476→                )
+   477→            # Audit payload (Day 1 Track D — V3 §13 mandate action-class
+   478→            # expansion). The new fields surface OC-201B compliance metadata
+   479→            # in the tamper-evident hash chain: ``mandate_type``,
+   480→            # ``bh_purpose_code``, ``device_id``, ``user_id``, and the
+   481→            # machine-readable ``mandate_verdict_reason``. The audit logger
+   482→            # (Track E Day 2) stores arbitrary JSON payloads; we just pass
+   483→            # the new keys through — no logger.py modification needed.
+   484→            audit_id = state["audit"].log(
+   485→                {
+   486→                    "request": {
+   487→                        **order.model_dump(),
+   488→                        "customer_id": redact_customer(order.customer_id),
+   489→                    },
+   490→                    "probability": round(proba, 5) if proba is not None else None,
+   491→                    "decision": decision,
+   492→                    "decision_source": decision_source,
+   493→                    "cost_breakdown": cost_breakdown,
+   494→                    "reason_codes": reasons[:5],
+   495→                    "mandate_verdict": mandate_verdict,
+   496→                    "mandate_verdict_reason": mandate_payload.get("verdict_reason"),
+   497→                    "mandate_type": mandate_payload.get("mandate_type"),
+   498→                    "bh_purpose_code": mandate_payload.get("bh_purpose_code"),
+   499→                    "device_id": x_device_id,
+   500→                    "user_id": x_user_id,
+   501→                    "breach_note": breach_note,
+   502→                    "rule_fired": rule_fired,
+   503→                    "degraded": degraded,
+   504→                    "features_used": features_used,
+   505→                    "latency_ms": now_ms(t0),
+   506→                    # Day 2 Track G — store the prediction_id in the audit
+   507→                    # body so /v1/feedback/ingest can look up the predicted
+   508→                    # P(RTO) for a given prediction_id (file mode:
+   509→                    # AuditLogger.tail() scan; Postgres mode:
+   510→                    # jsonb_path_query on the audit_records.body column).
+   511→                    # Additive — doesn't touch the decision logic, just
+   512→                    # enriches the audit record with the canonical
+   513→                    # correlation key the feedback endpoint needs.
+   514→                    "prediction_id": prediction_id,
+   515→                    "case_id": case_id,
+   516→                }
+   517→            )
+   518→            # Day 2 Track F — fire-and-forget Redis Streams publishes. After
+   519→            # the audit hash-chain append + case open, publish to:
+   520→            #   * ``risk.scores`` — every decision (the streaming-processor
+   521→            #     worker consumes this for TFX-style ``generate_data_statistics``
+   522→            #     + anomaly → ``model.drift``)
+   523→            #   * ``audit.records`` — every audit record (audit-tail worker
+   524→            #     for fan-out to dashboard / compliance export — Track I/H)
+   525→            #   * ``cases.created`` — REVIEW decisions only (case-queue
+   526→            #     worker for SLA timers + assignment — Track H)
+   527→            # All three are fire-and-forget: ``StreamProducer.publish``
+   528→            # returns None silently if REDIS_URL is unset (test mode) or
+   529→            # Redis is down. The response body is unaffected. The full
+   530→            # transactional outbox (V3 §10.3) is deferred — see worklog.
+   531→            state["stream"].publish(
+   532→                STREAM_RISK_SCORES,
+   533→                {
+   534→                    "prediction_id": prediction_id,
+   535→                    "order_id": order.order_id,
+   536→                    "decision": decision or "",
+   537→                    "score": "" if proba is None else f"{float(proba):.6f}",
+   538→                    "decision_source": decision_source,
+   539→                    "model_version": state["audit"].model_version,
+   540→                    "ts": datetime.now(timezone.utc).isoformat(),
+   541→                },
+   542→            )
+   543→            state["stream"].publish(
+   544→                STREAM_AUDIT_RECORDS,
+   545→                {
+   546→                    "audit_id": audit_id,
+   547→                    "prediction_id": prediction_id,
+   548→                    "decision": decision or "",
+   549→                    "ts": datetime.now(timezone.utc).isoformat(),
+   550→                },
+   551→            )
+   552→            if decision == "REVIEW" and case_id is not None:
+   553→                state["stream"].publish(
+   554→                    STREAM_CASES_CREATED,
+   555→                    {
+   556→                        "case_id": case_id,
+   557→                        "prediction_id": prediction_id,
+   558→                        "order_id": order.order_id,
+   559→                        "reason": (
+   560→                            f"mandate:{mandate_payload.get('verdict_reason')}"
+   561→                            if decision_source == "mandate_review_required"
+   562→                            else "review_gate" if fired is None
+   563→                            else f"rule:{fired.rule_id}"
+   564→                        ),
+   565→                        "ts": datetime.now(timezone.utc).isoformat(),
+   566→                    },
+   567→                )
+   568→            body = {
+   569→                "prediction_id": prediction_id,
+   570→                "risk_score": round(proba * 100, 1) if proba is not None else None,
+   571→                "probability": round(proba, 4) if proba is not None else None,
+   572→                "decision": decision,
+   573→                # ``gate_thresholds`` now reports the policy in force. Legacy
+   574→                # accept_below / reject_above kept for backward compat — but
+   575→                # the live decision path no longer consults them; it consults
+   576→                # ``optimal_decision(p, weights=...)``. The dashboard reads
+   577→                # ``policy`` to label the decision card.
+   578→                "gate_thresholds": {
+   579→                    "policy": "cost_optimal_bmr",
+   580→                    "weights": DEFAULT_COST_WEIGHTS,
+   581→                    "legacy_accept_t": ACCEPT_T,
+   582→                    "legacy_reject_t": REJECT_T,
+   583→                },
+   584→                "decision_source": decision_source,
+   585→                "cost_breakdown": cost_breakdown,
+   586→                "explanation": reasons[:5],
+   587→                "rule_fired": rule_fired,
+   588→                "degraded": degraded,
+   589→                "policy_hint": policy_hint,
+   590→                "model_version": "rules_only"
+   591→                if degraded
+   592→                else (current_champion() or {"version": state["audit"].model_version})["version"],
+   593→                "latency_ms": now_ms(t0),
+   594→                "case_id": case_id,
+   595→                "mandate": {
+   596→                    "verdict": mandate_verdict,
+   597→                    "note": breach_note,
+   598→                    # Day 1 Track D — V3 §13: surface OC-201B compliance metadata
+   599→                    # to the agent / dashboard so the consumer can see WHY
+   600→                    # the mandate verdict landed (e.g. "cooling_period_active"
+   601→                    # vs "device_id_not_allowed") and WHICH mandate type fired.
+   602→                    "verdict_reason": mandate_payload.get("verdict_reason"),
+   603→                    "mandate_type": mandate_payload.get("mandate_type"),
+   604→                    "bh_purpose_code": mandate_payload.get("bh_purpose_code"),
+   605→                },
+   606→                "audit_trail_url": f"/audit/{audit_id}",
+   607→                "timestamp": datetime.now(timezone.utc).isoformat(),
+   608→            }
+   609→            state["metrics"].inc(
+   610→                "risk_decisions_total", {"decision": decision, "degraded": str(degraded)}
+   611→            )
+   612→            state["metrics"].observe_latency(now_ms(t0) / 1000)
+   613→            # Day 2 Track E — store the response in the idempotency cache.
+   614→            # File mode: TTLCache (auto-expires after settings.idem_ttl_seconds;
+   615→            # bounded to settings.idem_maxsize). Postgres mode: INSERT into
+   616→            # ``idempotency_keys`` with expires_at = NOW() + ttl.
+   617→            if idempotency_key:
+   618→                if settings.is_postgres:
+   619→                    _idem_store_postgres(
+   620→                        state,
+   621→                        idempotency_key,
+   622→                        order.model_dump_json(),
+   623→                        body,
+   624→                        200,
+   625→                    )
+   626→                else:
+   627→                    cache_key = (idempotency_key, order.model_dump_json())
+   628→                    state["idem"][cache_key] = body
+   629→            return body
+   630→        except HTTPException:
+   631→            raise
+   632→        except Exception as e:  # no internal detail leakage
+   633→            incident = uuid.uuid4()
+   634→            print(f"incident={incident} scoring_failed={type(e).__name__}: {e}", file=sys.stderr)
+   635→            raise HTTPException(status_code=500, detail=f"internal_error incident={incident}")
+   636→
+   637→    @app.get("/metrics")
+   638→    def prometheus_metrics() -> dict:
+   639→        from fastapi import Response
+   640→
+   641→        m: Metrics = state["metrics"]
+   642→        state_map = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
+   643→        m.gauge("rto_circuit_state", state_map[state["breaker"].state])
+   644→        # Day 2 Track G — drift detector state gauges (0=STABLE,
+   645→        # 1=WARNING, 2=DRIFT). Fed by LabelFeedbackService.current_state()
+   646→        # which snapshots the in-memory DDM + ADWIN instances. Rendered on
+   647→        # Grafana panels 5 + 6 of the RTO dashboard.
+   648→        try:
+   649→            drift_state = state["feedback"].current_state()
+   650→            m.gauge("rto_drift_ddm_state", drift_state["ddm_state_numeric"])
+   651→            m.gauge("rto_drift_adwin_state", drift_state["adwin_state_numeric"])
+   652→            m.gauge("rto_drift_samples_processed", drift_state["ddm_n"])
+   653→            m.gauge("rto_drift_ddm_p", drift_state["ddm_p"])
+   654→            m.gauge("rto_drift_adwin_window_len", drift_state["adwin_window_len"])
+   655→        except Exception as e:  # pragma: no cover — best-effort metrics
+   656→            print(
+   657→                f"[metrics] drift state snapshot failed: {type(e).__name__}: {e}",
+   658→                file=sys.stderr,
+   659→            )
+   660→        return Response(content=m.render(), media_type="text/plain; version=0.0.4")
+   661→
+   662→    @app.get("/v1/cases")
+   663→    def list_cases(
+   664→        status: str | None = None, authorization: str | None = Header(default=None)
+   665→    ) -> dict:
+   666→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   667→        if not ok:
+   668→            raise HTTPException(status_code=401, detail=err)
+   669→        return {"cases": state["cases"].list_cases(status)}
+   670→
+   671→    @app.post("/v1/cases/{case_id}/resolve")
+   672→    def resolve_case(
+   673→        case_id: str,
+   674→        decision: str,
+   675→        notes: str = "",
+   676→        authorization: str | None = Header(default=None),
+   677→    ) -> dict:
+   678→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   679→        if not ok:
+   680→            raise HTTPException(status_code=403, detail="case resolution requires admin scope")
+   681→        try:
+   682→            out = state["cases"].resolve(case_id, decision.upper(), notes, actor="admin")
+   683→        except ValueError as e:
+   684→            raise HTTPException(status_code=422, detail=str(e))
+   685→        return out
+   686→
+   687→    @app.get("/v1/models/current")
+   688→    def models_current(authorization: str | None = Header(default=None)) -> dict:
+   689→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   690→        if not ok:
+   691→            raise HTTPException(status_code=401, detail=err)
+   692→        return {"champion": current_champion()}
+   693→
+   694→    @app.get("/v1/models/drift")
+   695→    def models_drift(authorization: str | None = Header(default=None)) -> dict:
+   696→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   697→        if not ok:
+   698→            raise HTTPException(status_code=401, detail=err)
+   699→        recent = [
+   700→            r.get("features_used", {})
+   701→            for r in _read_audit_tail(state["audit"], limit=300)
+   702→            if r.get("features_used")
+   703→        ]
+   704→        if len(recent) < 30:
+   705→            return {"status": "insufficient_data", "observed": len(recent), "psi": {}}
+   706→        report = {}
+   707→        for col, ref in state["psi_sample"].items():
+   708→            obs = [r[col] for r in recent if col in r]
+   709→            if len(obs) >= 10:
+   710→                report[col] = round(psi(ref, obs), 4)
+   711→        worst = max(report.values(), default=0.0)
+   712→        status = "OK" if worst < 0.1 else ("WARNING" if worst <= 0.25 else "CRITICAL")
+   713→        return {"status": status, "n_observed": len(recent), "psi": report}
+   714→
+   715→    @app.get("/v1/compliance/audit-export")
+   716→    def audit_export(authorization: str | None = Header(default=None)) -> dict:
+   717→        import csv
+   718→        import io
+   719→
+   720→        from fastapi import Response
+   721→
+   722→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   723→        if not ok:
+   724→            raise HTTPException(status_code=401, detail=err)
+   725→        records = _read_audit_tail(state["audit"], limit=100000)
+   726→        buf = io.StringIO()
+   727→        if records:
+   728→            w = csv.DictWriter(buf, fieldnames=list(records[0].keys()), extrasaction="ignore")
+   729→            w.writeheader()
+   730→            w.writerows(records)
+   731→        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+   732→        return Response(
+   733→            content=buf.getvalue(),
+   734→            media_type="text/csv",
+   735→            headers={"Content-Disposition": f'attachment; filename="audit-export-{stamp}.csv"'},
+   736→        )
+   737→
+   738→    @app.get("/v1/compliance/model-card")
+   739→    def model_card(authorization: str | None = Header(default=None)) -> dict:
+   740→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   741→        if not ok:
+   742→            raise HTTPException(status_code=401, detail=err)
+   743→        champ = current_champion()
+   744→        return {
+   745→            "model_name": "RTO Trust Layer scorer",
+   746→            "model_type": "HistGradientBoostingClassifier (sklearn)",
+   747→            "version": champ["version"] if champ else state["audit"].model_version,
+   748→            "metrics_at_registration": champ["metrics"] if champ else {},
+   749→            "training_data": (
+   750→                "CODScore synthetic-but-realistic COD orders "
+   751→                "(7235 rows); real-data upgrade path documented"
+   752→            ),
+   753→            "label_definition": "DeliveryStatus == Returned -> is_returned=1",
+   754→            "split_discipline": "customer-grouped holdout; group leakage asserted 0",
+   755→            "primary_metric": "PR-AUC (class imbalance ~23% positives)",
+   756→            "intended_use": "pre-dispatch COD return-risk gating with human-in-the-loop review",
+   757→            "limitations": [
+   758→                "synthetic training data; validate before production use",
+   759→                "no address-string features in this dataset revision",
+   760→                "state-level geo features showed no lift (see E3)",
+   761→            ],
+   762→            "ethical_notes": "defense-only tool; every decision explainable + hash-chained audited",
+   763→        }
+   764→
+   765→    @app.get("/health")
+   766→    def health() -> dict:
+   767→        return {
+   768→            "status": "ok",
+   769→            "model_loaded": state.get("model") is not None,
+   770→            "circuit_state": state["breaker"].state,
+   771→            "active_rules": len(state["rules"].list_active()),
+   772→            "version": app.version,
+   773→        }
+   774→
+   775→    @app.get("/v1/rules")
+   776→    def list_rules(authorization: str | None = Header(default=None)) -> dict:
+   777→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   778→        if not ok:
+   779→            raise HTTPException(status_code=401, detail=err)
+   780→        return {"rules": state["rules"].list_active()}
+   781→
+   782→    @app.post("/v1/rules")
+   783→    def add_rule(rule: RuleIn, authorization: str | None = Header(default=None)) -> dict:
+   784→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   785→        if not ok:
+   786→            raise HTTPException(status_code=403, detail="rule changes require admin scope")
+   787→        state["rules"].add(
+   788→            Rule(
+   789→                rule_id=rule.rule_id,
+   790→                name=rule.name,
+   791→                field=rule.field,
+   792→                op=rule.op,
+   793→                value=rule.value,
+   794→                action=rule.action,
+   795→                priority=rule.priority,
+   796→                created_by=rule.created_by,
+   797→            )
+   798→        )
+   799→        state["audit"].log(
+   800→            {"request": {"rule_id": rule.rule_id}, "decision": "RULE_ADDED"}
+   801→        )
+   802→        return {"added": rule.rule_id}
+   803→
+   804→    @app.delete("/v1/rules/{rule_id}")
+   805→    def delete_rule(rule_id: str, authorization: str | None = Header(default=None)) -> dict:
+   806→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   807→        if not ok:
+   808→            raise HTTPException(status_code=403, detail="rule changes require admin scope")
+   809→        removed = state["rules"].remove(rule_id)
+   810→        return {"removed": removed}
+   811→
+   812→    @app.get("/v1/policy/optimal")
+   813→    def policy_optimal(
+   814→        probability: float,
+   815→        c_fp: float = 50,
+   816→        c_fn: float = 600,
+   817→        authorization: str | None = Header(default=None),
+   818→    ) -> dict:
+   819→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   820→        if not ok:
+   821→            raise HTTPException(status_code=401, detail=err)
+   822→        if not (0 <= probability <= 1):
+   823→            raise HTTPException(status_code=422, detail="probability must be in [0,1]")
+   824→        decision, costs = optimal_decision(probability, c_fp=c_fp, c_fn=c_fn)
+   825→        return {"probability": probability, "optimal_action": decision, "expected_costs": costs}
+   826→
+   827→    # OpenAPI: this endpoint will appear in docs/openapi.json after next FastAPI
+   828→    # app reload (openapi.json is auto-generated from the FastAPI routes — Track
+   829→    # H / K will refresh it on Day 2/3 with the full path schema + examples).
+   830→    @app.get("/v1/policy/cost-curves")
+   831→    def policy_cost_curves(
+   832→        n_resamples: int = DEFAULT_COST_CURVE_RESAMPLES,
+   833→        confidence: float = DEFAULT_COST_CURVE_CONFIDENCE,
+   834→        authorization: str | None = Header(default=None),
+   835→    ) -> dict:
+   836→        """Drummond-Holte cost-curve explorer (Machine Learning 65:95-130, 2006,
+   837→        DOI 10.1007/s10994-006-8199-5).
+   838→
+   839→        Returns a threshold sweep (0.05 → 0.95) over the labeled dataset that
+   840→        the in-process model was trained on. For each threshold we report the
+   841→        confusion counts, total Bahnsen cost (Eq. 1), precision, recall, plus
+   842→        a 90% bootstrap CI on cost (≥500 resamples preserving row marginals —
+   843→        per Drummond-Holte ``bootstrap_performance_ci`` capability).
+   844→
+   845→        The dashboard cost-curve explorer consumes this endpoint to render
+   846→        real bars (replacing the previously-hardcoded ``COSTS`` array).
+   847→
+   848→        Auth: scorer scope. Returns 503 if the model isn't loaded or no
+   849→        labeled data is available — never crashes the dashboard.
+   850→        """
+   851→        ok, err = check_key(bearer_token(authorization), "scorer", state["keys"])
+   852→        if not ok:
+   853→            raise HTTPException(status_code=401, detail=err)
+   854→
+   855→        # 1. Guard: model must be loaded (circuit breaker may be OPEN).
+   856→        if state.get("model") is None:
+   857→            raise HTTPException(
+   858→                status_code=503,
+   859→                detail="cost curves unavailable — model not loaded",
+   860→            )
+   861→        # 2. Guard: pre-computed labeled data must exist (startup warmup may
+   862→        # have failed silently; surface a clear error to the dashboard).
+   863→        cc = state.get("cost_curve")
+   864→        if not cc or not cc.get("y_true") or not cc.get("probs"):
+   865→            raise HTTPException(
+   866→                status_code=503,
+   867→                detail="cost curves unavailable — no labeled data available",
+   868→            )
+   869→        if n_resamples < 1 or n_resamples > 5000:
+   870→            raise HTTPException(
+   871→                status_code=422,
+   872→                detail="n_resamples must be in [1, 5000]",
+   873→            )
+   874→        if not (0.5 < confidence < 0.999):
+   875→            raise HTTPException(
+   876→                status_code=422,
+   877→                detail="confidence must be in (0.5, 0.999)",
+   878→            )
+   879→
+   880→        y_true = cc["y_true"]
+   881→        probs = cc["probs"]
+   882→        weights = DEFAULT_COST_WEIGHTS
+   883→        c_fp = float(weights["c_fp"])
+   884→        c_fn = float(weights["c_fn"])
+   885→
+   886→        # 3. Threshold sweep → per-threshold confusion + cost + precision +
+   887→        #    recall (pure-Python, O(N*T); ~140k ops for 7235 rows × 19 thr).
+   888→        curves = cost_curve_sweep(
+   889→            y_true=y_true,
+   890→            probs=probs,
+   891→            c_fp=c_fp,
+   892→            c_fn=c_fn,
+   893→        )
+   894→
+   895→        # 4. Bootstrap CI per threshold (Drummond-Holte row-marginal-preserving
+   896→        #    resampling; ~3-5 sec for 500 resamples × 19 thr × 7235 samples).
+   897→        try:
+   898→            bootstrap_ci = bootstrap_cost_ci(
+   899→                y_true=y_true,
+   900→                probs=probs,
+   901→                c_fp=c_fp,
+   902→                c_fn=c_fn,
+   903→                n_resamples=n_resamples,
+   904→                confidence=confidence,
+   905→                seed=42,
+   906→            )
+   907→        except Exception as e:  # pragma: no cover — defensive
+   908→            # If bootstrap fails for any reason, return degenerate CIs and a
+   909→            # warning rather than 500-ing the dashboard.
+   910→            bootstrap_ci = {
+   911→                str(r["threshold"]): {"low": 0.0, "high": 0.0, "mean": 0.0}
+   912→                for r in curves
+   913→            }
+   914→            print(
+   915→                f"cost-curves bootstrap degraded: {type(e).__name__}: {e}",
+   916→                file=sys.stderr,
+   917→            )
+   918→
+   919→        # 5. Optimal threshold = the one minimizing total cost (this is the
+   920→        #    threshold analog of what ``optimal_decision()`` does per order).
+   921→        optimal_record = min(curves, key=lambda r: r["cost"])
+   922→        optimal_threshold = float(optimal_record["threshold"])
+   923→
+   924→        # 6. Cost crossover: if a challenger model is registered in the model
+   925→        #    registry, find the threshold where it beats the incumbent. For
+   926→        #    now there is one in-process model so this is a degenerate case —
+   927→        #    the incumbent *is* the only model. We still surface the field so
+   928→        #    the dashboard wiring is forward-compatible with Day 2 Track E.
+   929→        cost_crossover: dict | None = None
+   930→        try:
+   931→            challenger = None
+   932→            champ = current_champion()
+   933→            # When more than one model is registered, treat the latest
+   934→            # non-champion as the challenger. (For now: single model, None.)
+   935→            if champ is not None:
+   936→                from src.ml.registry import load_registry
+   937→                reg = load_registry()
+   938→                non_champ = [m for m in reg.get("models", []) if not m.get("is_champion")]
+   939→                challenger = non_champ[-1] if non_champ else None
+   940→            if challenger is not None and challenger.get("version") != (champ or {}).get("version"):
+   941→                # We don't have challenger probabilities pre-computed yet
+   942→                # (single-model registry). Surface a placeholder that the
+   943→                # dashboard renders as "single-model — no crossover yet".
+   944→                cost_crossover = {
+   945→                    "status": "single_model",
+   946→                    "incumbent_version": (champ or {}).get("version"),
+   947→                    "challenger_version": None,
+   948→                    "crossover_threshold": None,
+   949→                    "note": (
+   950→                        "challenger predictions not pre-computed; "
+   951→                        "wire Day 2 Track E model-registry to enable"
+   952→                    ),
+   953→                }
+   954→            else:
+   955→                cost_crossover = {
+   956→                    "status": "single_model",
+   957→                    "incumbent_version": (champ or {}).get("version"),
+   958→                    "challenger_version": None,
+   959→                    "crossover_threshold": None,
+   960→                    "note": "only one model registered; no crossover available",
+   961→                }
+   962→        except Exception:  # pragma: no cover — defensive
+   963→            cost_crossover = {"status": "error", "crossover_threshold": None}
+   964→
+   965→        return {
+   966→            "thresholds": [r["threshold"] for r in curves],
+   967→            "curves": curves,
+   968→            "bootstrap_ci": bootstrap_ci,
+   969→            "optimal_threshold": optimal_threshold,
+   970→            "cost_crossover": cost_crossover,
+   971→            "cost_model": {
+   972→                "c_fp": c_fp,
+   973→                "c_fn": c_fn,
+   974→                "c_otp": float(weights["c_otp"]),
+   975→                "c_block": float(weights["c_block"]),
+   976→                "otp_effectiveness": float(weights["otp_effectiveness"]),
+   977→                "source_paper": "Bahnsen ICMLA 2013, DOI 10.1109/ICMLA.2013.68",
+   978→                "curve_paper": "Drummond & Holte 2006, DOI 10.1007/s10994-006-8199-5",
+   979→            },
+   980→            "data_source": cc.get("source", "unknown"),
+   981→            "n_samples": int(cc.get("n", 0)),
+   982→            "n_pos": int(sum(y_true)),
+   983→            "n_neg": int(len(y_true) - sum(y_true)),
+   984→        }
+   985→
+   986→    @app.get("/v1/audit/verify-chain")
+   987→    def verify_chain(authorization: str | None = Header(default=None)) -> dict:
+   988→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+   989→        if not ok:
+   990→            raise HTTPException(status_code=401, detail=err)
+   991→        chain_ok, n, bad_id = state["audit"].verify_chain()
+   992→        return {"intact": chain_ok, "records_checked": n, "first_bad_audit_id": bad_id}
+   993→
+   994→    @app.post("/v1/mandates")
+   995→    def create_mandate(
+   996→        customer_ref: str,
+   997→        max_amount_inr: float,
+   998→        ttl_seconds: int = 3600,
+   999→        authorization: str | None = Header(default=None),
+  1000→        # Day 1 Track D — V3 §13 / NPCI OC-201B: optional UPI Circle
+  1001→        # delegation params. When ``mandate_type=upi_circle_delegation`` the
+  1002→        # admin mints a bounded UPI Circle mandate carrying the circular's
+  1003→        # hard caps (₹5,000/txn, ₹15,000/month, ₹5,000 24h cooling) + the
+  1004→        # device/user identity chain + BH purpose code. Defaults match the
+  1005→        # OC-201B numeric limits.
+  1006→        mandate_type: str | None = None,
+  1007→        device_ids: str | None = None,
+  1008→        user_id: str | None = None,
+  1009→        bh_purpose_code: str | None = None,
+  1010→        max_per_txn_inr: float | None = None,
+  1011→        max_per_month_inr: float | None = None,
+  1012→        cooling_24h_inr: float | None = None,
+  1013→        inactivity_revoke_days: int | None = None,
+  1014→    ) -> dict:
+  1015→        """Merchant backend (admin scope) mints bounded agent mandates.
+  1016→
+  1017→        ``cod_order`` (default): the original HMAC system. ``upi_circle_delegation``
+  1018→        (Day 1 Track D): OC-201B-compliant UPI Circle delegation mandate with
+  1019→        per-txn / per-month / 24h-cooling caps + device_id/user_id identity
+  1020→        chain + BH purpose code tagging.
+  1021→        """
+  1022→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+  1023→        if not ok:
+  1024→            raise HTTPException(status_code=401, detail=err)
+  1025→        if not (1 <= max_amount_inr <= 1_000_000):
+  1026→            raise HTTPException(status_code=422, detail="mandate bound out of range")
+  1027→        if not (30 <= ttl_seconds <= 86_400):
+  1028→            raise HTTPException(status_code=422, detail="ttl out of range")
+  1029→        # OC-201B: max 5 devices per delegation. Accept comma-separated list.
+  1030→        device_id_list: list[str] = []
+  1031→        if device_ids:
+  1032→            device_id_list = [d.strip() for d in device_ids.split(",") if d.strip()]
+  1033→            if len(device_id_list) > 5:
+  1034→                raise HTTPException(
+  1035→                    status_code=422,
+  1036→                    detail="OC-201B: max 5 devices per delegation",
+  1037→                )
+  1038→        try:
+  1039→            mandate = issue_mandate(
+  1040→                customer_ref,
+  1041→                max_amount_inr,
+  1042→                ttl_seconds,
+  1043→                mandate_type=mandate_type,
+  1044→                device_ids=device_id_list or None,
+  1045→                user_id=user_id,
+  1046→                bh_purpose_code=bh_purpose_code,
+  1047→                max_per_txn_inr=max_per_txn_inr,
+  1048→                max_per_month_inr=max_per_month_inr,
+  1049→                cooling_24h_inr=cooling_24h_inr,
+  1050→                inactivity_revoke_days=inactivity_revoke_days,
+  1051→            )
+  1052→        except ValueError as e:
+  1053→            raise HTTPException(status_code=422, detail=str(e))
+  1054→        return {
+  1055→            "mandate": mandate,
+  1056→            "max_amount_inr": max_amount_inr,
+  1057→            "ttl_seconds": ttl_seconds,
+  1058→            "mandate_type": mandate_type or "cod_order",
+  1059→            "device_ids": device_id_list,
+  1060→            "user_id": user_id,
+  1061→            "bh_purpose_code": bh_purpose_code,
+  1062→            "note": "agents cannot mint or widen mandates",
+  1063→        }
+  1064→
+  1065→    @app.post("/risk/{prediction_id}/override")
+  1066→    def override(
+  1067→        prediction_id: str,
+  1068→        new_decision: str,
+  1069→        authorization: str | None = Header(default=None),
+  1070→    ) -> dict:
+  1071→        """Human-in-the-loop overrides are admin-scope only. Agents can never self-approve."""
+  1072→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+  1073→        if not ok:
+  1074→            raise HTTPException(
+  1075→                status_code=403, detail="decision override requires admin scope"
+  1076→            )
+  1077→        if new_decision not in {"ACCEPT", "REVIEW", "REJECT"}:
+  1078→            raise HTTPException(status_code=422, detail="invalid decision")
+  1079→        audit_id = state["audit"].log(
+  1080→            {
+  1081→                "request": {"prediction_id": prediction_id},
+  1082→                "decision": new_decision,
+  1083→                "breach_note": "manual_override_by_admin",
+  1084→            }
+  1085→        )
+  1086→        return {"overridden": prediction_id, "new_decision": new_decision, "audit_id": audit_id}
+  1087→
+  1088→    @app.get("/audit/{audit_id}")
+  1089→    def get_audit(
+  1090→        audit_id: str, authorization: str | None = Header(default=None)
+  1091→    ) -> dict:
+  1092→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+  1093→        if not ok:
+  1094→            raise HTTPException(status_code=401, detail=err)
+  1095→        rec = state["audit"].read(audit_id)
+  1096→        if rec is None:
+  1097→            raise HTTPException(status_code=404, detail="audit record not found")
+  1098→        return rec
+  1099→
+  1100→    # Day 2 Track G — closes §A item 18 (feedback loop) + §D P3 (formal
+  1101→    # drift detection) + §D P4 (shadow-retrain trigger) + perceived-gap
+  1102→    # driver G3 (partial — PSI reference population deferred). Source:
+  1103→    # Gama et al., "A Survey on Concept Drift Adaptation",
+  1104→    # ACM Computing Surveys (CSUR) 46(4), Article 44, March 2014,
+  1105→    # DOI 10.1145/2523813. The endpoint ingests delayed is_returned labels
+  1106→    # (chargeback-style delay, days-weeks after the prediction), runs DDM
+  1107→    # + ADWIN on the resulting error stream, and on DRIFT fires a
+  1108→    # retrain_request notification to the ``notifications`` Redis Stream
+  1109→    # (consumer-side run-length heuristic via the drift-consumer worker).
+  1110→    @app.post("/v1/feedback/ingest", tags=["feedback"])
+  1111→    def ingest_feedback(
+  1112→        payload: FeedbackIn,
+  1113→        authorization: str | None = Header(default=None),
+  1114→    ) -> dict:
+  1115→        """Ingest a delayed ``is_returned`` ground-truth label.
+  1116→
+  1117→        Auth: admin scope (merchants can't self-report labels — prevents
+  1118→        label poisoning). Looks up the prediction's recorded ``P(RTO)``
+  1119→        from the audit log, computes the error indicator (1 if the
+  1120→        prediction was wrong), updates the in-memory DDM + ADWIN
+  1121→        detectors, and on DRIFT fires a ``retrain_request`` notification.
+  1122→
+  1123→        Returns the current detector state + the per-prediction error so
+  1124→        the dashboard / ops console can surface the live drift status.
+  1125→        """
+  1126→        ok, err = check_key(bearer_token(authorization), "admin", state["keys"])
+  1127→        if not ok:
+  1128→            raise HTTPException(
+  1129→                status_code=403,
+  1130→                detail="feedback ingestion requires admin scope (label poisoning prevention)",
+  1131→            )
+  1132→        # Look up the prediction's recorded P(RTO) by scanning recent audit
+  1133→        # records for the prediction_id we just enriched the audit body with
+  1134→        # (file mode: tail-scan; Postgres mode: the same tail() goes to
+  1135→        # ``SELECT body FROM audit_records ORDER BY id DESC LIMIT %s``).
+  1136→        # Scanning the last 5000 audit records is plenty for the demo —
+  1137→        # labels arrive days-weeks after the prediction, so the prediction
+  1138→        # is comfortably within the last 5000 by then. At scale, a
+  1139→        # jsonb_path_query on audit_records.body->prediction_id would
+  1140→        # be the right index (deferred — Track H V3 §10.3 work).
+  1141→        predicted_p: float | None = None
+  1142→        for rec in _read_audit_tail(state["audit"], limit=5000):
+  1143→            if rec.get("prediction_id") == payload.prediction_id:
+  1144→                # The audit body's ``probability`` field is the model's
+  1145→                # P(RTO) rounded to 5 decimals (see /risk/score).
+  1146→                p = rec.get("probability")
+  1147→                if p is not None:
+  1148→                    try:
+  1149→                        predicted_p = float(p)
+  1150→                    except (TypeError, ValueError):
+  1151→                        predicted_p = None
+  1152→                break
+  1153→        # If the prediction can't be found, ingest_label still runs —
+  1154→        # the error indicator defaults to 0 (no contribution to drift)
+  1155→        # and the response carries ``prediction_not_found: True`` so the
+  1156→        # caller can see the lookup missed (e.g. the prediction_id was
+  1157→        # wrong, or the audit record aged out of the tail window).
+  1158→        result = state["feedback"].ingest_label(
+  1159→            prediction_id=payload.prediction_id,
+  1160→            is_returned=payload.is_returned,
+  1161→            predicted_p=predicted_p,
+  1162→        )
+  1163→        return {"status": "ingested", **result}
+  1164→
+  1165→    dashboard_dir = Path(__file__).resolve().parents[2] / "dashboard"
+  1166→    if dashboard_dir.exists():
+  1167→        from fastapi.staticfiles import StaticFiles
+  1168→
+  1169→        app.mount(
+  1170→            "/dashboard",
+  1171→            StaticFiles(directory=str(dashboard_dir), html=True),
+  1172→            name="dashboard",
+  1173→        )
+  1174→
+  1175→    return app
+  1176→
+  1177→
+  1178→def _log1p(x: float) -> float:
+  1179→    import math
+  1180→
+  1181→    return math.log1p(x)
+  1182→
+  1183→
+  1184→def _read_audit_tail(audit_logger, limit: int = 300) -> list[dict]:
+  1185→    """Return the last ``limit`` audit records (chronological order).
+  1186→
+  1187→    Day 2 Track E — now uses ``AuditLogger.tail(limit)`` so both file mode
+  1188→    (JSONL tail) and Postgres mode (``SELECT body FROM audit_records ORDER
+  1189→    BY id DESC LIMIT %s``) work. The previous direct-read of
+  1190→    ``audit_logger.path`` only worked in file mode.
+  1191→    """
+  1192→    return audit_logger.tail(limit)
+  1193→
+  1194→
+  1195→# --------------------------------------------------------------------- #
+  1196→# Idempotency helpers (Postgres mode only — file mode uses TTLCache)   #
+  1197→# --------------------------------------------------------------------- #
+  1198→
+  1199→def _idem_get_conn(state: dict):
+  1200→    """Lazily-open a dedicated psycopg connection for the idempotency cache.
+  1201→
+  1202→    Separate from the AuditLogger / CaseService / model-registry connections
+  1203→    so a slow idempotency lookup can't block an audit write. The connection
+  1204→    is cached on ``state`` so we don't pay the connect-handshake cost on
+  1205→    every request.
+  1206→    """
+  1207→    conn = state.get("_idem_conn")
+  1208→    if conn is not None:
+  1209→        return conn
+  1210→    import psycopg
+  1211→
+  1212→    conn = psycopg.connect(state["settings"].database_url, autocommit=False)
+  1213→    state["_idem_conn"] = conn
+  1214→    return conn
+  1215→
+  1216→
+  1217→def _idem_lookup_postgres(state: dict, key: str | None) -> dict | None:
+  1218→    """Read a cached idempotent response. Returns the body dict (parsed from
+  1219→    the JSONB-stored response_body TEXT column) or None if not cached /
+  1220→    expired. ``expires_at > NOW()`` is the TTL gate.
+  1221→    """
+  1222→    if not key:
+  1223→        return None
+  1224→    import json as _json
+  1225→
+  1226→    conn = _idem_get_conn(state)
+  1227→    with conn.cursor() as cur:
+  1228→        cur.execute(
+  1229→            """
+  1230→            SELECT response_body, status_code
+  1231→              FROM idempotency_keys
+  1232→             WHERE key = %s AND expires_at > NOW()
+  1233→            """,
+  1234→            (key,),
+  1235→        )
+  1236→        row = cur.fetchone()
+  1237→    if row is None:
+  1238→        return None
+  1239→    body, _status = row
+  1240→    return _json.loads(body)
+  1241→
+  1242→
+  1243→def _idem_store_postgres(
+  1244→    state: dict,
+  1245→    key: str,
+  1246→    request_body: str,
+  1247→    response_body: dict,
+  1248→    status_code: int,
+  1249→) -> None:
+  1250→    """INSERT an idempotency cache row. TTL = NOW() + settings.idem_ttl_seconds."""
+  1251→    import json as _json
+  1252→    from datetime import datetime, timedelta, timezone
+  1253→
+  1254→    conn = _idem_get_conn(state)
+  1255→    expires = datetime.now(timezone.utc) + timedelta(seconds=state["settings"].idem_ttl_seconds)
+  1256→    with conn.cursor() as cur:
+  1257→        # ON CONFLICT DO UPDATE so a re-store of the same key (e.g. a slow
+  1258→        # retry that lands after the original INSERT) refreshes expires_at
+  1259→        # rather than erroring.
+  1260→        cur.execute(
+  1261→            """
+  1262→            INSERT INTO idempotency_keys
+  1263→              (key, request_body, response_body, status_code, expires_at)
+  1264→            VALUES (%s, %s, %s, %s, %s)
+  1265→            ON CONFLICT (key) DO UPDATE SET
+  1266→              request_body  = EXCLUDED.request_body,
+  1267→              response_body = EXCLUDED.response_body,
+  1268→              status_code   = EXCLUDED.status_code,
+  1269→              expires_at    = EXCLUDED.expires_at
+  1270→            """,
+  1271→            (key, request_body, _json.dumps(response_body), status_code, expires),
+  1272→        )
+  1273→        conn.commit()
+  1274→
+  1275→
+  1276→def _idem_cleanup_postgres(state: dict) -> None:
+  1277→    """Best-effort TTL cleanup. Called with 1% probability per request so the
+  1278→    table doesn't grow forever under burst traffic.
+  1279→    """
+  1280→    conn = _idem_get_conn(state)
+  1281→    try:
+  1282→        with conn.cursor() as cur:
+  1283→            cur.execute("DELETE FROM idempotency_keys WHERE expires_at < NOW()")
+  1284→            conn.commit()
+  1285→    except Exception:  # pragma: no cover — best-effort, never fail the request
+  1286→        try:
+  1287→            conn.rollback()
+  1288→        except Exception:
+  1289→            pass
+  1290→

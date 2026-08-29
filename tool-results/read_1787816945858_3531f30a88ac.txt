@@ -1,0 +1,1175 @@
+     1→     1→{
+     2→     2→  "openapi": "3.1.0",
+     3→     3→  "info": {
+     4→     4→    "title": "RTO Trust Layer",
+     5→     5→    "version": "0.2.0"
+     6→     6→  },
+     7→     7→  "paths": {
+     8→     8→    "/risk/score": {
+     9→     9→      "post": {
+    10→    10→        "summary": "Score",
+    11→    11→        "operationId": "score_risk_score_post",
+    12→    12→        "parameters": [
+    13→    13→          {
+    14→    14→            "name": "authorization",
+    15→    15→            "in": "header",
+    16→    16→            "required": false,
+    17→    17→            "schema": {
+    18→    18→              "anyOf": [
+    19→    19→                {
+    20→    20→                  "type": "string"
+    21→    21→                },
+    22→    22→                {
+    23→    23→                  "type": "null"
+    24→    24→                }
+    25→    25→              ],
+    26→    26→              "title": "Authorization"
+    27→    27→            }
+    28→    28→          },
+    29→    29→          {
+    30→    30→            "name": "idempotency-key",
+    31→    31→            "in": "header",
+    32→    32→            "required": false,
+    33→    33→            "schema": {
+    34→    34→              "anyOf": [
+    35→    35→                {
+    36→    36→                  "type": "string"
+    37→    37→                },
+    38→    38→                {
+    39→    39→                  "type": "null"
+    40→    40→                }
+    41→    41→              ],
+    42→    42→              "title": "Idempotency-Key"
+    43→    43→            }
+    44→    44→          },
+    45→    45→          {
+    46→    46→            "name": "x-mandate",
+    47→    47→            "in": "header",
+    48→    48→            "required": false,
+    49→    49→            "schema": {
+    50→    50→              "anyOf": [
+    51→    51→                {
+    52→    52→                  "type": "string"
+    53→    53→                },
+    54→    54→                {
+    55→    55→                  "type": "null"
+    56→    56→                }
+    57→    57→              ],
+    58→    58→              "title": "X-Mandate"
+    59→    59→            }
+    60→    60→          }
+    61→    61→        ],
+    62→    62→        "requestBody": {
+    63→    63→          "required": true,
+    64→    64→          "content": {
+    65→    65→            "application/json": {
+    66→    66→              "schema": {
+    67→    67→                "$ref": "#/components/schemas/OrderIn"
+    68→    68→              }
+    69→    69→            }
+    70→    70→          }
+    71→    71→        },
+    72→    72→        "responses": {
+    73→    73→          "200": {
+    74→    74→            "description": "Successful Response",
+    75→    75→            "content": {
+    76→    76→              "application/json": {
+    77→    77→                "schema": {
+    78→    78→                  "type": "object",
+    79→    79→                  "additionalProperties": true,
+    80→    80→                  "title": "Response Score Risk Score Post"
+    81→    81→                }
+    82→    82→              }
+    83→    83→            }
+    84→    84→          },
+    85→    85→          "422": {
+    86→    86→            "description": "Validation Error",
+    87→    87→            "content": {
+    88→    88→              "application/json": {
+    89→    89→                "schema": {
+    90→    90→                  "$ref": "#/components/schemas/HTTPValidationError"
+    91→    91→                }
+    92→    92→              }
+    93→    93→            }
+    94→    94→          }
+    95→    95→        }
+    96→    96→      }
+    97→    97→    },
+    98→    98→    "/metrics": {
+    99→    99→      "get": {
+   100→   100→        "summary": "Prometheus Metrics",
+   101→   101→        "operationId": "prometheus_metrics_metrics_get",
+   102→   102→        "responses": {
+   103→   103→          "200": {
+   104→   104→            "description": "Successful Response",
+   105→   105→            "content": {
+   106→   106→              "application/json": {
+   107→   107→                "schema": {
+   108→   108→                  "additionalProperties": true,
+   109→   109→                  "type": "object",
+   110→   110→                  "title": "Response Prometheus Metrics Metrics Get"
+   111→   111→                }
+   112→   112→              }
+   113→   113→            }
+   114→   114→          }
+   115→   115→        }
+   116→   116→      }
+   117→   117→    },
+   118→   118→    "/v1/cases": {
+   119→   119→      "get": {
+   120→   120→        "summary": "List Cases",
+   121→   121→        "operationId": "list_cases_v1_cases_get",
+   122→   122→        "parameters": [
+   123→   123→          {
+   124→   124→            "name": "status",
+   125→   125→            "in": "query",
+   126→   126→            "required": false,
+   127→   127→            "schema": {
+   128→   128→              "anyOf": [
+   129→   129→                {
+   130→   130→                  "type": "string"
+   131→   131→                },
+   132→   132→                {
+   133→   133→                  "type": "null"
+   134→   134→                }
+   135→   135→              ],
+   136→   136→              "title": "Status"
+   137→   137→            }
+   138→   138→          },
+   139→   139→          {
+   140→   140→            "name": "authorization",
+   141→   141→            "in": "header",
+   142→   142→            "required": false,
+   143→   143→            "schema": {
+   144→   144→              "anyOf": [
+   145→   145→                {
+   146→   146→                  "type": "string"
+   147→   147→                },
+   148→   148→                {
+   149→   149→                  "type": "null"
+   150→   150→                }
+   151→   151→              ],
+   152→   152→              "title": "Authorization"
+   153→   153→            }
+   154→   154→          }
+   155→   155→        ],
+   156→   156→        "responses": {
+   157→   157→          "200": {
+   158→   158→            "description": "Successful Response",
+   159→   159→            "content": {
+   160→   160→              "application/json": {
+   161→   161→                "schema": {
+   162→   162→                  "type": "object",
+   163→   163→                  "additionalProperties": true,
+   164→   164→                  "title": "Response List Cases V1 Cases Get"
+   165→   165→                }
+   166→   166→              }
+   167→   167→            }
+   168→   168→          },
+   169→   169→          "422": {
+   170→   170→            "description": "Validation Error",
+   171→   171→            "content": {
+   172→   172→              "application/json": {
+   173→   173→                "schema": {
+   174→   174→                  "$ref": "#/components/schemas/HTTPValidationError"
+   175→   175→                }
+   176→   176→              }
+   177→   177→            }
+   178→   178→          }
+   179→   179→        }
+   180→   180→      }
+   181→   181→    },
+   182→   182→    "/v1/cases/{case_id}/resolve": {
+   183→   183→      "post": {
+   184→   184→        "summary": "Resolve Case",
+   185→   185→        "operationId": "resolve_case_v1_cases__case_id__resolve_post",
+   186→   186→        "parameters": [
+   187→   187→          {
+   188→   188→            "name": "case_id",
+   189→   189→            "in": "path",
+   190→   190→            "required": true,
+   191→   191→            "schema": {
+   192→   192→              "type": "string",
+   193→   193→              "title": "Case Id"
+   194→   194→            }
+   195→   195→          },
+   196→   196→          {
+   197→   197→            "name": "decision",
+   198→   198→            "in": "query",
+   199→   199→            "required": true,
+   200→   200→            "schema": {
+   201→   201→              "type": "string",
+   202→   202→              "title": "Decision"
+   203→   203→            }
+   204→   204→          },
+   205→   205→          {
+   206→   206→            "name": "notes",
+   207→   207→            "in": "query",
+   208→   208→            "required": false,
+   209→   209→            "schema": {
+   210→   210→              "type": "string",
+   211→   211→              "default": "",
+   212→   212→              "title": "Notes"
+   213→   213→            }
+   214→   214→          },
+   215→   215→          {
+   216→   216→            "name": "authorization",
+   217→   217→            "in": "header",
+   218→   218→            "required": false,
+   219→   219→            "schema": {
+   220→   220→              "anyOf": [
+   221→   221→                {
+   222→   222→                  "type": "string"
+   223→   223→                },
+   224→   224→                {
+   225→   225→                  "type": "null"
+   226→   226→                }
+   227→   227→              ],
+   228→   228→              "title": "Authorization"
+   229→   229→            }
+   230→   230→          }
+   231→   231→        ],
+   232→   232→        "responses": {
+   233→   233→          "200": {
+   234→   234→            "description": "Successful Response",
+   235→   235→            "content": {
+   236→   236→              "application/json": {
+   237→   237→                "schema": {
+   238→   238→                  "type": "object",
+   239→   239→                  "additionalProperties": true,
+   240→   240→                  "title": "Response Resolve Case V1 Cases  Case Id  Resolve Post"
+   241→   241→                }
+   242→   242→              }
+   243→   243→            }
+   244→   244→          },
+   245→   245→          "422": {
+   246→   246→            "description": "Validation Error",
+   247→   247→            "content": {
+   248→   248→              "application/json": {
+   249→   249→                "schema": {
+   250→   250→                  "$ref": "#/components/schemas/HTTPValidationError"
+   251→   251→                }
+   252→   252→              }
+   253→   253→            }
+   254→   254→          }
+   255→   255→        }
+   256→   256→      }
+   257→   257→    },
+   258→   258→    "/v1/models/current": {
+   259→   259→      "get": {
+   260→   260→        "summary": "Models Current",
+   261→   261→        "operationId": "models_current_v1_models_current_get",
+   262→   262→        "parameters": [
+   263→   263→          {
+   264→   264→            "name": "authorization",
+   265→   265→            "in": "header",
+   266→   266→            "required": false,
+   267→   267→            "schema": {
+   268→   268→              "anyOf": [
+   269→   269→                {
+   270→   270→                  "type": "string"
+   271→   271→                },
+   272→   272→                {
+   273→   273→                  "type": "null"
+   274→   274→                }
+   275→   275→              ],
+   276→   276→              "title": "Authorization"
+   277→   277→            }
+   278→   278→          }
+   279→   279→        ],
+   280→   280→        "responses": {
+   281→   281→          "200": {
+   282→   282→            "description": "Successful Response",
+   283→   283→            "content": {
+   284→   284→              "application/json": {
+   285→   285→                "schema": {
+   286→   286→                  "type": "object",
+   287→   287→                  "additionalProperties": true,
+   288→   288→                  "title": "Response Models Current V1 Models Current Get"
+   289→   289→                }
+   290→   290→              }
+   291→   291→            }
+   292→   292→          },
+   293→   293→          "422": {
+   294→   294→            "description": "Validation Error",
+   295→   295→            "content": {
+   296→   296→              "application/json": {
+   297→   297→                "schema": {
+   298→   298→                  "$ref": "#/components/schemas/HTTPValidationError"
+   299→   299→                }
+   300→   300→              }
+   301→   301→            }
+   302→   302→          }
+   303→   303→        }
+   304→   304→      }
+   305→   305→    },
+   306→   306→    "/v1/models/drift": {
+   307→   307→      "get": {
+   308→   308→        "summary": "Models Drift",
+   309→   309→        "operationId": "models_drift_v1_models_drift_get",
+   310→   310→        "parameters": [
+   311→   311→          {
+   312→   312→            "name": "authorization",
+   313→   313→            "in": "header",
+   314→   314→            "required": false,
+   315→   315→            "schema": {
+   316→   316→              "anyOf": [
+   317→   317→                {
+   318→   318→                  "type": "string"
+   319→   319→                },
+   320→   320→                {
+   321→   321→                  "type": "null"
+   322→   322→                }
+   323→   323→              ],
+   324→   324→              "title": "Authorization"
+   325→   325→            }
+   326→   326→          }
+   327→   327→        ],
+   328→   328→        "responses": {
+   329→   329→          "200": {
+   330→   330→            "description": "Successful Response",
+   331→   331→            "content": {
+   332→   332→              "application/json": {
+   333→   333→                "schema": {
+   334→   334→                  "type": "object",
+   335→   335→                  "additionalProperties": true,
+   336→   336→                  "title": "Response Models Drift V1 Models Drift Get"
+   337→   337→                }
+   338→   338→              }
+   339→   339→            }
+   340→   340→          },
+   341→   341→          "422": {
+   342→   342→            "description": "Validation Error",
+   343→   343→            "content": {
+   344→   344→              "application/json": {
+   345→   345→                "schema": {
+   346→   346→                  "$ref": "#/components/schemas/HTTPValidationError"
+   347→   347→                }
+   348→   348→              }
+   349→   349→            }
+   350→   350→          }
+   351→   351→        }
+   352→   352→      }
+   353→   353→    },
+   354→   354→    "/v1/compliance/audit-export": {
+   355→   355→      "get": {
+   356→   356→        "summary": "Audit Export",
+   357→   357→        "operationId": "audit_export_v1_compliance_audit_export_get",
+   358→   358→        "parameters": [
+   359→   359→          {
+   360→   360→            "name": "authorization",
+   361→   361→            "in": "header",
+   362→   362→            "required": false,
+   363→   363→            "schema": {
+   364→   364→              "anyOf": [
+   365→   365→                {
+   366→   366→                  "type": "string"
+   367→   367→                },
+   368→   368→                {
+   369→   369→                  "type": "null"
+   370→   370→                }
+   371→   371→              ],
+   372→   372→              "title": "Authorization"
+   373→   373→            }
+   374→   374→          }
+   375→   375→        ],
+   376→   376→        "responses": {
+   377→   377→          "200": {
+   378→   378→            "description": "Successful Response",
+   379→   379→            "content": {
+   380→   380→              "application/json": {
+   381→   381→                "schema": {
+   382→   382→                  "type": "object",
+   383→   383→                  "additionalProperties": true,
+   384→   384→                  "title": "Response Audit Export V1 Compliance Audit Export Get"
+   385→   385→                }
+   386→   386→              }
+   387→   387→            }
+   388→   388→          },
+   389→   389→          "422": {
+   390→   390→            "description": "Validation Error",
+   391→   391→            "content": {
+   392→   392→              "application/json": {
+   393→   393→                "schema": {
+   394→   394→                  "$ref": "#/components/schemas/HTTPValidationError"
+   395→   395→                }
+   396→   396→              }
+   397→   397→            }
+   398→   398→          }
+   399→   399→        }
+   400→   400→      }
+   401→   401→    },
+   402→   402→    "/v1/compliance/model-card": {
+   403→   403→      "get": {
+   404→   404→        "summary": "Model Card",
+   405→   405→        "operationId": "model_card_v1_compliance_model_card_get",
+   406→   406→        "parameters": [
+   407→   407→          {
+   408→   408→            "name": "authorization",
+   409→   409→            "in": "header",
+   410→   410→            "required": false,
+   411→   411→            "schema": {
+   412→   412→              "anyOf": [
+   413→   413→                {
+   414→   414→                  "type": "string"
+   415→   415→                },
+   416→   416→                {
+   417→   417→                  "type": "null"
+   418→   418→                }
+   419→   419→              ],
+   420→   420→              "title": "Authorization"
+   421→   421→            }
+   422→   422→          }
+   423→   423→        ],
+   424→   424→        "responses": {
+   425→   425→          "200": {
+   426→   426→            "description": "Successful Response",
+   427→   427→            "content": {
+   428→   428→              "application/json": {
+   429→   429→                "schema": {
+   430→   430→                  "type": "object",
+   431→   431→                  "additionalProperties": true,
+   432→   432→                  "title": "Response Model Card V1 Compliance Model Card Get"
+   433→   433→                }
+   434→   434→              }
+   435→   435→            }
+   436→   436→          },
+   437→   437→          "422": {
+   438→   438→            "description": "Validation Error",
+   439→   439→            "content": {
+   440→   440→              "application/json": {
+   441→   441→                "schema": {
+   442→   442→                  "$ref": "#/components/schemas/HTTPValidationError"
+   443→   443→                }
+   444→   444→              }
+   445→   445→            }
+   446→   446→          }
+   447→   447→        }
+   448→   448→      }
+   449→   449→    },
+   450→   450→    "/health": {
+   451→   451→      "get": {
+   452→   452→        "summary": "Health",
+   453→   453→        "operationId": "health_health_get",
+   454→   454→        "responses": {
+   455→   455→          "200": {
+   456→   456→            "description": "Successful Response",
+   457→   457→            "content": {
+   458→   458→              "application/json": {
+   459→   459→                "schema": {
+   460→   460→                  "additionalProperties": true,
+   461→   461→                  "type": "object",
+   462→   462→                  "title": "Response Health Health Get"
+   463→   463→                }
+   464→   464→              }
+   465→   465→            }
+   466→   466→          }
+   467→   467→        }
+   468→   468→      }
+   469→   469→    },
+   470→   470→    "/v1/rules": {
+   471→   471→      "get": {
+   472→   472→        "summary": "List Rules",
+   473→   473→        "operationId": "list_rules_v1_rules_get",
+   474→   474→        "parameters": [
+   475→   475→          {
+   476→   476→            "name": "authorization",
+   477→   477→            "in": "header",
+   478→   478→            "required": false,
+   479→   479→            "schema": {
+   480→   480→              "anyOf": [
+   481→   481→                {
+   482→   482→                  "type": "string"
+   483→   483→                },
+   484→   484→                {
+   485→   485→                  "type": "null"
+   486→   486→                }
+   487→   487→              ],
+   488→   488→              "title": "Authorization"
+   489→   489→            }
+   490→   490→          }
+   491→   491→        ],
+   492→   492→        "responses": {
+   493→   493→          "200": {
+   494→   494→            "description": "Successful Response",
+   495→   495→            "content": {
+   496→   496→              "application/json": {
+   497→   497→                "schema": {
+   498→   498→                  "type": "object",
+   499→   499→                  "additionalProperties": true,
+   500→   500→                  "title": "Response List Rules V1 Rules Get"
+   501→   501→                }
+   502→   502→              }
+   503→   503→            }
+   504→   504→          },
+   505→   505→          "422": {
+   506→   506→            "description": "Validation Error",
+   507→   507→            "content": {
+   508→   508→              "application/json": {
+   509→   509→                "schema": {
+   510→   510→                  "$ref": "#/components/schemas/HTTPValidationError"
+   511→   511→                }
+   512→   512→              }
+   513→   513→            }
+   514→   514→          }
+   515→   515→        }
+   516→   516→      },
+   517→   517→      "post": {
+   518→   518→        "summary": "Add Rule",
+   519→   519→        "operationId": "add_rule_v1_rules_post",
+   520→   520→        "parameters": [
+   521→   521→          {
+   522→   522→            "name": "authorization",
+   523→   523→            "in": "header",
+   524→   524→            "required": false,
+   525→   525→            "schema": {
+   526→   526→              "anyOf": [
+   527→   527→                {
+   528→   528→                  "type": "string"
+   529→   529→                },
+   530→   530→                {
+   531→   531→                  "type": "null"
+   532→   532→                }
+   533→   533→              ],
+   534→   534→              "title": "Authorization"
+   535→   535→            }
+   536→   536→          }
+   537→   537→        ],
+   538→   538→        "requestBody": {
+   539→   539→          "required": true,
+   540→   540→          "content": {
+   541→   541→            "application/json": {
+   542→   542→              "schema": {
+   543→   543→                "$ref": "#/components/schemas/RuleIn"
+   544→   544→              }
+   545→   545→            }
+   546→   546→          }
+   547→   547→        },
+   548→   548→        "responses": {
+   549→   549→          "200": {
+   550→   550→            "description": "Successful Response",
+   551→   551→            "content": {
+   552→   552→              "application/json": {
+   553→   553→                "schema": {
+   554→   554→                  "type": "object",
+   555→   555→                  "additionalProperties": true,
+   556→   556→                  "title": "Response Add Rule V1 Rules Post"
+   557→   557→                }
+   558→   558→              }
+   559→   559→            }
+   560→   560→          },
+   561→   561→          "422": {
+   562→   562→            "description": "Validation Error",
+   563→   563→            "content": {
+   564→   564→              "application/json": {
+   565→   565→                "schema": {
+   566→   566→                  "$ref": "#/components/schemas/HTTPValidationError"
+   567→   567→                }
+   568→   568→              }
+   569→   569→            }
+   570→   570→          }
+   571→   571→        }
+   572→   572→      }
+   573→   573→    },
+   574→   574→    "/v1/rules/{rule_id}": {
+   575→   575→      "delete": {
+   576→   576→        "summary": "Delete Rule",
+   577→   577→        "operationId": "delete_rule_v1_rules__rule_id__delete",
+   578→   578→        "parameters": [
+   579→   579→          {
+   580→   580→            "name": "rule_id",
+   581→   581→            "in": "path",
+   582→   582→            "required": true,
+   583→   583→            "schema": {
+   584→   584→              "type": "string",
+   585→   585→              "title": "Rule Id"
+   586→   586→            }
+   587→   587→          },
+   588→   588→          {
+   589→   589→            "name": "authorization",
+   590→   590→            "in": "header",
+   591→   591→            "required": false,
+   592→   592→            "schema": {
+   593→   593→              "anyOf": [
+   594→   594→                {
+   595→   595→                  "type": "string"
+   596→   596→                },
+   597→   597→                {
+   598→   598→                  "type": "null"
+   599→   599→                }
+   600→   600→              ],
+   601→   601→              "title": "Authorization"
+   602→   602→            }
+   603→   603→          }
+   604→   604→        ],
+   605→   605→        "responses": {
+   606→   606→          "200": {
+   607→   607→            "description": "Successful Response",
+   608→   608→            "content": {
+   609→   609→              "application/json": {
+   610→   610→                "schema": {
+   611→   611→                  "type": "object",
+   612→   612→                  "additionalProperties": true,
+   613→   613→                  "title": "Response Delete Rule V1 Rules  Rule Id  Delete"
+   614→   614→                }
+   615→   615→              }
+   616→   616→            }
+   617→   617→          },
+   618→   618→          "422": {
+   619→   619→            "description": "Validation Error",
+   620→   620→            "content": {
+   621→   621→              "application/json": {
+   622→   622→                "schema": {
+   623→   623→                  "$ref": "#/components/schemas/HTTPValidationError"
+   624→   624→                }
+   625→   625→              }
+   626→   626→            }
+   627→   627→          }
+   628→   628→        }
+   629→   629→      }
+   630→   630→    },
+   631→   631→    "/v1/policy/optimal": {
+   632→   632→      "get": {
+   633→   633→        "summary": "Policy Optimal",
+   634→   634→        "operationId": "policy_optimal_v1_policy_optimal_get",
+   635→   635→        "parameters": [
+   636→   636→          {
+   637→   637→            "name": "probability",
+   638→   638→            "in": "query",
+   639→   639→            "required": true,
+   640→   640→            "schema": {
+   641→   641→              "type": "number",
+   642→   642→              "title": "Probability"
+   643→   643→            }
+   644→   644→          },
+   645→   645→          {
+   646→   646→            "name": "c_fp",
+   647→   647→            "in": "query",
+   648→   648→            "required": false,
+   649→   649→            "schema": {
+   650→   650→              "type": "number",
+   651→   651→              "default": 50,
+   652→   652→              "title": "C Fp"
+   653→   653→            }
+   654→   654→          },
+   655→   655→          {
+   656→   656→            "name": "c_fn",
+   657→   657→            "in": "query",
+   658→   658→            "required": false,
+   659→   659→            "schema": {
+   660→   660→              "type": "number",
+   661→   661→              "default": 600,
+   662→   662→              "title": "C Fn"
+   663→   663→            }
+   664→   664→          },
+   665→   665→          {
+   666→   666→            "name": "authorization",
+   667→   667→            "in": "header",
+   668→   668→            "required": false,
+   669→   669→            "schema": {
+   670→   670→              "anyOf": [
+   671→   671→                {
+   672→   672→                  "type": "string"
+   673→   673→                },
+   674→   674→                {
+   675→   675→                  "type": "null"
+   676→   676→                }
+   677→   677→              ],
+   678→   678→              "title": "Authorization"
+   679→   679→            }
+   680→   680→          }
+   681→   681→        ],
+   682→   682→        "responses": {
+   683→   683→          "200": {
+   684→   684→            "description": "Successful Response",
+   685→   685→            "content": {
+   686→   686→              "application/json": {
+   687→   687→                "schema": {
+   688→   688→                  "type": "object",
+   689→   689→                  "additionalProperties": true,
+   690→   690→                  "title": "Response Policy Optimal V1 Policy Optimal Get"
+   691→   691→                }
+   692→   692→              }
+   693→   693→            }
+   694→   694→          },
+   695→   695→          "422": {
+   696→   696→            "description": "Validation Error",
+   697→   697→            "content": {
+   698→   698→              "application/json": {
+   699→   699→                "schema": {
+   700→   700→                  "$ref": "#/components/schemas/HTTPValidationError"
+   701→   701→                }
+   702→   702→              }
+   703→   703→            }
+   704→   704→          }
+   705→   705→        }
+   706→   706→      }
+   707→   707→    },
+   708→   708→    "/v1/audit/verify-chain": {
+   709→   709→      "get": {
+   710→   710→        "summary": "Verify Chain",
+   711→   711→        "operationId": "verify_chain_v1_audit_verify_chain_get",
+   712→   712→        "parameters": [
+   713→   713→          {
+   714→   714→            "name": "authorization",
+   715→   715→            "in": "header",
+   716→   716→            "required": false,
+   717→   717→            "schema": {
+   718→   718→              "anyOf": [
+   719→   719→                {
+   720→   720→                  "type": "string"
+   721→   721→                },
+   722→   722→                {
+   723→   723→                  "type": "null"
+   724→   724→                }
+   725→   725→              ],
+   726→   726→              "title": "Authorization"
+   727→   727→            }
+   728→   728→          }
+   729→   729→        ],
+   730→   730→        "responses": {
+   731→   731→          "200": {
+   732→   732→            "description": "Successful Response",
+   733→   733→            "content": {
+   734→   734→              "application/json": {
+   735→   735→                "schema": {
+   736→   736→                  "type": "object",
+   737→   737→                  "additionalProperties": true,
+   738→   738→                  "title": "Response Verify Chain V1 Audit Verify Chain Get"
+   739→   739→                }
+   740→   740→              }
+   741→   741→            }
+   742→   742→          },
+   743→   743→          "422": {
+   744→   744→            "description": "Validation Error",
+   745→   745→            "content": {
+   746→   746→              "application/json": {
+   747→   747→                "schema": {
+   748→   748→                  "$ref": "#/components/schemas/HTTPValidationError"
+   749→   749→                }
+   750→   750→              }
+   751→   751→            }
+   752→   752→          }
+   753→   753→        }
+   754→   754→      }
+   755→   755→    },
+   756→   756→    "/v1/mandates": {
+   757→   757→      "post": {
+   758→   758→        "summary": "Create Mandate",
+   759→   759→        "description": "Merchant backend (admin scope) mints bounded agent mandates.",
+   760→   760→        "operationId": "create_mandate_v1_mandates_post",
+   761→   761→        "parameters": [
+   762→   762→          {
+   763→   763→            "name": "customer_ref",
+   764→   764→            "in": "query",
+   765→   765→            "required": true,
+   766→   766→            "schema": {
+   767→   767→              "type": "string",
+   768→   768→              "title": "Customer Ref"
+   769→   769→            }
+   770→   770→          },
+   771→   771→          {
+   772→   772→            "name": "max_amount_inr",
+   773→   773→            "in": "query",
+   774→   774→            "required": true,
+   775→   775→            "schema": {
+   776→   776→              "type": "number",
+   777→   777→              "title": "Max Amount Inr"
+   778→   778→            }
+   779→   779→          },
+   780→   780→          {
+   781→   781→            "name": "ttl_seconds",
+   782→   782→            "in": "query",
+   783→   783→            "required": false,
+   784→   784→            "schema": {
+   785→   785→              "type": "integer",
+   786→   786→              "default": 3600,
+   787→   787→              "title": "Ttl Seconds"
+   788→   788→            }
+   789→   789→          },
+   790→   790→          {
+   791→   791→            "name": "authorization",
+   792→   792→            "in": "header",
+   793→   793→            "required": false,
+   794→   794→            "schema": {
+   795→   795→              "anyOf": [
+   796→   796→                {
+   797→   797→                  "type": "string"
+   798→   798→                },
+   799→   799→                {
+   800→   800→                  "type": "null"
+   801→   801→                }
+   802→   802→              ],
+   803→   803→              "title": "Authorization"
+   804→   804→            }
+   805→   805→          }
+   806→   806→        ],
+   807→   807→        "responses": {
+   808→   808→          "200": {
+   809→   809→            "description": "Successful Response",
+   810→   810→            "content": {
+   811→   811→              "application/json": {
+   812→   812→                "schema": {
+   813→   813→                  "type": "object",
+   814→   814→                  "additionalProperties": true,
+   815→   815→                  "title": "Response Create Mandate V1 Mandates Post"
+   816→   816→                }
+   817→   817→              }
+   818→   818→            }
+   819→   819→          },
+   820→   820→          "422": {
+   821→   821→            "description": "Validation Error",
+   822→   822→            "content": {
+   823→   823→              "application/json": {
+   824→   824→                "schema": {
+   825→   825→                  "$ref": "#/components/schemas/HTTPValidationError"
+   826→   826→                }
+   827→   827→              }
+   828→   828→            }
+   829→   829→          }
+   830→   830→        }
+   831→   831→      }
+   832→   832→    },
+   833→   833→    "/risk/{prediction_id}/override": {
+   834→   834→      "post": {
+   835→   835→        "summary": "Override",
+   836→   836→        "description": "Human-in-the-loop overrides are admin-scope only. Agents can never self-approve.",
+   837→   837→        "operationId": "override_risk__prediction_id__override_post",
+   838→   838→        "parameters": [
+   839→   839→          {
+   840→   840→            "name": "prediction_id",
+   841→   841→            "in": "path",
+   842→   842→            "required": true,
+   843→   843→            "schema": {
+   844→   844→              "type": "string",
+   845→   845→              "title": "Prediction Id"
+   846→   846→            }
+   847→   847→          },
+   848→   848→          {
+   849→   849→            "name": "new_decision",
+   850→   850→            "in": "query",
+   851→   851→            "required": true,
+   852→   852→            "schema": {
+   853→   853→              "type": "string",
+   854→   854→              "title": "New Decision"
+   855→   855→            }
+   856→   856→          },
+   857→   857→          {
+   858→   858→            "name": "authorization",
+   859→   859→            "in": "header",
+   860→   860→            "required": false,
+   861→   861→            "schema": {
+   862→   862→              "anyOf": [
+   863→   863→                {
+   864→   864→                  "type": "string"
+   865→   865→                },
+   866→   866→                {
+   867→   867→                  "type": "null"
+   868→   868→                }
+   869→   869→              ],
+   870→   870→              "title": "Authorization"
+   871→   871→            }
+   872→   872→          }
+   873→   873→        ],
+   874→   874→        "responses": {
+   875→   875→          "200": {
+   876→   876→            "description": "Successful Response",
+   877→   877→            "content": {
+   878→   878→              "application/json": {
+   879→   879→                "schema": {
+   880→   880→                  "type": "object",
+   881→   881→                  "additionalProperties": true,
+   882→   882→                  "title": "Response Override Risk  Prediction Id  Override Post"
+   883→   883→                }
+   884→   884→              }
+   885→   885→            }
+   886→   886→          },
+   887→   887→          "422": {
+   888→   888→            "description": "Validation Error",
+   889→   889→            "content": {
+   890→   890→              "application/json": {
+   891→   891→                "schema": {
+   892→   892→                  "$ref": "#/components/schemas/HTTPValidationError"
+   893→   893→                }
+   894→   894→              }
+   895→   895→            }
+   896→   896→          }
+   897→   897→        }
+   898→   898→      }
+   899→   899→    },
+   900→   900→    "/audit/{audit_id}": {
+   901→   901→      "get": {
+   902→   902→        "summary": "Get Audit",
+   903→   903→        "operationId": "get_audit_audit__audit_id__get",
+   904→   904→        "parameters": [
+   905→   905→          {
+   906→   906→            "name": "audit_id",
+   907→   907→            "in": "path",
+   908→   908→            "required": true,
+   909→   909→            "schema": {
+   910→   910→              "type": "string",
+   911→   911→              "title": "Audit Id"
+   912→   912→            }
+   913→   913→          },
+   914→   914→          {
+   915→   915→            "name": "authorization",
+   916→   916→            "in": "header",
+   917→   917→            "required": false,
+   918→   918→            "schema": {
+   919→   919→              "anyOf": [
+   920→   920→                {
+   921→   921→                  "type": "string"
+   922→   922→                },
+   923→   923→                {
+   924→   924→                  "type": "null"
+   925→   925→                }
+   926→   926→              ],
+   927→   927→              "title": "Authorization"
+   928→   928→            }
+   929→   929→          }
+   930→   930→        ],
+   931→   931→        "responses": {
+   932→   932→          "200": {
+   933→   933→            "description": "Successful Response",
+   934→   934→            "content": {
+   935→   935→              "application/json": {
+   936→   936→                "schema": {
+   937→   937→                  "type": "object",
+   938→   938→                  "additionalProperties": true,
+   939→   939→                  "title": "Response Get Audit Audit  Audit Id  Get"
+   940→   940→                }
+   941→   941→              }
+   942→   942→            }
+   943→   943→          },
+   944→   944→          "422": {
+   945→   945→            "description": "Validation Error",
+   946→   946→            "content": {
+   947→   947→              "application/json": {
+   948→   948→                "schema": {
+   949→   949→                  "$ref": "#/components/schemas/HTTPValidationError"
+   950→   950→                }
+   951→   951→              }
+   952→   952→            }
+   953→   953→          }
+   954→   954→        }
+   955→   955→      }
+   956→   956→    }
+   957→   957→  },
+   958→   958→  "components": {
+   959→   959→    "schemas": {
+   960→   960→      "HTTPValidationError": {
+   961→   961→        "properties": {
+   962→   962→          "detail": {
+   963→   963→            "items": {
+   964→   964→              "$ref": "#/components/schemas/ValidationError"
+   965→   965→            },
+   966→   966→            "type": "array",
+   967→   967→            "title": "Detail"
+   968→   968→          }
+   969→   969→        },
+   970→   970→        "type": "object",
+   971→   971→        "title": "HTTPValidationError"
+   972→   972→      },
+   973→   973→      "OrderIn": {
+   974→   974→        "properties": {
+   975→   975→          "order_id": {
+   976→   976→            "type": "string",
+   977→   977→            "maxLength": 64,
+   978→   978→            "minLength": 3,
+   979→   979→            "title": "Order Id"
+   980→   980→          },
+   981→   981→          "amount_inr": {
+   982→   982→            "type": "number",
+   983→   983→            "maximum": 1000000.0,
+   984→   984→            "exclusiveMinimum": 1.0,
+   985→   985→            "title": "Amount Inr"
+   986→   986→          },
+   987→   987→          "category": {
+   988→   988→            "type": "string",
+   989→   989→            "maxLength": 32,
+   990→   990→            "minLength": 2,
+   991→   991→            "title": "Category"
+   992→   992→          },
+   993→   993→          "customer_id": {
+   994→   994→            "type": "string",
+   995→   995→            "maxLength": 64,
+   996→   996→            "minLength": 3,
+   997→   997→            "title": "Customer Id"
+   998→   998→          },
+   999→   999→          "address_quality": {
+  1000→  1000→            "type": "string",
+  1001→  1001→            "pattern": "^(complete|partial|vague)$",
+  1002→  1002→            "title": "Address Quality",
+  1003→  1003→            "default": "complete"
+  1004→  1004→          },
+  1005→  1005→          "city_tier": {
+  1006→  1006→            "type": "string",
+  1007→  1007→            "pattern": "^tier_[123]$",
+  1008→  1008→            "title": "City Tier",
+  1009→  1009→            "default": "tier_2"
+  1010→  1010→          },
+  1011→  1011→          "payment_method": {
+  1012→  1012→            "type": "string",
+  1013→  1013→            "maxLength": 16,
+  1014→  1014→            "pattern": "^(COD|Prepaid)$",
+  1015→  1015→            "title": "Payment Method",
+  1016→  1016→            "default": "COD"
+  1017→  1017→          },
+  1018→  1018→          "prior_orders": {
+  1019→  1019→            "type": "integer",
+  1020→  1020→            "maximum": 10000.0,
+  1021→  1021→            "minimum": 0.0,
+  1022→  1022→            "title": "Prior Orders",
+  1023→  1023→            "default": 0
+  1024→  1024→          },
+  1025→  1025→          "prior_returns": {
+  1026→  1026→            "type": "integer",
+  1027→  1027→            "maximum": 10000.0,
+  1028→  1028→            "minimum": 0.0,
+  1029→  1029→            "title": "Prior Returns",
+  1030→  1030→            "default": 0
+  1031→  1031→          },
+  1032→  1032→          "items": {
+  1033→  1033→            "type": "integer",
+  1034→  1034→            "maximum": 100.0,
+  1035→  1035→            "minimum": 1.0,
+  1036→  1036→            "title": "Items",
+  1037→  1037→            "default": 1
+  1038→  1038→          },
+  1039→  1039→          "order_hour": {
+  1040→  1040→            "type": "integer",
+  1041→  1041→            "maximum": 23.0,
+  1042→  1042→            "minimum": 0.0,
+  1043→  1043→            "title": "Order Hour",
+  1044→  1044→            "default": 12
+  1045→  1045→          },
+  1046→  1046→          "device": {
+  1047→  1047→            "type": "string",
+  1048→  1048→            "maxLength": 32,
+  1049→  1049→            "title": "Device",
+  1050→  1050→            "default": "Android App"
+  1051→  1051→          }
+  1052→  1052→        },
+  1053→  1053→        "type": "object",
+  1054→  1054→        "required": [
+  1055→  1055→          "order_id",
+  1056→  1056→          "amount_inr",
+  1057→  1057→          "category",
+  1058→  1058→          "customer_id"
+  1059→  1059→        ],
+  1060→  1060→        "title": "OrderIn"
+  1061→  1061→      },
+  1062→  1062→      "RuleIn": {
+  1063→  1063→        "properties": {
+  1064→  1064→          "rule_id": {
+  1065→  1065→            "type": "string",
+  1066→  1066→            "maxLength": 32,
+  1067→  1067→            "minLength": 3,
+  1068→  1068→            "title": "Rule Id"
+  1069→  1069→          },
+  1070→  1070→          "name": {
+  1071→  1071→            "type": "string",
+  1072→  1072→            "maxLength": 64,
+  1073→  1073→            "minLength": 3,
+  1074→  1074→            "title": "Name"
+  1075→  1075→          },
+  1076→  1076→          "field": {
+  1077→  1077→            "type": "string",
+  1078→  1078→            "maxLength": 48,
+  1079→  1079→            "title": "Field"
+  1080→  1080→          },
+  1081→  1081→          "op": {
+  1082→  1082→            "type": "string",
+  1083→  1083→            "pattern": "^(gt|lt|eq|in)$",
+  1084→  1084→            "title": "Op"
+  1085→  1085→          },
+  1086→  1086→          "value": {
+  1087→  1087→            "anyOf": [
+  1088→  1088→              {
+  1089→  1089→                "type": "number"
+  1090→  1090→              },
+  1091→  1091→              {
+  1092→  1092→                "type": "string"
+  1093→  1093→              },
+  1094→  1094→              {
+  1095→  1095→                "type": "boolean"
+  1096→  1096→              },
+  1097→  1097→              {
+  1098→  1098→                "items": {},
+  1099→  1099→                "type": "array"
+  1100→  1100→              }
+  1101→  1101→            ],
+  1102→  1102→            "title": "Value"
+  1103→  1103→          },
+  1104→  1104→          "action": {
+  1105→  1105→            "type": "string",
+  1106→  1106→            "pattern": "^(BLOCK|REVIEW)$",
+  1107→  1107→            "title": "Action"
+  1108→  1108→          },
+  1109→  1109→          "priority": {
+  1110→  1110→            "type": "integer",
+  1111→  1111→            "maximum": 1000.0,
+  1112→  1112→            "minimum": 1.0,
+  1113→  1113→            "title": "Priority",
+  1114→  1114→            "default": 100
+  1115→  1115→          },
+  1116→  1116→          "created_by": {
+  1117→  1117→            "type": "string",
+  1118→  1118→            "title": "Created By",
+  1119→  1119→            "default": "admin"
+  1120→  1120→          }
+  1121→  1121→        },
+  1122→  1122→        "type": "object",
+  1123→  1123→        "required": [
+  1124→  1124→          "rule_id",
+  1125→  1125→          "name",
+  1126→  1126→          "field",
+  1127→  1127→          "op",
+  1128→  1128→          "value",
+  1129→  1129→          "action"
+  1130→  1130→        ],
+  1131→  1131→        "title": "RuleIn"
+  1132→  1132→      },
+  1133→  1133→      "ValidationError": {
+  1134→  1134→        "properties": {
+  1135→  1135→          "loc": {
+  1136→  1136→            "items": {
+  1137→  1137→              "anyOf": [
+  1138→  1138→                {
+  1139→  1139→                  "type": "string"
+  1140→  1140→                },
+  1141→  1141→                {
+  1142→  1142→                  "type": "integer"
+  1143→  1143→                }
+  1144→  1144→              ]
+  1145→  1145→            },
+  1146→  1146→            "type": "array",
+  1147→  1147→            "title": "Location"
+  1148→  1148→          },
+  1149→  1149→          "msg": {
+  1150→  1150→            "type": "string",
+  1151→  1151→            "title": "Message"
+  1152→  1152→          },
+  1153→  1153→          "type": {
+  1154→  1154→            "type": "string",
+  1155→  1155→            "title": "Error Type"
+  1156→  1156→          },
+  1157→  1157→          "input": {
+  1158→  1158→            "title": "Input"
+  1159→  1159→          },
+  1160→  1160→          "ctx": {
+  1161→  1161→            "type": "object",
+  1162→  1162→            "title": "Context"
+  1163→  1163→          }
+  1164→  1164→        },
+  1165→  1165→        "type": "object",
+  1166→  1166→        "required": [
+  1167→  1167→          "loc",
+  1168→  1168→          "msg",
+  1169→  1169→          "type"
+  1170→  1170→        ],
+  1171→  1171→        "title": "ValidationError"
+  1172→  1172→      }
+  1173→  1173→    }
+  1174→  1174→  }
+  1175→  1175→}

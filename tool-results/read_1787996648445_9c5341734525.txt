@@ -1,0 +1,894 @@
+     1→"use client";
+     2→
+     3→export const dynamic = "force-dynamic";
+     4→
+     5→import * as React from "react";
+     6→import { useQuery } from "@tanstack/react-query";
+     7→import {
+     8→  ShieldAlert,
+     9→  ListChecks,
+    10→  History,
+    11→} from "lucide-react";
+    12→
+    13→import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+    14→import { Button } from "@/components/ui/button";
+    15→import { Input } from "@/components/ui/input";
+    16→import { Label } from "@/components/ui/label";
+    17→import {
+    18→  Select,
+    19→  SelectContent,
+    20→  SelectItem,
+    21→  SelectTrigger,
+    22→  SelectValue,
+    23→} from "@/components/ui/select";
+    24→import { Badge } from "@/components/ui/badge";
+    25→import {
+    26→  Table,
+    27→  TableBody,
+    28→  TableCell,
+    29→  TableHead,
+    30→  TableHeader,
+    31→  TableRow,
+    32→} from "@/components/ui/table";
+    33→import { Skeleton } from "@/components/ui/skeleton";
+    34→import { useApiKeys, buildAuthHeader } from "@/components/api-key-context";
+    35→import { MockModeBadge } from "@/components/app-header";
+    36→import {
+    37→  DecisionBadge,
+    38→  DecisionSourcePill,
+    39→  ScorePill,
+    40→} from "@/components/decision-badge";
+    41→import {
+    42→  DEMO_ORDERS,
+    43→  type CostBreakdown,
+    44→  type Decision,
+    45→  type OrderInput,
+    46→  type ReasonCode,
+    47→  type ScoreResponse,
+    48→} from "@/lib/mock-data";
+    49→import { ShapWaterfall } from "@/components/shap-waterfall";
+    50→import { RulesToggleCard } from "@/components/rules-toggle-card";
+    51→import { AgentConsole } from "@/components/agent-console";
+    52→import { NarrativePivotCard } from "@/components/narrative-pivot-card";
+    53→import { CostCurveSlider } from "@/components/cost-curve-slider";
+    54→
+    55→// ----------------------------------------------------------------------------
+    56→// Recent-decisions table (in-session local state — survives nav?)
+    57→// We use a Zustand-style module-level store so the list survives a
+    58→// page navigation away and back. Persisted to sessionStorage so a
+    59→// refresh doesn't wipe a 30-second judge demo mid-flight.
+    60→// ----------------------------------------------------------------------------
+    61→
+    62→interface RecentDecision {
+    63→  prediction_id: string;
+    64→  order_id: string;
+    65→  amount_inr: number;
+    66→  payment_method: string;
+    67→  decision: Decision;
+    68→  probability: number | null;
+    69→  decision_source: string;
+    70→  mock: boolean;
+    71→  ts: number;
+    72→}
+    73→
+    74→const RECENT_KEY = "rto-recent-decisions";
+    75→let recentListeners: Array<() => void> = [];
+    76→let recentCache: RecentDecision[] = [];
+    77→
+    78→function loadRecent(): RecentDecision[] {
+    79→  if (typeof window === "undefined") return [];
+    80→  try {
+    81→    const raw = window.sessionStorage.getItem(RECENT_KEY);
+    82→    if (raw) return JSON.parse(raw) as RecentDecision[];
+    83→  } catch {
+    84→    /* ignore */
+    85→  }
+    86→  return [];
+    87→}
+    88→
+    89→function saveRecent(v: RecentDecision[]) {
+    90→  if (typeof window === "undefined") return;
+    91→  try {
+    92→    window.sessionStorage.setItem(RECENT_KEY, JSON.stringify(v.slice(0, 50)));
+    93→  } catch {
+    94→    /* ignore */
+    95→  }
+    96→  recentCache = v;
+    97→  recentListeners.forEach((fn) => fn());
+    98→}
+    99→
+   100→function useRecentDecisions(): [RecentDecision[], (d: RecentDecision) => void, () => void] {
+   101→  const [, force] = React.useReducer((x) => x + 1, 0);
+   102→  React.useEffect(() => {
+   103→    recentCache = loadRecent();
+   104→    const fn = () => force();
+   105→    recentListeners.push(fn);
+   106→    return () => {
+   107→      recentListeners = recentListeners.filter((f) => f !== fn);
+   108→    };
+   109→  }, []);
+   110→  const add = React.useCallback((d: RecentDecision) => {
+   111→    const next = [d, ...loadRecent()].slice(0, 50);
+   112→    saveRecent(next);
+   113→  }, []);
+   114→  const clear = React.useCallback(() => {
+   115→    saveRecent([]);
+   116→  }, []);
+   117→  return [recentCache, add, clear];
+   118→}
+   119→
+   120→// ----------------------------------------------------------------------------
+   121→// Page
+   122→// ----------------------------------------------------------------------------
+   123→
+   124→const EMPTY_ORDER: OrderInput = {
+   125→  order_id: "ORD-WEB-001",
+   126→  amount_inr: 12499,
+   127→  category: "Electronics",
+   128→  customer_id: "CUST-WEB-001",
+   129→  address_quality: "vague",
+   130→  city_tier: "tier_3",
+   131→  payment_method: "COD",
+   132→  prior_orders: 0,
+   133→  prior_returns: 0,
+   134→  items: 1,
+   135→  order_hour: 12,
+   136→  device: "Android App",
+   137→};
+   138→
+   139→export default function RiskConsolePage() {
+   140→  const keys = useApiKeys();
+   141→  const [order, setOrder] = React.useState<OrderInput>(EMPTY_ORDER);
+   142→  const [result, setResult] = React.useState<ScoreResponse | null>(null);
+   143→  const [loading, setLoading] = React.useState(false);
+   144→  const [error, setError] = React.useState<string | null>(null);
+   145→  const [mock, setMock] = React.useState(false);
+   146→  const [recent, addRecent, clearRecent] = useRecentDecisions();
+   147→
+   148→  // Fetch live rules on mount so the score button's "BLOCK rule fired"
+   149→  // branch reflects the user's current rule set (Track I demo moment #4).
+   150→  const rulesQuery = useQuery({
+   151→    queryKey: ["rules"],
+   152→    queryFn: async () => {
+   153→      const r = await fetch("/api/v1/rules", {
+   154→        headers: buildAuthHeader(keys, "scorer"),
+   155→      });
+   156→      const data = await r.json().catch(() => ({}));
+   157→      return { rules: data.rules || [], mock: r.headers.get("X-Mock-Mode") === "true" };
+   158→    },
+   159→    staleTime: 30_000,
+   160→  });
+   161→
+   162→  async function score() {
+   163→    setLoading(true);
+   164→    setError(null);
+   165→    setResult(null);
+   166→    try {
+   167→      const idemKey = `${order.order_id}:${order.amount_inr}:${Date.now()}`;
+   168→      const r = await fetch("/api/risk/score", {
+   169→        method: "POST",
+   170→        headers: {
+   171→          "Content-Type": "application/json",
+   172→          ...buildAuthHeader(keys, "scorer"),
+   173→          "Idempotency-Key": idemKey,
+   174→        },
+   175→        body: JSON.stringify(order),
+   176→      });
+   177→      const data = (await r.json().catch(() => null)) as ScoreResponse | null;
+   178→      if (!r.ok || !data) {
+   179→        const detail = (data as unknown as { detail?: string })?.detail || `HTTP ${r.status}`;
+   180→        setError(detail);
+   181→      } else {
+   182→        setResult(data);
+   183→        setMock(r.headers.get("X-Mock-Mode") === "true");
+   184→        addRecent({
+   185→          prediction_id: data.prediction_id || "—",
+   186→          order_id: order.order_id,
+   187→          amount_inr: order.amount_inr,
+   188→          payment_method: order.payment_method,
+   189→          decision: (data.decision || "REVIEW") as Decision,
+   190→          probability: data.probability,
+   191→          decision_source: data.decision_source,
+   192→          mock: r.headers.get("X-Mock-Mode") === "true",
+   193→          ts: Date.now(),
+   194→        });
+   195→      }
+   196→    } catch (e) {
+   197→      setError(String(e));
+   198→    } finally {
+   199→      setLoading(false);
+   200→    }
+   201→  }
+   202→
+   203→  function loadDemo(d: (typeof DEMO_ORDERS)[number]) {
+   204→    setOrder({ ...d.order, order_id: d.order.order_id });
+   205→    setResult(null);
+   206→    setError(null);
+   207→  }
+   208→
+   209→  return (
+   210→    <div className="space-y-6">
+   211→      <PageHeader />
+   212→      <div className="grid gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
+   213→        <div className="space-y-4">
+   214→          <OrderFormCard
+   215→            order={order}
+   216→            setOrder={setOrder}
+   217→            onScore={score}
+   218→            loading={loading}
+   219→          />
+   220→          <DemoOrdersCard onPick={loadDemo} />
+   221→        </div>
+   222→        <div className="space-y-6">
+   223→          <ResultCard
+   224→            result={result}
+   225→            loading={loading}
+   226→            error={error}
+   227→            mock={mock}
+   228→          />
+   229→          <NarrativePivotCard />
+   230→          <CostCurveSlider
+   231→            probability={result?.probability ?? null}
+   232→            mock={mock}
+   233→          />
+   234→          <RulesToggleCard
+   235→            order={order}
+   236→            lastDecision={result?.decision ?? null}
+   237→            lastProbability={result?.probability ?? null}
+   238→            onRescore={score}
+   239→          />
+   240→          <AgentConsole
+   241→            recentCount={recent.length}
+   242→            rulesCount={rulesQuery.data?.rules.length ?? 0}
+   243→          />
+   244→          <RecentDecisionsCard
+   245→            rows={recent}
+   246→            onClear={clearRecent}
+   247→          />
+   248→        </div>
+   249→      </div>
+   250→      {/* Hidden helper: keeps rulesQuery warm for the Rules Manager */}
+   251→      <span className="sr-only" aria-hidden>
+   252→        {rulesQuery.data?.rules.length ?? 0} rules active
+   253→      </span>
+   254→    </div>
+   255→  );
+   256→}
+   257→
+   258→function PageHeader() {
+   259→  return (
+   260→    <div className="flex flex-col gap-1.5">
+   261→      <div className="flex items-center gap-2">
+   262→        <ShieldAlert className="size-5 text-success" aria-hidden />
+   263→        <h1 className="text-2xl font-semibold tracking-tight">Risk Console</h1>
+   264→      </div>
+   265→      <p className="text-sm text-muted-foreground">
+   266→        Paste an order, click Score, see the Bahnsen Bayes Minimum Risk verdict + explainability. The 3 demo
+   267→        orders cover all four Track-C decision layers — cost-optimal BMR, rules-engine BLOCK, REVIEW rule
+   268→        gate, and mandate breach.
+   269→      </p>
+   270→    </div>
+   271→  );
+   272→}
+   273→
+   274→function OrderFormCard({
+   275→  order,
+   276→  setOrder,
+   277→  onScore,
+   278→  loading,
+   279→}: {
+   280→  order: OrderInput;
+   281→  setOrder: (next: OrderInput) => void;
+   282→  onScore: () => void;
+   283→  loading: boolean;
+   284→}) {
+   285→  const update = <K extends keyof OrderInput>(k: K, v: OrderInput[K]) =>
+   286→    setOrder({ ...order, [k]: v });
+   287→  return (
+   288→    <Card>
+   289→      <CardHeader>
+   290→        <CardTitle className="flex items-center gap-2 text-base">
+   291→          <ListChecks className="size-4 text-muted-foreground" aria-hidden />
+   292→          Score an order
+   293→        </CardTitle>
+   294→        <CardDescription>
+   295→          Every field maps 1:1 to <code className="text-xs">OrderIn</code> on{" "}
+   296→          <code className="text-xs">POST /risk/score</code>.
+   297→        </CardDescription>
+   298→      </CardHeader>
+   299→      <CardContent className="space-y-3">
+   300→        <Field label="Order ID">
+   301→          <Input
+   302→            value={order.order_id}
+   303→            onChange={(e) => update("order_id", e.target.value)}
+   304→            placeholder="ORD-WEB-001"
+   305→          />
+   306→        </Field>
+   307→        <div className="grid grid-cols-2 gap-3">
+   308→          <Field label="Amount (INR)">
+   309→            <Input
+   310→              type="number"
+   311→              value={order.amount_inr}
+   312→              onChange={(e) => update("amount_inr", Number(e.target.value))}
+   313→            />
+   314→          </Field>
+   315→          <Field label="Category">
+   316→            <Select
+   317→              value={order.category}
+   318→              onValueChange={(v) => update("category", v)}
+   319→            >
+   320→              <SelectTrigger>
+   321→                <SelectValue placeholder="Category" />
+   322→              </SelectTrigger>
+   323→              <SelectContent>
+   324→                <SelectItem value="Electronics">Electronics</SelectItem>
+   325→                <SelectItem value="Fashion">Fashion</SelectItem>
+   326→                <SelectItem value="Health">Health</SelectItem>
+   327→                <SelectItem value="Accessories">Accessories</SelectItem>
+   328→              </SelectContent>
+   329→            </Select>
+   330→          </Field>
+   331→        </div>
+   332→        <div className="grid grid-cols-2 gap-3">
+   333→          <Field label="Payment method">
+   334→            <Select
+   335→              value={order.payment_method}
+   336→              onValueChange={(v) =>
+   337→                update("payment_method", v as OrderInput["payment_method"])
+   338→              }
+   339→            >
+   340→              <SelectTrigger>
+   341→                <SelectValue placeholder="Payment" />
+   342→              </SelectTrigger>
+   343→              <SelectContent>
+   344→                <SelectItem value="COD">COD</SelectItem>
+   345→                <SelectItem value="Prepaid">Prepaid</SelectItem>
+   346→              </SelectContent>
+   347→            </Select>
+   348→          </Field>
+   349→          <Field label="Address quality">
+   350→            <Select
+   351→              value={order.address_quality}
+   352→              onValueChange={(v) =>
+   353→                update("address_quality", v as OrderInput["address_quality"])
+   354→              }
+   355→            >
+   356→              <SelectTrigger>
+   357→                <SelectValue placeholder="Address" />
+   358→              </SelectTrigger>
+   359→              <SelectContent>
+   360→                <SelectItem value="complete">complete</SelectItem>
+   361→                <SelectItem value="partial">partial</SelectItem>
+   362→                <SelectItem value="vague">vague</SelectItem>
+   363→              </SelectContent>
+   364→            </Select>
+   365→          </Field>
+   366→        </div>
+   367→        <div className="grid grid-cols-2 gap-3">
+   368→          <Field label="City tier">
+   369→            <Select
+   370→              value={order.city_tier}
+   371→              onValueChange={(v) =>
+   372→                update("city_tier", v as OrderInput["city_tier"])
+   373→              }
+   374→            >
+   375→              <SelectTrigger>
+   376→                <SelectValue placeholder="Tier" />
+   377→              </SelectTrigger>
+   378→              <SelectContent>
+   379→                <SelectItem value="tier_1">tier_1 (metro)</SelectItem>
+   380→                <SelectItem value="tier_2">tier_2</SelectItem>
+   381→                <SelectItem value="tier_3">tier_3 (rural)</SelectItem>
+   382→              </SelectContent>
+   383→            </Select>
+   384→          </Field>
+   385→          <Field label="Customer ID">
+   386→            <Input
+   387→              value={order.customer_id}
+   388→              onChange={(e) => update("customer_id", e.target.value)}
+   389→              placeholder="CUST-XXX"
+   390→            />
+   391→          </Field>
+   392→        </div>
+   393→        <div className="grid grid-cols-3 gap-3">
+   394→          <Field label="Prior orders">
+   395→            <Input
+   396→              type="number"
+   397→              value={order.prior_orders}
+   398→              onChange={(e) => update("prior_orders", Number(e.target.value))}
+   399→            />
+   400→          </Field>
+   401→          <Field label="Prior returns">
+   402→            <Input
+   403→              type="number"
+   404→              value={order.prior_returns}
+   405→              onChange={(e) => update("prior_returns", Number(e.target.value))}
+   406→            />
+   407→          </Field>
+   408→          <Field label="Items">
+   409→            <Input
+   410→              type="number"
+   411→              value={order.items}
+   412→              onChange={(e) => update("items", Number(e.target.value))}
+   413→            />
+   414→          </Field>
+   415→        </div>
+   416→        <div className="grid grid-cols-2 gap-3">
+   417→          <Field label="Order hour (0-23)">
+   418→            <Input
+   419→              type="number"
+   420→              min={0}
+   421→              max={23}
+   422→              value={order.order_hour}
+   423→              onChange={(e) => update("order_hour", Number(e.target.value))}
+   424→            />
+   425→          </Field>
+   426→          <Field label="Device">
+   427→            <Select
+   428→              value={order.device}
+   429→              onValueChange={(v) => update("device", v)}
+   430→            >
+   431→              <SelectTrigger>
+   432→                <SelectValue placeholder="Device" />
+   433→              </SelectTrigger>
+   434→              <SelectContent>
+   435→                <SelectItem value="Android App">Android App</SelectItem>
+   436→                <SelectItem value="iOS App">iOS App</SelectItem>
+   437→                <SelectItem value="Web">Web</SelectItem>
+   438→              </SelectContent>
+   439→            </Select>
+   440→          </Field>
+   441→        </div>
+   442→        <Button
+   443→          className="w-full"
+   444→          onClick={onScore}
+   445→          disabled={loading || !order.order_id || !order.amount_inr}
+   446→        >
+   447→          {loading ? "Scoring…" : "Score order"}
+   448→        </Button>
+   449→      </CardContent>
+   450→    </Card>
+   451→  );
+   452→}
+   453→
+   454→function Field({ label, children }: { label: string; children: React.ReactNode }) {
+   455→  return (
+   456→    <div className="space-y-1">
+   457→      <Label className="text-xs text-muted-foreground">{label}</Label>
+   458→      {children}
+   459→    </div>
+   460→  );
+   461→}
+   462→
+   463→function DemoOrdersCard({
+   464→  onPick,
+   465→}: {
+   466→  onPick: (d: (typeof DEMO_ORDERS)[number]) => void;
+   467→}) {
+   468→  return (
+   469→    <Card>
+   470→      <CardHeader>
+   471→        <CardTitle className="text-base">3 demo orders</CardTitle>
+   472→        <CardDescription>
+   473→          One-click auto-fill. The expected decision is shown for each — score
+   474→          to verify the live verdict matches.
+   475→        </CardDescription>
+   476→      </CardHeader>
+   477→      <CardContent className="space-y-2">
+   478→        {DEMO_ORDERS.map((d) => (
+   479→          <div
+   480→            key={d.order.order_id}
+   481→            className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-card/40 p-3"
+   482→          >
+   483→            <div className="space-y-0.5">
+   484→              <div className="text-sm font-medium">{d.label}</div>
+   485→              <div className="text-xs text-muted-foreground">{d.description}</div>
+   486→            </div>
+   487→            <div className="flex items-center gap-2">
+   488→              <DecisionBadge decision={d.expected} size="sm" />
+   489→              <Button size="sm" variant="secondary" onClick={() => onPick(d)}>
+   490→                Load
+   491→              </Button>
+   492→            </div>
+   493→          </div>
+   494→        ))}
+   495→      </CardContent>
+   496→    </Card>
+   497→  );
+   498→}
+   499→
+   500→function ResultCard({
+   501→  result,
+   502→  loading,
+   503→  error,
+   504→  mock,
+   505→}: {
+   506→  result: ScoreResponse | null;
+   507→  loading: boolean;
+   508→  error: string | null;
+   509→  mock: boolean;
+   510→}) {
+   511→  if (loading) {
+   512→    return (
+   513→      <Card>
+   514→        <CardContent className="space-y-3 p-6">
+   515→          <Skeleton className="h-6 w-32" />
+   516→          <Skeleton className="h-16 w-full" />
+   517→          <Skeleton className="h-32 w-full" />
+   518→          <Skeleton className="h-32 w-full" />
+   519→        </CardContent>
+   520→      </Card>
+   521→    );
+   522→  }
+   523→  if (error) {
+   524→    return (
+   525→      <Card>
+   526→        <CardContent className="p-6">
+   527→          <div className="rounded-md border border-danger/50 bg-danger/15 p-4 text-sm text-danger">
+   528→            <p className="font-semibold">Scoring failed</p>
+   529→            <p className="mt-1 text-danger/80">{error}</p>
+   530→          </div>
+   531→        </CardContent>
+   532→      </Card>
+   533→    );
+   534→  }
+   535→  if (!result) {
+   536→    return (
+   537→      <Card>
+   538→        <CardContent className="p-6">
+   539→          <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-muted-foreground">
+   540→            <ShieldAlert className="size-8 opacity-40" aria-hidden />
+   541→            <p className="text-sm">Score an order to see the verdict.</p>
+   542→          </div>
+   543→        </CardContent>
+   544→      </Card>
+   545→    );
+   546→  }
+   547→  return (
+   548→    <Card>
+   549→      <CardHeader>
+   550→        <div className="flex items-center justify-between gap-3">
+   551→          <CardTitle className="text-base">Verdict</CardTitle>
+   552→          <div className="flex items-center gap-2">
+   553→            {mock && <MockModeBadge mock={mock} />}
+   554→            <DecisionSourcePill source={result.decision_source} />
+   555→          </div>
+   556→        </div>
+   557→      </CardHeader>
+   558→      <CardContent className="space-y-5">
+   559→        <div className="grid gap-4 sm:grid-cols-[auto_minmax(0,1fr)]">
+   560→          <DecisionSurface decision={result.decision} />
+   561→          <div className="flex flex-col gap-3">
+   562→            <ScorePill probability={result.probability} />
+   563→            <div className="text-xs text-muted-foreground">
+   564→              model: <span className="font-mono">{result.model_version}</span>{" "}
+   565→              · latency: <span className="font-mono">{result.latency_ms}ms</span>
+   566→              {result.rule_fired && (
+   567→                <>
+   568→                  {" "}
+   569→                  · rule fired:{" "}
+   570→                  <Badge variant="secondary" className="font-mono text-[10px]">
+   571→                    {result.rule_fired}
+   572→                  </Badge>
+   573→                </>
+   574→              )}
+   575→            </div>
+   576→            {result.case_id && (
+   577→              <div className="text-xs text-muted-foreground">
+   578→                Case opened:{" "}
+   579→                <code className="font-mono">{result.case_id}</code>
+   580→              </div>
+   581→            )}
+   582→            {result.audit_trail_url && (
+   583→              <div className="text-xs text-muted-foreground">
+   584→                Audit trail:{" "}
+   585→                <a
+   586→                  className="font-mono text-success hover:underline"
+   587→                  href={`/audit?id=${encodeURIComponent(result.audit_trail_url.replace("/audit/", ""))}`}
+   588→                >
+   589→                  {result.audit_trail_url}
+   590→                </a>
+   591→              </div>
+   592→            )}
+   593→          </div>
+   594→        </div>
+   595→        <ExplainabilityPanel
+   596→          decision={result.decision as Decision}
+   597→          probability={result.probability ?? undefined}
+   598→          reasons={result.explanation}
+   599→          orderSummary={summarizeOrder(result)}
+   600→          mock={mock}
+   601→          acceptT={result.gate_thresholds?.legacy_accept_t}
+   602→          rejectT={result.gate_thresholds?.legacy_reject_t}
+   603→        />
+   604→        {result.cost_breakdown && (
+   605→          <CostBreakdownTable breakdown={result.cost_breakdown} />
+   606→        )}
+   607→        {result.mandate && result.mandate.verdict !== "VALID" && (
+   608→          <MandateBreachBanner
+   609→            verdict={result.mandate.verdict}
+   610→            note={result.mandate.note}
+   611→            reason={result.mandate.verdict_reason}
+   612→            type={result.mandate.mandate_type}
+   613→            bh={result.mandate.bh_purpose_code}
+   614→          />
+   615→        )}
+   616→      </CardContent>
+   617→    </Card>
+   618→  );
+   619→}
+   620→
+   621→function summarizeOrder(result: ScoreResponse): string {
+   622→  // Compose the "why" summary line the judge reads aloud — mirrors
+   623→  // demo moment #2: "73% risk because: COD + ₹12,400, new customer,
+   624→  // vague address in Tier-3 city".
+   625→  const flags: string[] = [];
+   626→  // Read off the reasons array's most-upvoted features + flag the
+   627→  // classic Indian e-commerce RTO drivers. We use the actual value
+   628→  // (not the feature name) so the summary reflects the order, not a
+   629→  // hardcoded "COD" label.
+   630→  const reasons = result.explanation || [];
+   631→  const reasonValue = (f: string): string | undefined =>
+   632→    reasons.find((r) => r.feature === f)?.value as string | undefined;
+   633→  const payment = reasonValue("payment_method");
+   634→  if (payment === "COD") flags.push("COD");
+   635→  else if (payment === "Prepaid") flags.push("Prepaid payment");
+   636→  const addr = reasonValue("address_quality");
+   637→  if (addr === "vague") flags.push("vague address");
+   638→  else if (addr === "partial") flags.push("partial address");
+   639→  const tier = reasonValue("city_tier");
+   640→  if (tier === "tier_3") flags.push("Tier-3 city");
+   641→  else if (tier === "tier_2") flags.push("Tier-2 city");
+   642→  const priorOrders = reasonValue("prior_orders");
+   643→  if (priorOrders === 0) flags.push("new customer");
+   644→  else if (Number(priorOrders) >= 10) flags.push("loyal customer");
+   645→  if (reasonValue("prior_returns") !== undefined && Number(reasonValue("prior_returns")) > 0) {
+   646→    flags.push("repeat returner");
+   647→  }
+   648→  if (reasonValue("amount_inr") !== undefined && Number(reasonValue("amount_inr")) > 10000) {
+   649→    flags.push("high-value order");
+   650→  }
+   651→  return flags.length ? flags.join(" + ") : "no dominant risk factor";
+   652→}
+   653→
+   654→function DecisionSurface({ decision }: { decision: Decision | null }) {
+   655→  let cls = "border-border bg-muted/40 text-muted-foreground";
+   656→  if (decision === "ACCEPT") cls = "decision-accept";
+   657→  else if (decision === "REVIEW") cls = "decision-review";
+   658→  else if (decision === "REJECT") cls = "decision-reject";
+   659→  return (
+   660→    <div
+   661→      className={`flex size-24 shrink-0 items-center justify-center rounded-xl border text-2xl font-bold ${cls}`}
+   662→      aria-label={`Decision: ${decision || "—"}`}
+   663→    >
+   664→      {decision ? decision[0] : "—"}
+   665→    </div>
+   666→  );
+   667→}
+   668→
+   669→function ExplainabilityPanel({
+   670→  decision,
+   671→  probability,
+   672→  reasons,
+   673→  orderSummary,
+   674→  mock,
+   675→  acceptT,
+   676→  rejectT,
+   677→}: {
+   678→  decision: Decision;
+   679→  probability?: number;
+   680→  reasons: ReasonCode[];
+   681→  orderSummary: string;
+   682→  mock?: boolean;
+   683→  acceptT?: number;
+   684→  rejectT?: number;
+   685→}) {
+   686→  const pct = probability === undefined ? null : Math.round(probability * 100);
+   687→  return (
+   688→    <div className="rounded-md border border-border/70 bg-muted/30 p-4">
+   689→      <div className="mb-1 flex items-center gap-2">
+   690→        <h3 className="text-sm font-semibold">Explainability</h3>
+   691→        <Badge variant="outline" className="text-[10px]">
+   692→          reason-codes
+   693→        </Badge>
+   694→      </div>
+   695→      <p className="text-sm text-foreground/90">
+   696→        This order scored{" "}
+   697→        <span className="font-semibold">{pct === null ? "—" : `${pct}%`}</span>{" "}
+   698→        risk because: {orderSummary || "(no dominant factor)"}. Decision:{" "}
+   699→        <span className="font-semibold">{decision}</span>{" "}
+   700→        via Bahnsen Bayes Minimum Risk (ICMLA 2013).
+   701→      </p>
+   702→      {reasons.length > 0 && (
+   703→        <ul className="mt-3 space-y-1.5">
+   704→          {reasons.slice(0, 5).map((r, i) => (
+   705→            <li
+   706→              key={`${r.feature}-${i}`}
+   707→              className="flex items-center justify-between gap-3 text-xs"
+   708→            >
+   709→              <span className="font-mono text-muted-foreground">{r.feature}</span>
+   710→              <span className="font-mono text-foreground/80">
+   711→                {String(r.value)}
+   712→              </span>
+   713→              <span
+   714→                className={
+   715→                  r.direction === "up" || r.delta_prob >= 0
+   716→                    ? "font-mono text-danger"
+   717→                    : "font-mono text-success"
+   718→                }
+   719→              >
+   720→                {r.delta_prob >= 0 ? "+" : ""}
+   721→                {r.delta_prob.toFixed(3)}
+   722→              </span>
+   723→            </li>
+   724→          ))}
+   725→        </ul>
+   726→      )}
+   727→      <div className="mt-3">
+   728→        <ShapWaterfall
+   729→          reasons={reasons}
+   730→          probability={probability ?? null}
+   731→          acceptT={acceptT}
+   732→          rejectT={rejectT}
+   733→          mock={mock}
+   734→        />
+   735→      </div>
+   736→    </div>
+   737→  );
+   738→}
+   739→
+   740→function CostBreakdownTable({ breakdown }: { breakdown: CostBreakdown }) {
+   741→  const rows = [
+   742→    { label: "ACCEPT (ship)", cost: breakdown.ACCEPT },
+   743→    { label: "REVIEW (OTP gate)", cost: breakdown.REVIEW },
+   744→    { label: "REJECT (block)", cost: breakdown.REJECT },
+   745→  ];
+   746→  const min = Math.min(...rows.map((r) => r.cost));
+   747→  return (
+   748→    <div className="rounded-md border border-border/70 bg-muted/30 p-4">
+   749→      <div className="mb-2 flex items-center justify-between">
+   750→        <h3 className="text-sm font-semibold">Cost breakdown</h3>
+   751→        <span className="text-[10px] text-muted-foreground">
+   752→          Bahnsen Eq.1 · c_fp=50 · c_fn=600 · c_otp=5 · c_block=1000
+   753→        </span>
+   754→      </div>
+   755→      <Table>
+   756→        <TableHeader>
+   757→          <TableRow>
+   758→            <TableHead>Decision</TableHead>
+   759→            <TableHead className="text-right">Expected cost (₹)</TableHead>
+   760→          </TableRow>
+   761→        </TableHeader>
+   762→        <TableBody>
+   763→          {rows.map((r) => (
+   764→            <TableRow key={r.label}>
+   765→              <TableCell className="font-mono text-xs">{r.label}</TableCell>
+   766→              <TableCell
+   767→                className={`text-right font-mono text-xs ${
+   768→                  r.cost === min ? "text-success font-semibold" : ""
+   769→                }`}
+   770→              >
+   771→                {r.cost.toLocaleString("en-IN")}
+   772→              </TableCell>
+   773→            </TableRow>
+   774→          ))}
+   775→        </TableBody>
+   776→      </Table>
+   777→    </div>
+   778→  );
+   779→}
+   780→
+   781→function MandateBreachBanner({
+   782→  verdict,
+   783→  note,
+   784→  reason,
+   785→  type,
+   786→  bh,
+   787→}: {
+   788→  verdict: string;
+   789→  note: string | null;
+   790→  reason: string | null;
+   791→  type: string | null;
+   792→  bh: string | null;
+   793→}) {
+   794→  return (
+   795→    <div className="rounded-md border border-danger/50 bg-danger/15 p-4 text-sm">
+   796→      <div className="mb-1 flex items-center gap-2">
+   797→        <span className="font-semibold text-danger">Mandate {verdict}</span>
+   798→        {type && (
+   799→          <Badge variant="outline" className="border-danger/40 text-danger">
+   800→            {type}
+   801→          </Badge>
+   802→        )}
+   803→        {bh && (
+   804→          <Badge variant="outline" className="border-danger/40 text-danger">
+   805→            BH {bh}
+   806→          </Badge>
+   807→        )}
+   808→      </div>
+   809→      <p className="text-xs text-danger/80">
+   810→        {note || reason || "Mandate header failed verification — short-circuit REJECT per Track D V3 §13."}
+   811→      </p>
+   812→    </div>
+   813→  );
+   814→}
+   815→
+   816→function RecentDecisionsCard({
+   817→  rows,
+   818→  onClear,
+   819→}: {
+   820→  rows: RecentDecision[];
+   821→  onClear: () => void;
+   822→}) {
+   823→  return (
+   824→    <Card>
+   825→      <CardHeader>
+   826→        <div className="flex items-center justify-between gap-2">
+   827→          <CardTitle className="flex items-center gap-2 text-base">
+   828→            <History className="size-4 text-muted-foreground" aria-hidden />
+   829→            Recent decisions this session
+   830→          </CardTitle>
+   831→          {rows.length > 0 && (
+   832→            <Button size="sm" variant="ghost" onClick={onClear}>
+   833→              Clear
+   834→            </Button>
+   835→          )}
+   836→        </div>
+   837→        <CardDescription>
+   838→          Persisted to sessionStorage — survives tab reload, wiped when the
+   839→          tab closes. Mock-mode rows are flagged.
+   840→        </CardDescription>
+   841→      </CardHeader>
+   842→      <CardContent>
+   843→        {rows.length === 0 ? (
+   844→          <div className="py-8 text-center text-sm text-muted-foreground">
+   845→            No decisions yet — click <span className="font-medium">Score order</span> above.
+   846→          </div>
+   847→        ) : (
+   848→          <div className="max-h-72 overflow-y-auto rounded-md border border-border/60">
+   849→            <Table>
+   850→              <TableHeader>
+   851→                <TableRow>
+   852→                  <TableHead>Order</TableHead>
+   853→                  <TableHead>Amount</TableHead>
+   854→                  <TableHead>P(RTO)</TableHead>
+   855→                  <TableHead>Decision</TableHead>
+   856→                  <TableHead>Source</TableHead>
+   857→                  <TableHead>When</TableHead>
+   858→                </TableRow>
+   859→              </TableHeader>
+   860→              <TableBody>
+   861→                {rows.map((r) => (
+   862→                  <TableRow key={r.prediction_id + r.ts}>
+   863→                    <TableCell className="font-mono text-xs">
+   864→                      {r.order_id}
+   865→                    </TableCell>
+   866→                    <TableCell className="font-mono text-xs">
+   867→                      ₹{r.amount_inr.toLocaleString("en-IN")}
+   868→                    </TableCell>
+   869→                    <TableCell className="font-mono text-xs">
+   870→                      {r.probability === null ? "—" : r.probability.toFixed(3)}
+   871→                    </TableCell>
+   872→                    <TableCell>
+   873→                      <DecisionBadge decision={r.decision} size="sm" />
+   874→                    </TableCell>
+   875→                    <TableCell className="text-[11px] text-muted-foreground">
+   876→                      {r.decision_source}
+   877→                      {r.mock && (
+   878→                        <span className="ml-1 text-warning">(mock)</span>
+   879→                      )}
+   880→                    </TableCell>
+   881→                    <TableCell className="text-[11px] text-muted-foreground">
+   882→                      {new Date(r.ts).toLocaleTimeString()}
+   883→                    </TableCell>
+   884→                  </TableRow>
+   885→                ))}
+   886→              </TableBody>
+   887→            </Table>
+   888→          </div>
+   889→        )}
+   890→      </CardContent>
+   891→    </Card>
+   892→  );
+   893→}
+   894→

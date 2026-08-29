@@ -3603,3 +3603,173 @@ Stage Summary:
 - Local copy of `upload/system design context.txt` is preserved as an untracked file (size 173728 bytes); gitignored so it can never be re-added.
 - `upload/RTO_Trust_Layer_FULL.bak-pre-redact` still shows as a broken submodule-like entry in git status (no .gitmodules file exists). Not part of the leak scope — left alone for now.
 - STANDING SECURITY ADVISORY: Both tokens (Vercel `vcp_5SV9...` and GitHub PAT `github_pat_11BOLF...`) are leaked in chat history AND are still in active use per user request (in-chat only, env vars at deploy time). User MUST rotate both after the work is done. Repo-side exposure is now eliminated.
+
+---
+
+Task ID: 4a (audit-pass)
+Agent: general-purpose (comprehensive 1-to-1 audit of the RTO Trust Layer project)
+Task: Brutal, evidence-based audit of every feature the previous AI agents claimed "DONE", every API endpoint they said was wired, every UI component they said was functional. The user explicitly said: "many times you ai agents just make the upar upar se code and ui etc but dont actually wire up the ui and stuff at all, i hate that."
+
+Work Log:
+- Read /home/z/my-project/worklog.md (3,605 lines, 499KB) to understand prior agent history (Tasks 1-c through security-scrub-leak-1, 50+ sub-tasks).
+- Read /home/z/my-project/upload/system design context.txt in full (173KB, 2,656 lines) — all 16 user prompts + the user's asks per Tier 1-4 + paper-study corpus (40 papers) + benchmark vs Microsoft Fabric fraud-detection + 5 Missions + P0/P1/P2 lists + 17-hour P0 budget + 25 self-check questions + 8 anti-hallucination guards.
+- Read /home/z/my-project/upload/RTO_Trust_Layer_FULL/README.md (369 lines) — claims 6 demo moments, 23 endpoints, 141 tests pass, deployed champion PR-AUC 0.1027 (Amazon) / 0.3950 (Olist), honest framing narrative.
+- Read /home/z/my-project/upload/RTO_Trust_Layer_FULL/docs/CROSS_COMPARISON.md (full 40-paper literature corpus mapping with FULL/PARTIAL/GAP coverage) + docs/PRODUCTION_COMPARISON.md (Razorpay/Stripe/Adyen comparison with Phase 1-6 migration path) + docs/FOLLOWUP.md (40-row one-to-one table of prompt asks → DONE/PARTIAL/NOT-DONE + file:line evidence).
+- Listed the entire project tree under /home/z/my-project/ + /home/z/my-project/upload/RTO_Trust_Layer_FULL/ (Python src, tests, alembic, infra/k8s, .github/workflows, web/ Next.js app, docs/ 30+ MD files, models/champion/ artifacts).
+- Started dev server check — both Python backend (uvicorn on port 8000) and Next.js dev server (port 3000) were already running; confirmed via `curl /health` → 200 `{"status":"ok","model_loaded":true,"circuit_state":"CLOSED","active_rules":2,"version":"0.2.0"}` + `curl /api` → 200 `{"message":"Hello, world!"`.
+- CURLED EVERY API ENDPOINT on the Next.js side (16 endpoints) + the Python side (10 endpoints) with scorer-key and admin-key headers, capturing full response bodies:
+  * POST /api/risk/score → 200 with REAL BMR decision (decision:REVIEW, probability:0.02, cost_breakdown:{ACCEPT:248,REVIEW:98.64,REJECT:980}, intervention:otp_verify, mandate verdict:tampered, audit_id:ce661f64-..., latency_ms:226, model_version:rto_kaggle_histgb_20260827, dataset:amazon). 226ms latency confirms real backend call.
+  * GET /api/v1/rules (scorer key) → 200 with REAL rules [RULE-001 Block COD > ₹50K, RULE-002 High-value vague COD REVIEW].
+  * GET /api/v1/policy/cost-curves (scorer key) → 200 with REAL 19-threshold Drummond-Holte sweep + bootstrap CIs (tp,fp,fn,tn,cost,precision,recall per row).
+  * GET /api/v1/models/current (scorer key) → 200 with REAL champion metrics (pr_auc:0.1026584...).
+  * GET /api/v1/models/drift (admin key) → 200 with REAL drift status (n_observed:32, psi:{}).
+  * GET /api/v1/usage (admin key) → 200 with REAL counts (counts:{"24":45,"168":45,"720":45}, scope:aggregate).
+  * GET /api/v1/audit/verify-chain (admin key) → 200 with `{intact:false, records_checked:44, first_bad_audit_id:"ce661f64-..."}` — **chain is BROKEN in the live file-mode backend** (despite README claim of "verified intact=True").
+  * GET /api/v1/compliance/audit-export (admin key) → 200 CSV with REAL audit records (audit_id,timestamp,model_version,request,probability,decision,...).
+  * POST /api/v1/simulate (admin key) → 401 `{"detail":"invalid scorer api key"}` — auth scope mismatch BUG (admin endpoint requires scorer key).
+  * POST /api/feedback/ingest (scorer key) → 403 `{"detail":"feedback ingestion requires admin scope"}` — admin endpoint, expected.
+  * POST /api/copilot (any) → 200 with `{"answer":"...","intent":"unknown","sources":[],"mock":true}` — MOCK-ONLY endpoint despite header comment claiming "Uses z-ai-web-dev-sdk".
+  * GET /api/audit → 200 with mock records always (comment at route.ts:18 says "Python backend has no JSON list endpoint").
+- Verified live Vercel deploy: `curl https://web-rose-ten-o8lm7pih3t.vercel.app/` → 200; `/api/audit` returns mock records (no backend configured on Vercel; falls back to mock-mode with X-Mock-Mode:true header per design).
+- Verified live Render deploy: `curl https://rto-trust-layer.onrender.com/health` → 404 Not Found (Render deploy is NOT live — worklog line 3400 confirms Render API token revoked + user has no credit card).
+- Ran ONNX Runtime verification directly: `python3 -c "import onnxruntime as ort; sess = ort.InferenceSession('models/champion/model.onnx'); ..."` → inputs=['float_input'], outputs=[('label',[None]),('probabilities',[None,2])], zeros→9.6678734e-05 proba, NaN-edge→3.4451485e-05 (handled, no crash), 1000-row batch 1.583ms total = 1.59µs/row. The "141× speedup" claim is plausible for single-row.
+- Ran pytest count verification: `python3 -m pytest tests/ -q --co | tail -1` → 411 tests collected; `python3 -m pytest tests/ -q` → 397 passed, 14 skipped, 0 failed, 612 warnings in 85.24s. README:258 says "397 passed, 11 skipped" — minor count mismatch (14 not 11 skipped).
+- Ran direct SHAP TreeExplainer verification: `python3 -c "from src.models.explain import explain_with_shap; ..."` with model + 35-feature zero dict → method:shap_tree, n_shap:35, non_zero:16/35, max_abs:2.786. SHAP TreeExplainer WORKS at the Python level.
+- Grepped every claimed feature in actual source code:
+  * kill-switch: `grep -rn "kill.switch\|killswitch" src/` → 0 matches (NOT in code; only in docs/ARCHITECTURE.md:96,167 which FALSELY claims it's live).
+  * Postgres RLS: `grep -rn "ROW LEVEL SECURITY\|CREATE POLICY" alembic/` → 0 matches (NOT implemented).
+  * adversarial training: `grep -rn "adversarial_training" src/ scripts/` → 0 matches (NOT implemented).
+  * async audit logger wiring: `grep "AsyncAuditLogger" src/api/routes.py` → 0 matches in lifespan construction (module is DEAD CODE — routes.py:914 still constructs synchronous AuditLogger).
+  * feature vector cache wiring: `grep "transform_cached" src/api/routes.py` → 0 matches (DEAD CODE — routes.py:1609 calls uncached `transform()` instead).
+  * 7-action allowlist: `grep -n "ALLOWED_ACTIONS" src/api/agent_allowlist.py` → real at L63 with 7 actions (score_order, request_otp, flag_review, block_order, upi_circle_delegated_pay, validate_device_id, revoke_delegation_on_inactivity) + SCOPE_ACTION_MAP at L127 + enforce_agent_action Depends at routes.py:4119 wired to /risk/score (L1238), /risk/{pid}/override (L2841), /v1/feedback/ingest (L2761).
+  * Kafka stub: `grep -n "KafkaProducer" src/stream/kafka_producer.py` → real at L80, wraps confluent_kafka.Producer when KAFKA_BROKERS set, falls back to Redis Streams xadd on ImportError.
+  * K8s manifests: `ls infra/k8s/` → 11 YAMLs (namespace, postgres-secret, postgres-statefulset, postgres-service, redis-deployment, redis-service, api-configmap, api-deployment, api-service, hpa, kustomization) + README.md.
+  * chaos experiments: `find . -name "chaos-experiments" -o -name "litmus*.yaml"` → 0 matches (NOT run; doc only).
+  * federated learning: `grep -rn "MerchantFLClient\|FLServer" src/` → 0 matches (NOT implemented; doc only).
+  * dual-control HMAC: confirmed REAL — `src/api/routes.py:2833-3220` POST /risk/{prediction_id}/override uses HKDF-derived admin2 subkey (`src/api/keys.py:92 derive_hmac_key()` RFC 5869 salt=b"rto-override-v1" info=b"dual-control"), replay-nonce table (alembic 006), 13 tests in tests/test_override_replay.py.
+  * OC-201B UPI Circle caps: confirmed REAL — `src/api/mandates.py:699-705` defaults max_per_txn_inr=5000, max_per_month_inr=15000, cooling_24h_inr=5000, 5-device cap, 6-month inactivity; _FileState file-mode persistence at L75; Postgres-backed via mandate_counters table (alembic 003/004); 22 tests in tests/test_mandates.py + 14 in tests/test_mandate_concurrency.py.
+  * ONNX Runtime: confirmed REAL — `src/models/feature_builder.py:276-335 _get_onnx_session()` lazy-loads ort.InferenceSession, predict_proba L1171 + predict_proba_batch L1213 prefer ONNX with sklearn fallback.
+  * anti-extraction noise: confirmed REAL — `src/api/security.py:400 apply_anti_extraction_noise()` bins to 2 decimals + adds Gaussian σ=0.01 noise, env flag ANTI_EXTRACTION_NOISE=true default, wired at routes.py:1703 after model.predict_proba.
+  * randomized thresholds: confirmed REAL — `src/rules/engine.py:58 _JITTER_AMPLITUDE=500.0`, L61 `_jitter_threshold()`, applied at L149-150 for `op in ("gt","lt")` on monetary fields, env flag RULES_RANDOMIZE_THRESHOLDS=true default.
+  * per-IP rate limit: confirmed REAL — `src/api/security.py:205 class IPRateLimiter`, L91 `per_ip_rate_per_min()` default 100/min, wired at routes.py:949 + L1384 `state["ip_limiter"].check(client_ip)` inside /risk/score.
+- Audited each UI component in src/components/ for actual API wiring:
+  * ResultCard (page.tsx:500-619) — REAL backend call via fetch("/api/risk/score") at page.tsx:168, renders real BMR decision + cost_breakdown + mandate verdict + audit_id + latency_ms. ✅ WIRED.
+  * ShapWaterfall (shap-waterfall.tsx:60-243) — renders `result.explanation` (top-5 by delta_prob) from /risk/score response. ⚠️ WIRED but data is all 0.0 delta_prob because /risk/score uses reason_codes_batch (perturbation, single-row median = degenerate per routes.py:1615 comment) NOT explain_with_shap (TreeSHAP). The component is misnamed — it's a LIME-perturbation waterfall, not a SHAP waterfall. Real SHAP lives at /v1/explain/shap which no frontend component calls.
+  * CostCurveSlider (cost-curve-slider.tsx:135) — uses `sampleCostCurve`/`findDecisionCrossovers`/`bmrDecisionAt` from src/lib/mock-data.ts (CLIENT-SIDE mock math). The real /api/v1/policy/cost-curves endpoint exists with 19-threshold sweep but the slider DOESN'T call it. ❌ NOT WIRED — exactly the "uapar upar se" pattern the user hates.
+  * RulesToggleCard (rules-toggle-card.tsx) — fetches rules via useQuery("rules") at L137 (REAL). whatIfScore() at L73 is CLIENT-SIDE mock. "Apply & re-score live" at L302 calls onRescore() which is the parent's score() — re-fires /api/risk/score with the ORIGINAL order. Toggle state (overrides React state) is NOT sent to the server, NOT POSTed as a new rule. ⚠️ Fetch wired but toggle is local-only.
+  * AgentConsole (agent-console.tsx) — fully client-side. send() at L255 calls agentReply() at L131 which calls classifyIntent() at L88 — deterministic regex classifier with hardcoded template strings. NO LLM call, NO /api/copilot call. The /api/copilot endpoint exists but is also mock-only (header comment lies about z-ai-web-dev-sdk). ❌ NOT WIRED.
+  * NarrativePivotCard — static infographic with hardcoded STATS (Amazon 0.1027, Olist 0.3950) — accurate numbers, no API call. ℹ️ static.
+- Wrote comprehensive AUDIT_REPORT.md (539 lines) with 6 sections:
+  * Section 1 — Feature Inventory: 37-row 1-to-1 mapping table (Feature | Asked in prompt # | AI claimed status | Real code location | Actually wired? | Quality | Evidence file:line). Quality distribution: 25 real, 9 partial, 4 stub, 3 decorative, 5 missing/overclaimed.
+  * Section 2 — API Endpoint Audit: 21 Python endpoints + 17 Next.js endpoints with live curl results.
+  * Section 3 — UI-to-backend wiring audit: per-component data flow analysis (ResultCard wired ✅, ShapWaterfall renders but all-0 deltas ⚠️, CostCurveSlider uses mock math ❌, RulesToggleCard fetch wired but toggle local ⚠️, AgentConsole fully client-side mock ❌).
+  * Section 4 — Prompt-by-prompt compliance: 16 prompts, each with what was asked + what AI said + what was actually done + gap status (DONE / PARTIAL / NOT DONE / OVERCLAIMED).
+  * Section 5 — Honest gap list: 25 gaps sorted by severity (P0=8, P1=9, P2=8). Top P0s: (1) Merkle chain BROKEN live, (2) Kill-switch API doesn't exist despite doc claim, (3) SHAP waterfall is actually LIME perturbation, (4) CostCurveSlider uses mock math instead of real backend, (5) AgentConsole fully client-side mock, (6) AsyncAuditLogger dead code, (7) Redis feature cache dead code, (8) Render deploy not live.
+  * Section 6 — Top 10 fixes prioritized: set DATABASE_URL (30min), add POST /v1/models/kill-switch (2h), inline explain_with_shap into /risk/score (1h), wire CostCurveSlider to /api/v1/policy/cost-curves (2h), wire AgentConsole to /api/copilot (2h), wire AsyncAuditLogger in lifespan (30min), call transform_cached in routes.py (15min), send rule_overrides in applyAndRescore (1h), fix Olist boleto contract (30min), deploy Render via manual blueprint apply (15min user action). Total ~10 hours to close P0+P1.
+- Appended this worklog entry.
+
+Stage Summary:
+- AUDIT_REPORT.md (539 lines) written to /home/z/my-project/AUDIT_REPORT.md — brutally honest, evidence-based, every claim cites a file:line or a live curl response.
+- Top 10 findings (gaps + overclaims) for user prioritization:
+  1. **P0** Merkle audit chain is BROKEN in live file-mode backend — `curl /v1/audit/verify-chain` returns `intact:false, records_checked:44, first_bad_audit_id:"ce661f64-..."`. README:261-274 claim of "Verified: intact=True" is true for the test path but FALSE for the live running server. Fix: set DATABASE_URL to Neon free Postgres (30min).
+  2. **P0** Kill-switch API DOES NOT EXIST — `grep -rn "kill.switch\|killswitch" src/` → 0 matches. But `docs/ARCHITECTURE.md:96,167` FALSELY claim `POST /admin/kill-switch` is live. Only the auto-opening CircuitBreaker exists. Fix: add the endpoint + correct the doc (2h).
+  3. **P0** The SHAP waterfall in the dashboard is NOT actually SHAP — it's LIME-style perturbation via `reason_codes_batch` which produces all 0.0 delta_prob for single-row inputs (per the honest comment at routes.py:1615). The TreeSHAP swap was implemented in src/models/explain.py:441 but NOT propagated to the /risk/score handler. The /v1/explain/shap endpoint works at Python level (16/35 non-zero values) but no frontend component calls it. Fix: inline `explain_with_shap` into routes.py:1628 (1h).
+  4. **P0** CostCurveSlider uses CLIENT-SIDE mock math from src/lib/mock-data.ts (sampleCostCurve, findDecisionCrossovers, bmrDecisionAt) — the real /api/v1/policy/cost-curves endpoint exists with 19-threshold Drummond-Holte sweep but the slider DOESN'T call it. This is exactly the "uapar upar se" pattern the user explicitly complained about. Fix: replace mock math with useQuery to /api/v1/policy/cost-curves (2h).
+  5. **P0** AgentConsole is FULLY CLIENT-SIDE MOCK — deterministic regex classifier with hardcoded template strings. NO LLM call, NO /api/copilot call. The /api/copilot endpoint exists in src/app/api/copilot/route.ts but is ALSO mock-only — its header comment claims "Uses z-ai-web-dev-sdk" but the actual code does NOT import or use the SDK (it's a regex intent classifier with canned responses). Fix: either wire AgentConsole to /api/copilot OR actually use z-ai-web-dev-sdk in /api/copilot (2h).
+  6. **P0** AsyncAuditLogger is DEAD CODE — module at src/audit/async_logger.py:57 is fully implemented but NOT wired into the lifespan. routes.py:914 constructs `state["audit"] = AuditLogger(...)` (synchronous base class). `grep "AsyncAuditLogger" src/api/routes.py` → 0 matches in the lifespan construction. The "async audit batching" P0 claim from P12 is FALSE at runtime. Fix: change routes.py:914 to `state["audit"] = AsyncAuditLogger(AuditLogger(...))` + add await start()/stop() in lifespan (30min).
+  7. **P0** Redis feature vector cache (`transform_cached`) is DEAD CODE — method at feature_builder.py:685 is fully implemented (cache key rto:featvec:{customer_id}, TTL=300s, Redis SETEX) but NOT invoked from routes.py. routes.py:1609 calls uncached `transform()`. `grep "transform_cached" src/api/routes.py` → 0 matches. The "Redis feature vector cache" P0 claim from P12 is FALSE at runtime. Fix: change routes.py:1609 to `transform_cached(order, customer_id=order.customer_id)` (15min).
+  8. **P0** Render deploy is NOT LIVE — `curl https://rto-trust-layer.onrender.com/health` → 404 Not Found. Worklog line 3400 confirms Render API token is DEAD + user has NO credit card for Render billing. Only Vercel is live (frontend-only, no backend, mock-mode fallback). Fix: user does manual blueprint apply at render.com dashboard (15min user action).
+  9. **P1** RulesToggleCard "Apply & re-score live" doesn't actually apply the toggles — the button calls `onRescore()` which re-fires /api/risk/score with the ORIGINAL order. The user's toggle state (overrides React state) is NOT sent to the server, NOT POSTed as a new rule. The "FLIPPED" badge is misleading — the server doesn't know about the toggle mutation. Fix: POST toggled rules to /api/v1/rules then re-score (1h).
+  10. **P1** Olist dataset path contract mismatch — README:59 says Olist sample request includes `payment_method:"boleto"`. Live `curl /risk/score?dataset=olist -d '{"payment_method":"boleto",...}'` → 422 `{"detail":[{"msg":"String should match pattern '^(COD|Prepaid)$'"}]}`. The OrderIn pydantic schema rejects boleto. Fix: make the schema dataset-aware OR transform boleto→COD in the Olist feature builder (30min).
+- The user's anger is JUSTIFIED on three specific points (SHAP waterfall not really SHAP, CostCurveSlider uses mock math, AgentConsole fully client-side mock) and NOT justified on others (397 tests pass, ONNX real, BMR real, OC-201B caps real, dual-control HMAC real, 7-action allowlist real — all verified live).
+- READ-ONLY on the codebase (no source files modified); only two files written: /home/z/my-project/AUDIT_REPORT.md (new) + this worklog.md append.
+
+---
+
+## Task ID: 4b — UML extraction (code-verified, post-audit)
+Agent: general-purpose (uml-extraction)
+Date: 2026-08-29
+Mode: READ-ONLY on the codebase; only one file written — /home/z/my-project/UML_COMPREHENSIVE.md (overwrote the previous 131 KB AI-generated file with a 67 KB code-verified version).
+
+### Context
+User instruction (verbatim): "SEND A SUBAGENT TO ACTUALLY SCAN AND GET UML DIAGRAMS FROM / BY ACTUALLY SEEING EACH CODE AND NOT MISSING ANY API CALL ETC AND MAKING DETAILED UMLS OF DIFFERENT KIND THAT ARE POSSIBLE".
+
+Predecessor: Task 4a (audit-pass) produced /home/z/my-project/AUDIT_REPORT.md with the verdict counts "25 real · 9 partial · 4 stub · 3 decorative · 5 missing / overclaimed" — and explicitly flagged that the existing UML_COMPREHENSIVE.md (131 KB) had diagrams that "looked pretty" but didn't match code (AsyncAuditLogger "wired", transform_cached "wired", kill-switch endpoint "exists", etc.).
+
+### Work log
+1. Read /home/z/my-project/worklog.md (3685 lines) + /home/z/my-project/AUDIT_REPORT.md (539 lines). Picked up the 37-row feature inventory, the 10-row fix-list, and the cross-tenant-shading verdicts.
+2. Listed /home/z/my-project/src and /home/z/my-project/upload/RTO_Trust_Layer_FULL/src. Catalogued:
+   - Next.js API routes: 18 files under src/app/api/**/route.ts (plus src/app/api/route.ts root)
+   - Python src/api/: routes.py (5206 lines), breaker.py, mandates.py, metrics.py, security.py, otel.py, keys.py, agent_allowlist.py, ingest_routes.py, feature_store.py
+   - Python src/audit/: logger.py (872 lines), async_logger.py (dead code per audit)
+   - Python src/models/: explain.py (SHAP), feature_builder.py, olist_feature_builder.py, train.py, splitting.py
+   - Python src/ml/: drift.py (DDM+ADWIN), registry.py (champion registry + PSI)
+   - Python src/rules/: engine.py (jittered thresholds)
+   - Python src/business/: cost_optimizer.py (Bahnsen BMR + Drummond-Holte sweep + bootstrap CIs)
+   - Python src/remediation/: auto_heal.py (946 lines, 5 handlers)
+   - Python src/stream/: processor.py (HLL + sliding-window + DDM + ADWIN), kafka_producer.py (compat stub)
+3. Grep-verified every Python endpoint with `@app.(get|post|delete)\(` → 22 routes in routes.py + 5 ingest routes in ingest_routes.py. Captured file:line for every decorator + every handler function.
+4. Grep-verified every Next.js route with `export (async )?function (GET|POST|DELETE)` → 18 handlers across 14 route files.
+5. Grep-verified every fetch caller: `fetch\(['"\`]/api/` across src/app + src/components → 16 fetch sites. Mapped each to the route it hits.
+6. Read the golden-path score handler end-to-end: routes.py:1240-2350. Confirmed the shap-fix-1 wiring at routes.py:1744-1799 (real TreeSHAP inline in /risk/score response, fallback to reason_codes_batch on error). This is the audit row 1/8 gap fix from Task 4a.
+7. Read the dual-control override handler end-to-end: routes.py:2908-3218. Confirmed HKDF-Extract+Expand at keys.py:45,57,92 (salt=b"rto-override-v1", info=b"dual-control", length=32), replay-nonce table at routes.py:3000, audit.log with both signature digests at routes.py:3146.
+8. Read the mandates state machine: mandates.py:643-947. Confirmed 5 OC-201B caps (₹5K/txn, ₹15K/month, ₹5K cooling, 5-device, 6-month inactivity) + 5 MandateVerdict transitions (VALID/BREACH/EXPIRED/TAMPERED/REVIEW).
+9. Read the audit logger + MerkleSealer: logger.py:60-388. Confirmed Merkle root math (padding to power of 2, sibling_idx = idx ^ 1) at logger.py:234,263,324. Confirmed file-mode returns None for proof at logger.py:335-336.
+10. Read the auto_heal module: 946 lines. Confirmed 5 event types (circuit_breaker_open, drift_detected, high_rto_rate, audit_write_errors, stream_consumer_down), 5 handlers, HANDLER_REGISTRY, AutoHealService. Confirmed set_app_state_ref is wired at routes.py:924 BUT no event publishers push HealEvents — module is dormant.
+11. Read agent-console.tsx (407 lines): confirmed 0 fetch() calls, fully client-side regex classifier (classifyIntent at line 88), canned templates in agentReply at line 131. CONFIRMED DECORATIVE.
+12. Read cost-curve-slider.tsx (486 lines): confirmed imports sampleCostCurve/findDecisionCrossovers/bmrDecisionAt from src/lib/mock-data.ts at line 65-69, NO fetch call. CONFIRMED DECORATIVE.
+13. Read /api/copilot/route.ts (208 lines): confirmed comment at line 3 claims "z-ai-web-dev-sdk SERVER-SIDE ONLY" but actual imports are SAMPLE_* from mock-data.ts (line 13-20), detectIntent is a regex (line 41), answerFor is a switch on intent (line 63). NO LLM call. CONFIRMED DECORATIVE.
+14. Read the shap-waterfall.tsx component header: confirmed it consumes `reasons: ReasonCode[]` from the /risk/score response's `explanation` field — which now carries real TreeSHAP values (post shap-fix-1).
+15. Wrote /home/z/my-project/UML_COMPREHENSIVE.md (1073 lines, 67 KB) with 12 detailed Mermaid diagrams + cross-cutting gap section.
+
+### Stage summary — artifacts produced
+
+**Primary artifact:** /home/z/my-project/UML_COMPREHENSIVE.md (overwritten) — 12 Mermaid diagrams:
+
+| # | Diagram | Style | Lines |
+|---|---|---|---|
+| 1 | System component diagram (highest level) | flowchart | ~50 nodes, marks every REAL/PARTIAL/STUB/DECORATIVE/MISSING component with `%% evidence: file:line` comments |
+| 2 | API endpoint map | classDiagram | Next.js 18 endpoints + Python 22 endpoints + ingest router 5 endpoints + frontend caller mapping table |
+| 3 | /risk/score golden-path sequence | sequenceDiagram | 13 numbered steps from Browser → Next.js → Python → mandate → rules → breaker → ONNX → anti-extraction → SHAP (inline) → BMR → audit → stream → response |
+| 4 | SHAP explainability flow | flowchart | Two paths: (A) inline in /risk/score [REAL post-fix], (B) /v1/explain/shap endpoint [PARTIAL — feature OHE mismatch per audit row 1] |
+| 5 | Audit trail + Merkle proof | sequenceDiagram | verify-chain + merkle_proof with file-mode vs Postgres-mode branching; documents the live intact:false finding |
+| 6 | Bounded agent console flow | flowchart | DECORATIVE — shows agent-console.tsx has 0 fetch calls; copilot-fab.tsx DOES call /api/copilot; /api/copilot itself is regex+mock (no z-ai-web-dev-sdk) |
+| 7 | Cost optimizer decision flow | flowchart | Real backend (19-threshold Drummond-Holte + bootstrap CIs) vs CostCurveSlider DECORATIVE (local mock math from src/lib/mock-data.ts); model-health/page.tsx IS the real caller |
+| 8 | Model registry + drift detection | flowchart | DDM 2σ/3σ + ADWIN Hoeffding; 5 Prometheus gauges; HLL cardinality-spike; StreamProcessor 4 detectors |
+| 9 | Circuit breaker state machine | stateDiagram-v2 | CLOSED→OPEN→HALF_OPEN with file:line for each transition; rules-only REVIEW fallback never fail-open |
+| 10 | Auto-remediation flow (NEW) | flowchart | 5 handlers + HANDLER_REGISTRY real; set_app_state_ref wired at routes.py:924; ZERO event publishers → dormant |
+| 11 | OC-201B UPI Circle mandate state machine | stateDiagram-v2 | issue_mandate → 5 caps → verify_mandate → VALID/BREACH/EXPIRED/TAMPERED/REVIEW verdicts with file:line |
+| 12 | Dual-control HMAC override sequence | sequenceDiagram | Admin1+Admin2 → HKDF-Extract+Expand (RFC 5869) → replay-nonce table → 2-of-2 enforcement |
+
+**Anti-hallucination discipline:** Every Mermaid box/arrow has an inline `%% evidence: <relative-path>:<line>` comment immediately above it. Dashed borders + `#fef3c7` yellow fill mark STUB/DECORATIVE components. `#eee` gray fill marks MISSING components. The reader can `grep "%% evidence:" UML_COMPREHENSIVE.md` to enumerate every cited code location.
+
+### Stage summary — NEW gaps discovered (NOT in AUDIT_REPORT.md)
+
+Eight additional gaps surfaced while grep-reading the code to draw the diagrams. These are fed into the README update task:
+
+| # | Gap | File:line | Severity | Fix |
+|---|---|---|---|---|
+| A | `transform_cached` is double-dead: not called by /risk/score AND `OrderIn.customer_id` is optional so cache key is often empty; `clear_feature_cache` has 0 callers | feature_builder.py:685,716,739 + routes.py:1609 | P2 | Either delete the dead code OR wire transform_cached at routes.py:1609 with customer_id propagation |
+| B | `state["shap_explainer"]` built by /v1/explain/shap only; /risk/score builds TreeExplainer inline at routes.py:1748 but DOES NOT cache it back → every /risk/score call re-pays ~50ms construction until someone hits /v1/explain/shap | routes.py:1189,1746-1748,3710 | P1 | Add `state["shap_explainer"] = _shap_explainer` after line 1748 (one-line fix) |
+| C | /v1/explain/shap accepts raw-order features (10 fields) but the champion expects 79 OHE'd features → KernelExplainer construction fails live | routes.py:3453, explain.py:287 | P1 | Call `_feat_builder.transform(feature_dict)` first, then pass the (1,79) ndarray to explain_with_shap (mirror routes.py:1609) |
+| D | AsyncAuditLogger not wired at routes.py:914; sync AuditLogger.log is on the hot path of /risk/score (~5-15ms blocking write per call) | routes.py:914,2163 + async_logger.py:57 | P2 | `state["audit"] = AsyncAuditLogger(AuditLogger(...))` + lifespan startup/shutdown start()/stop() |
+| E | /v1/cases + /v1/cases/:case_id/resolve are real but no dashboard page surfaces them; src/app has no Cases page | routes.py:2405,2432 | P3 | Add src/app/cases/page.tsx |
+| F | `state["cost_curve"]` is populated in lifespan (routes.py:1034) but NEVER read; /v1/policy/cost-curves recomputes the sweep on every call | routes.py:1034,2605 + cost_optimizer.py:354 | P3 | Either wire state["cost_curve"] into the endpoint OR remove the dead lifespan code |
+| G | The 2 drift SUMMARY metrics (rto_drift_detection_delay_seconds, rto_drift_false_alarm_run_length) are declared in metrics.py:46-53 but 0 callers populate them — only the 5 GAUGES are wired | metrics.py:46-53 + routes.py:2393-2397 | P3 | Wire `state["metrics"].observe_*` calls in drift_consumer.py when drift transitions fire |
+| H | /v1/usage endpoint returns merkle_intervals but file-mode returns [] (same root cause as audit row 2 — Merkle sealer is None in file mode) | routes.py:4131 + logger.py:544 | P2 | Postgres mode + cron seal_interval() (same fix as audit gap #1) |
+
+### Stage summary — diagrams vs audit verdicts (sanity check)
+
+| Audit verdict count | Diagrams that mark this verdict |
+|---|---|
+| 25 REAL | Diagrams 1, 3, 7, 8, 9, 11, 12 — all mark `[REAL]` with file:line evidence |
+| 9 PARTIAL | Diagrams 1 (AsyncAuditLogger, transform_cached), 4 (Path B /v1/explain/shap), 7 (Slider not wired), 10 (auto_heal dormant), 12 (HMAC opt-in default-off) |
+| 4 STUB | Diagram 1 marks LitmusChaos + Federated Learning as STUB (docs-only) |
+| 3 DECORATIVE | Diagrams 1 (Mock fallback, AsyncAudit, FeatCache), 6 (AgentConsole + /api/copilot), 7 (CostCurveSlider) |
+| 5 MISSING | Diagram 1 marks kill-switch endpoint, Postgres RLS, adversarial training, Render deploy (also FL is STUB not MISSING) |
+
+### Stage summary — READ-ONLY confirmation
+- No source files modified. Only two writes:
+  1. /home/z/my-project/UML_COMPREHENSIVE.md (OVERWROTE the existing 131 KB file with 67 KB code-verified version)
+  2. This append to /home/z/my-project/worklog.md
+- All diagrams verified against actual code via grep + Read before drawing. No "upar upar se" — every box has a `%% evidence:` comment the reader can verify in seconds.

@@ -1,0 +1,352 @@
+   351→  URL: https://medium.com/@cdcore/why-i-switched-from-supabase-to-neon-and-you-should-too-1fb6be07a043
+   352→  Date:  | Host: medium.com
+   353→  Snippet: I liked Supabase . I want to be clear about that. It gave me auth, a Postgres database, row-level security, and a generous free tier — all in ... Read more
+   354→
+   355→=== grafana_cloud.json ===
+   356→- Grafana Pricing | Free, Pro, Enterprise
+   357→  URL: https://grafana.com/pricing
+   358→  Date:  | Host: grafana.com
+   359→  Snippet: Actually useful free tier with access to everything that Grafana Cloud has to offer. Limited to 50 GB ingested per month; 14 day retention; Community support. Read more
+   360→- Difference in Grafana Cloud v. Self-hosted
+   361→  URL: https://www.reddit.com/r/grafana/comments/1h477u1/difference_in_grafana_cloud_v_selfhosted_grafana
+   362→  Date:  | Host: www.reddit.com
+   363→  Snippet: It's pretty typical for grafana cloud to come in at 30-50% cheaper than datadog comparing apples to apples, so that part is kind of an easy win. Read more
+   364→- Grafana get started | Cloud, Self-managed, Enterprise
+   365→  URL: https://grafana.com/get
+   366→  Date:  | Host: grafana.com
+   367→  Snippet: Create a free Grafana Cloud account . Prometheus The industry standard for monitoring applications and services. scale and secure metrics, logs and Grafana on ...
+   368→- Top 10 Grafana Alternatives in 2026
+   369→  URL: https://openobserve.ai/blog/top-10-grafana-alternatives
+   370→  Date:  | Host: openobserve.ai
+   371→  Snippet: OpenObserve is the best Grafana alternative in 2026. It replaces the entire Grafana stack ( Prometheus , Loki, Tempo, Grafana ) with a single unified platform for ... Read more
+   372→- Why companies choose Grafana Cloud over self-hosted
+   373→  URL: https://grafana.com/blog/why-companies-choose-grafana-cloud-over-self-hosted-oss-stacks
+   374→  Date: Nov 27, 2024 | Host: grafana.com
+   375→  Snippet: Nov 27, 2024 — Lower costs, reduced maintenance, centralized tools — observability experts talk about why Grafana Cloud is their hosted platform of choice.
+   376→- Grafana Cloud vs Grafana OSS | Key differences
+   377→  URL: https://grafana.com/oss-vs-cloud
+   378→  Date:  | Host: grafana.com
+   379→  Snippet: Compare Grafana Labs open source projects to Grafana Cloud : installation and deployment, security and support, and the solutions and features included in ...
+   380→- Self-hosting Grafana the easy way
+   381→  URL: https://sliplane.io/blog/self-hosting-grafana-the-easy-way
+   382→  Date: Feb 26, 2026 | Host: sliplane.io
+   383→  Snippet: Feb 26, 2026 — Use our bandwidth cost comparison tool to see what your egress would cost on each platform. For a deeper comparison, see Grafana Cloud vs  ...
+   384→- You Ask, We Answer: What is the True Cost of Grafana?
+   385→  URL: https://www.siriusopensource.com/en-us/blog/true-cost-grafana
+   386→  Date:  | Host: www.siriusopensource.com
+   387→  Snippet: Grafana Cloud provides a fully managed, usage-based observability stack built on open standards. The cost depends entirely on the service tier and the volume of ... Read more
+   388→
+   389→=== k8s_operator.json ===
+   390→- CNCF Operator White Paper
+   391→  URL: https://tag-app-delivery.cncf.io/fr/whitepapers/operator
+   392→  Date:  | Host: tag-app-delivery.cncf.io
+   393→  Snippet: The auto - remediation capability of an operator should ensure that it is able to restore the application from a more complex failed state, which might not be ...
+   394→- Understanding the Operator Pattern
+   395→  URL: https://hydrolix.io/blog/understanding-the-operator-pattern
+   396→  Date: Aug 12, 2025 | Host: hydrolix.io
+   397→  Snippet: Aug 12, 2025 — Learn about the Kubernetes operator pattern , the current use of the operator pattern in the field, and why we use it with our K8s clusters.
+   398→- What is a Kubernetes operator?
+   399→  URL: https://www.redhat.com/en/topics/containers/what-is-a-kubernetes-operator
+   400→  Date: Jul 10, 2026 | Host: www.redhat.com
+   401→  Snippet: Jul 10, 2026 — A Kubernetes operator is a method of packaging, deploying, and managing an application by extending the functionality of the Kubernetes API.
+   402→- GitOps-Backed Agentic Operator for Kubernetes - DZone
+   403→  URL: https://dzone.com/articles/gitops-agentic-operator-kubernetes-auto-remediation
+   404→  Date: Nov 10, 2025 | Host: dzone.com
+   405→  Snippet: Nov 10, 2025 — Create an AI-driven Kubernetes Operator that analyzes failures, generates fixes with LLMs, validates them with OPA, and applies changes safely ... Read more
+   406→- k8sgpt-operator/AUTO_REMEDIATION.md at main
+   407→  URL: https://github.com/k8sgpt-ai/k8sgpt-operator/blob/main/AUTO_REMEDIATION.md
+   408→  Date:  | Host: github.com
+   409→  Snippet: Auto remediation is experimental and must not be relied on for production changes without independent review. The operator can create a Mutation proposal for ... Read more
+   410→- developing k8s operators : r/kubernetes
+   411→  URL: https://www.reddit.com/r/kubernetes/comments/1p8gmv6/developing_k8s_operators
+   412→  Date:  | Host: www.reddit.com
+   413→  Snippet: I would like to have an operator that learns application vertical and horizontal pod autoscale patterns and modifies new deployments to match ... Read more
+   414→- Advanced Kubernetes Operators: Enhancing Automation
+   415→  URL: https://kubeops.net/blog/advanced-kubernetes-operators-enhancing-automation-and-management
+   416→  Date:  | Host: kubeops.net
+   417→  Snippet: An Operator for a microservices -based application can monitor the load and scale up or down the number of pods as required, ensuring efficient resource ...
+   418→- Day 152: Building a Custom Kubernetes Operator for Log
+   419→  URL: https://sdcourse.substack.com/p/day-152-building-a-custom-kubernetes
+   420→  Date:  | Host: sdcourse.substack.com
+   421→  Snippet: This operator automatically handles deployment scaling, configuration updates, health monitoring, and failure recovery—eliminating manual ... Read more
+   422→
+   423→=== litmus.json ===
+   424→- Litmus | CNCF
+   425→  URL: https://www.cncf.io/projects/litmus
+   426→  Date:  | Host: www.cncf.io
+   427→  Snippet: Litmus helps SREs and developers practice chaos engineering in a Cloud-native way. Chaos experiments are published at the ChaosHub (https://hub.litmuschaos.io). Read more
+   428→- LitmusChaos - Open Source Chaos Engineering Platform
+   429→  URL: https://litmuschaos.io
+   430→  Date:  | Host: litmuschaos.io
+   431→  Snippet: Litmus is a CNCF-hosted, open-source Chaos Engineering platform that helps teams identify infrastructure weaknesses through safe, controlled chaos tests,
+   432→- LitmusChaos
+   433→  URL: https://github.com/litmuschaos/litmus
+   434→  Date:  | Host: github.com
+   435→  Snippet: LitmusChaos is an open source Chaos Engineering platform that enables teams to identify weaknesses & potential outages in infrastructures by inducing chaos ... Read more
+   436→- Harness Chaos Engineering vs LitmusChaos
+   437→  URL: https://developer.harness.io/docs/chaos-engineering/resources/hce-vs-litmus
+   438→  Date: Jul 24, 2025 | Host: developer.harness.io
+   439→  Snippet: Jul 24, 2025 — LitmusChaos is an open-source CNCF incubation project that provides a comprehensive chaos engineering platform for Kubernetes environments. Read more
+   440→- LitmusChaos - Open Source Chaos Engineering Platform
+   441→  URL: https://litmuschaos.io/adopters/anutanetworks
+   442→  Date:  | Host: litmuschaos.io
+   443→  Snippet: LitmusChaos is an open source Chaos Engineering platform that enables teams to identify weaknesses & potential outages in infrastructures by inducing chaos ...
+   444→- LitmusChaos 3.0: making chaos engineering robust, lean
+   445→  URL: https://www.cncf.io/blog/2023/11/07/litmuschaos-3-0-making-chaos-engineering-robust-lean-and-developer-centric
+   446→  Date: Nov 7, 2023 | Host: www.cncf.io
+   447→  Snippet: Nov 7, 2023 — LitmusChaos 3.0 proudly introduces Chaos Studio , a powerful tool that simplifies the process of fine-tuning your chaos experiments.
+   448→- Introduction to k6 Load Chaos in LitmusChaos
+   449→  URL: https://litmuschaos.io/blog/introduction-to-k6-load-chaos-in-litmuschaos-4l2k
+   450→  Date: May 26, 2024 | Host: litmuschaos.io
+   451→  Snippet: May 26, 2024 — LitmusChaos (CNCF incubating project ) is a Cloud-Native Chaos Engineering Framework. You can use Litmus to inject controlled chaos and run  ...
+   452→- Chaos Engineering With LitmusChaos
+   453→  URL: https://www.redhat.com/en/blog/chaos-engineering-with-litmuschaos
+   454→  Date: Oct 27, 2021 | Host: www.redhat.com
+   455→  Snippet: Oct 27, 2021 — LitmusChaos is one of the CNCF projects for emulating different chaos ... LitmusChaos uses the term Chaos Experiments for the resilience tests. Read more
+   456→
+   457→=== merkle_audit.json ===
+   458→- Merkle tree-based logging | Enhance Data Security Today
+   459→  URL: https://www.register-dynamics.co.uk/data-trusts/merkle-trees
+   460→  Date:  | Host: www.register-dynamics.co.uk
+   461→  Snippet: Explore Merkle tree-based logging technology to enhance data integrity, transparency, and security through cryptographic hashes and audit-proof structures.
+   462→- RFC 6962: Certificate Transparency
+   463→  URL: https://www.rfc-editor.org/info/rfc6962
+   464→  Date:  | Host: www.rfc-editor.org
+   465→  Snippet: Merkle Hash Trees Logs use a binary Merkle Hash Tree for efficient auditing . The hashing algorithm is SHA-256 [FIPS.180-4] (note that this is fixed for this ... Read more
+   466→- Don't trust your logs! Implementing a Merkle tree for  - Medium
+   467→  URL: https://arriqaaq.medium.com/dont-trust-your-logs-implementing-a-merkle-tree-for-an-immutable-verifiable-log-in-go-c242b558ae00
+   468→  Date:  | Host: arriqaaq.medium.com
+   469→  Snippet: A Merkle audit path for a leaf is the list of all additional nodes in the Merkle tree required to compute the Merkle Tree Hash for that tree. If ... Read more
+   470→- End of Life Plan for RFC 6962 Certificate Transparency Logs
+   471→  URL: https://letsencrypt.org/2025/08/14/rfc-6962-logs-eol
+   472→  Date: Aug 14, 2025 | Host: letsencrypt.org
+   473→  Snippet: Aug 14, 2025 — This forms a cryptographically verifiable structure called a Merkle Tree , which can be used to check if a certificate is in the tree, and that ... Read more
+   474→- Transparent Logs for Skeptical Clients
+   475→  URL: https://research.swtch.com/tlog
+   476→  Date: Mar 1, 2019 | Host: research.swtch.com
+   477→  Snippet: Mar 1, 2019 — This post explains the design and implementation of this verifiably tamper-evident log , also called a transparent log . Transparency as defined ...
+   478→- RFC 6962 - Certificate Transparency
+   479→  URL: https://datatracker.ietf.org/doc/rfc6962
+   480→  Date:  | Host: datatracker.ietf.org
+   481→  Snippet: Merkle Hash Trees Logs use a binary Merkle Hash Tree for efficient auditing . The hashing algorithm is SHA-256 [FIPS.180-4] (note that this is fixed for this ... Read more
+   482→- Ed25519 + Merkle Tree + UUIDv7 = Building Tamper-Proof
+   483→  URL: https://dev.to/veritaschain/ed25519-merkle-tree-uuidv7-building-tamper-proof-decision-logs-o1e
+   484→  Date: Dec 12, 2025 | Host: dev.to
+   485→  Snippet: Dec 12, 2025 — This article shows how to combine three cryptographic primitives—Ed25519 signatures, Merkle trees , and UUIDv7 identifiers—to create an ...
+   486→- Locking objects with Object Lock
+   487→  URL: https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html
+   488→  Date: Jul 30, 2026 | Host: docs.aws.amazon.com
+   489→  Snippet: Jul 30, 2026 — S3 Object Lock can help prevent Amazon S3 objects from being deleted or overwritten for a fixed amount of time or indefinitely. Read more
+   490→
+   491→=== mlflow.json ===
+   492→- W&B vs MLflow vs Kubeflow: MLOps Platform Comparison
+   493→  URL: https://www.buildmvpfast.com/blog/mlops-platforms-compared-wandb-mlflow-kubeflow-2026
+   494→  Date: Mar 29, 2026 | Host: www.buildmvpfast.com
+   495→  Snippet: Side-by-side comparison of Weights & Biases, MLflow, and Kubeflow for experiment tracking, model registry, and pipeline orchestration.
+   496→- MLflow vs Weights & Biases vs ZenML
+   497→  URL: https://www.zenml.io/blog/mlflow-vs-weights-and-biases
+   498→  Date: May 18, 2025 | Host: www.zenml.io
+   499→  Snippet: In this MLflow vs Weights & Biases vs ZenML article, we explain the difference between the three platforms and educate you about using them ...
+   500→- MLflow vs Weights and Biases - ML Experiment Tracking
+   501→  URL: https://deploybase.ai/articles/mlflow-vs-wandb
+   502→  Date: Aug 18, 2025 | Host: deploybase.ai
+   503→  Snippet: Compare MLflow and W&B for experiment tracking. MLflow is open-source and self-hosted; W&B is managed and collaborative.
+   504→- Is Weights and Biases worth the money? : r/mlops
+   505→  URL: https://www.reddit.com/r/mlops/comments/uxieq3/is_weights_and_biases_worth_the_money
+   506→  Date:  | Host: www.reddit.com
+   507→  Snippet: I've been evaluating Weights and Biases recently for our team (very small team with only a couple of people training models now). We like it so far, ...
+   508→- MLflow vs Weights & Biases (2026)
+   509→  URL: https://www.respan.ai/market-map/compare/mlflow-vs-weights-and-biases
+   510→  Date: Mar 27, 2026 | Host: www.respan.ai
+   511→  Snippet: MLflow vs Weights & Biases: features, pricing, pros, cons, and which to pick for observability, prompts & evals. Updated 2026.
+   512→- MLflow vs Weights & Biases vs Neptune: 2026 Comparison
+   513→  URL: https://reintech.io/blog/mlflow-vs-weights-and-biases-vs-neptune-experiment-tracking-comparison
+   514→  Date: Dec 31, 2025 | Host: reintech.io
+   515→  Snippet: W&B offers a generous free tier for individuals and academics. The Dedicated Cloud option (self-hosted) is significantly more expensive. The ...
+   516→- Weights & Biases Pricing vs Self-Hosted MLflow (2026)
+   517→  URL: https://www.spheron.network/blog/weights-biases-pricing-vs-self-hosted-mlflow-2026
+   518→  Date: Aug 18, 2026 | Host: www.spheron.network
+   519→  Snippet: Direct answer: MLflow itself has no license fee, it's Apache 2.0 with no paid tiers, so the real cost of self-hosting is the infrastructure you ...
+   520→- ML Model Registry
+   521→  URL: https://mlflow.org/docs/latest/ml/model-registry
+   522→  Date:  | Host: mlflow.org
+   523→  Snippet: The MLflow Model Registry is a centralized model store, set of APIs and a UI designed to collaboratively manage the full lifecycle of a machine learning model.
+   524→
+   525→=== mlops.json ===
+   526→- Metaflow vs Kubeflow vs ZenML: Which ML Pipeline Tool Is
+   527→  URL: https://www.zenml.io/blog/metaflow-vs-kubeflow
+   528→  Date: Jul 14, 2025 | Host: www.zenml.io
+   529→  Snippet: Jul 14, 2025 — This article compares Metaflow, Kubeflow, and ZenML – three popular ML pipeline frameworks – TensorFlow Extended (TFX) DSL ,
+   530→- MLFlow vs Metaflow vs Kubeflow: Exhaustive Technical
+   531→  URL: https://python.plainenglish.io/mlflow-vs-metaflow-vs-kubeflow-exhaustive-technical-comparison-72537a081e62
+   532→  Date: Nov 14, 2025 | Host: python.plainenglish.io
+   533→  Snippet: Nov 14, 2025 — MLflow prioritizes lightweight experiment tracking with minimal infrastructure overhead, Metaflow optimizes for data scientist productivity ...
+   534→- ZenML VS Flyte VS Metaflow
+   535→  URL: https://mlops.community/blog/zenml-vs-flyte-vs-metaflow
+   536→  Date: Jan 10, 2025 | Host: mlops.community
+   537→  Snippet: Jan 10, 2025 — This blog compares three popular machine learning workflow orchestration tools: ZenML , Flyte, and Metaflow .
+   538→- What are some really good and widely used MLOps tools
+   539→  URL: https://www.reddit.com/r/mlops/comments/1hjbmyp/what_are_some_really_good_and_widely_used_mlops
+   540→  Date:  | Host: www.reddit.com
+   541→  Snippet: Hey everyone! I was laid off in Jan 2024. Managed to find a part time job at a startup as an ML Engineer (was unpaid for 4 months but they pay me only ...
+   542→- MLOps: A deep dive into TFX, Kubeflow, ZenML, and MLflow
+   543→  URL: https://medium.com/@ransford.addai/mlops-a-deep-dive-into-tfx-kubeflow-zenml-and-mlflow-847f57c47b03
+   544→  Date:  | Host: medium.com
+   545→  Snippet: In this article, we explore four prominent MLOps frameworks — TensorFlow Extended ( TFX ), Kubeflow , ZenML , and MLflow — elucidating their ... Read more
+   546→- A Brief Comparison of Kubeflow vs. MLflow
+   547→  URL: https://jfrog.com/blog/a-brief-comparison-of-kubeflow-vs-mlflow
+   548→  Date: Nov 14, 2022 | Host: jfrog.com
+   549→  Snippet: Nov 14, 2022 — While Kubeflow is focused on orchestration and pipeline, MLflow is more focused on experiment tracking . This means that they've both got ... Read more
+   550→- Kubeflow vs MLflow vs Metaflow: ML Pipeline Comparison
+   551→  URL: https://reintech.io/blog/kubeflow-vs-mlflow-vs-metaflow-ml-pipeline-orchestration-comparison
+   552→  Date: Dec 31, 2025 | Host: reintech.io
+   553→  Snippet: Dec 31, 2025 — Community size is smaller compared to MLflow or Kubeflow . This means fewer third-party integrations, less community support, and a smaller ... Read more
+   554→- An Empirical Evaluation of Modern MLOps Frameworks
+   555→  URL: https://arxiv.org/html/2601.20415v1
+   556→  Date: Jan 28, 2026 | Host: arxiv.org
+   557→  Snippet: Jan 28, 2026 — MLflow and Metaflow more suitable for early phases or users without DevOps experience, while Airflow and Kubeflow are oriented to professional ...
+   558→
+   559→=== model_serving.json ===
+   560→- MLOps 2026: Why KServe and Triton are Dominating
+   561→  URL: https://dev.to/dataformathub/mlops-2026-why-kserve-and-triton-are-dominating-model-inference-577m
+   562→  Date: Jan 16, 2026 | Host: dev.to
+   563→  Snippet: Jan 16, 2026 — Recent benchmarks demonstrated that converting models to ONNX and serving them with ONNX Runtime can yield up to 9x higher throughput compared ...
+   564→- Machine learning model serving - Xin Cheng - Medium
+   565→  URL: https://billtcheng2013.medium.com/machine-learning-model-serving-251925111503
+   566→  Date:  | Host: billtcheng2013.medium.com
+   567→  Snippet: Compare KServe , Seldon Core, and BentoML for ML model serving on Kubernetes. Learn features, pros, and best practices… ... KServe : Kubernetes- ... Read more
+   568→- KServe vs Seldon Core vs BentoML on GPU Cloud
+   569→  URL: https://www.spheron.network/blog/kserve-vs-seldon-core-vs-bentoml-kubernetes-ml-serving-guide
+   570→  Date: May 28, 2026 | Host: www.spheron.network
+   571→  Snippet: May 28, 2026 — KServe, Seldon Core v2, and BentoML each take a different approach to Kubernetes-native ML serving. Here's how to pick the right one for ...
+   572→- Best Model Serving Runtimes To Build Optimized ML APIs
+   573→  URL: https://www.axelmendoza.com/posts/best-model-serving-runtimes
+   574→  Date: Jun 7, 2024 | Host: www.axelmendoza.com
+   575→  Snippet: Jun 7, 2024 — We will thoroughly compare the main features, pros, and cons of TensorFlow Serving, TorchServe, BentoML, and Tri ton Inference Server
+   576→- Multi-model serving options : r/mlops
+   577→  URL: https://www.reddit.com/r/mlops/comments/1110jfx/multimodel_serving_options
+   578→  Date:  | Host: www.reddit.com
+   579→  Snippet: Triton Inference Server and MLServer both support multi-model serving for a wide variety of frameworks ] Machine Learning Model Serving ...
+   580→- BentoML vs Seldon Core vs KServe: Model Serving
+   581→  URL: https://reintech.io/blog/bentoml-vs-seldon-core-vs-kserve-model-serving-framework-comparison
+   582→  Date: Jan 30, 2026 | Host: reintech.io
+   583→  Snippet: Jan 30, 2026 — BentoML handles 1000+ requests per second with p95 latency under 50ms on modest hardware. KServe leverages high-performance runtimes like  ...
+   584→- ML Model Serving Tools Im Vergleich: KServe Vs Seldon
+   585→  URL: https://xebia.com/blog/machine-learning-model-serving-tools-comparison-kserve-seldon-core-bentoml
+   586→  Date:  | Host: xebia.com
+   587→  Snippet: KServe offers advanced Kubernetes-native serving with autoscaling and scale-to-zero capabilities, Seldon Core provides flexible deployment patterns including A/ ... Read more
+   588→- KServe, BentoML, Seldon, Ray Serve, Triton Inference Server
+   589→  URL: https://www.kunwar.page/chapter/045-inference-servers-and-orchestration-kserve-bentoml-seldon-ray-serve-triton-inference-server
+   590→  Date:  | Host: www.kunwar.page
+   591→  Snippet: KServe is more common . It's both a runtime (running ONNX, TensorRT, vLLM, etc. backends) serving, dynamic batching, model versioning). Strengths: Production- ...
+   592→
+   593→=== observability.json ===
+   594→- Grafana Tempo OSS | Distributed tracing backend
+   595→  URL: https://grafana.com/oss/tempo
+   596→  Date:  | Host: grafana.com
+   597→  Snippet: Grafana Tempo is an open source, easy-to-use, and high-scale distributed tracing backend. Tempo is cost-efficient, requiring only object storage to operate, and ... Read more
+   598→- Grafana Tempo documentation
+   599→  URL: https://grafana.com/docs/tempo/latest
+   600→  Date:  | Host: grafana.com
+   601→  Snippet: You can use Tempo with open source tracing protocols, including Jaeger , Zipkin, or OpenTelemetry .
+   602→- Intro to distributed tracing with Tempo, OpenTelemetry, and
+   603→  URL: https://grafana.com/blog/intro-to-distributed-tracing-with-tempo-opentelemetry-and-grafana-cloud
+   604→  Date: Sep 24, 2021 | Host: grafana.com
+   605→  Snippet: Sep 24, 2021 — Observability Platforms. The easiest way to get started with Tempo and tracing is Grafana Cloud . We have free and paid plans for every use case.
+   606→- Sandip Das - Distributed Tracing & Observability
+   607→  URL: https://www.linkedin.com/posts/sandip-das-developer_distributed-tracing-observability-jaeger-activity-7331692702117310465-I5BR
+   608→  Date:  | Host: www.linkedin.com
+   609→  Snippet: Distributed Tracing & Observ ability – Jaeger, OpenTelemetry & Grafana Tempo Topics Covered: ▷ What is distributed tracing and why it ...
+   610→- OpenTelemetry vs Tempo - Key Differences Explained
+   611→  URL: https://signoz.io/comparisons/opentelemetry-vs-tempo
+   612→  Date: Jan 22, 2025 | Host: signoz.io
+   613→  Snippet: Jan 22, 2025 — OpenTelemetry and Grafana Tempo serve different but complementary roles in application observability . Tempo is a distributed tracing backend ...
+   614→- Part 2: Tracing distribuído com Grafana Alloy + Tempo
+   615→  URL: https://medium.com/@RafaelDurelli/end-to-end-observability-with-kubernetes-parte-2-tracing-distribu%C3%ADdo-com-grafana-alloy-tempo-87da3a467927
+   616→  Date:  | Host: medium.com
+   617→  Snippet: Tempo is a high-scale, cost-effective distributed tracing backend . Tempo is compatible with OpenTelemetry, Jaeger, and Zipkin protocols.
+   618→- How to Deploy Grafana Tempo with kube-prometheus
+   619→  URL: https://oneuptime.com/blog/post/2026-02-09-grafana-tempo-kube-prometheus/view
+   620→  Date: Feb 9, 2026 | Host: oneuptime.com
+   621→  Snippet: Feb 9, 2026 — Grafana Tempo completes the observability stack by adding distributed tracing to Prometheus metrics and Loki logs. By storing traces in object ... Read more
+   622→- Explaining the difference between Grafana Tempo and
+   623→  URL: https://www.reddit.com/r/grafana/comments/wpmauw/explaining_the_difference_between_grafana_tempo
+   624→  Date:  | Host: www.reddit.com
+   625→  Snippet: Tempo is a long-term storage platform for trace data . It can receive trace data from a number of inputs (such as the OpenTelemetry collector), ... Read more
+   626→
+   627→=== razorpay_ada.json ===
+   628→- How Razorpay Built Real-Time Anomaly Detection with
+   629→  URL: https://aws.amazon.com/blogs/big-data/how-razorpay-built-real-time-anomaly-detection-with-amazon-msk
+   630→  Date: Jul 13, 2026 | Host: aws.amazon.com
+   631→  Snippet: Jul 13, 2026 — In this post, we explore Razorpay's anomaly detection and alerting platform (ADA) architecture using Amazon Managed Streaming for Apache Kafka ( ... Read more
+   632→- How Razorpay Built Real-Time Anomaly Detection with
+   633→  URL: https://aws-news.com/article/2026-07-13-how-razorpay-built-real-time-anomaly-detection-with-amazon-msk
+   634→  Date: Jul 13, 2026 | Host: aws-news.com
+   635→  Snippet: Jul 13, 2026 — This article describes how Razorpay built ADA ( Anomaly Detection and Alerting), a real-time platform using Amazon MSK and Apache Flink to detect ... Read more
+   636→- Razorpay's Real-Time Anomaly Detection Engine on AWS
+   637→  URL: https://www.linkedin.com/posts/ravikompella_how-razorpay-built-real-time-anomaly-detection-activity-7482641168573366272-325v
+   638→  Date:  | Host: www.linkedin.com
+   639→  Snippet: ADA — a real-time anomaly detection engine on Amazon MSK + Apache Flink . ~80% lower monitoring costs * 99.99% uptime at massive scale * 90%+ ...
+   640→- Real-Time Anomaly Detection with Apache Flink
+   641→  URL: https://seanfalconer.medium.com/real-time-anomaly-detection-with-apache-flink-38d909a09fce
+   642→  Date:  | Host: seanfalconer.medium.com
+   643→  Snippet: Learn how to build a real-time anomaly detection pipeline using Apache Flink and Confluent Cloud to instantly detect and alert on spikes
+   644→- Build an Agentic AI-Powered Real-Time Anomaly
+   645→  URL: https://aws-experience.com/emea/de-central-growth/e/97ded/apache-iceberg-on-aws-workshop-building-scalable-batch--streaming-pipelines
+   646→  Date:  | Host: aws-experience.com
+   647→  Snippet: This hands-on workshop guides participants to build an end-to-end real-time anomaly detection system that combines the power of AWS data streaming services
+   648→- Anomaly Detection in Streaming Data with Flink
+   649→  URL: https://streamkap.com/resources-and-guides/flink-anomaly-detection
+   650→  Date: Feb 25, 2026 | Host: streamkap.com
+   651→  Snippet: Feb 25, 2026 — How to detect anomalies in real-time data streams using Apache Flink . Covers statistical methods, windowed baselines, z-score detection, and ... Read more
+   652→- aws-samples/sample-clickstream-anomaly-detection
+   653→  URL: https://github.com/aws-samples/sample-clickstream-anomaly-detection
+   654→  Date:  | Host: github.com
+   655→  Snippet: This repository demonstrates an AI-powered real-time clickstream anomaly detection system. The solution combines streaming data processing with intelligent ... Read more
+   656→
+   657→=== razorpay_aws_case.json ===
+   658→- How Razorpay Built Real-Time Anomaly Detection with
+   659→  URL: https://aws.amazon.com/blogs/big-data/how-razorpay-built-real-time-anomaly-detection-with-amazon-msk
+   660→  Date: Jul 13, 2026 | Host: aws.amazon.com
+   661→  Snippet: Jul 13, 2026 — In this post, we explore Razorpay's anomaly detection and alerting platform (ADA) architecture using Amazon Managed Streaming for Apache Kafka ( ... Read more
+   662→- AWS Big Data Blog
+   663→  URL: https://aws.amazon.com/blogs/big-data
+   664→  Date:  | Host: aws.amazon.com
+   665→  Snippet: Learn the architectural decisions, the five-phase migration, and the results: 65% faster P95 queries and a 63% infrastructure cost reduction. Read more
+   666→- Razorpay's Real-Time Anomaly Detection Engine on AWS
+   667→  URL: https://www.linkedin.com/posts/ravikompella_how-razorpay-built-real-time-anomaly-detection-activity-7482641168573366272-325v
+   668→  Date:  | Host: www.linkedin.com
+   669→  Snippet: ADA — a real-time anomaly detection engine on Amazon … ~80% lower monitoring costs * 99.99% uptime at massive scale * 90%+ fewer false alarms
+   670→- Real-time anomaly detection via Random Cut Forest in
+   671→  URL: https://aws.amazon.com/blogs/big-data/real-time-anomaly-detection-via-random-cut-forest-in-amazon-managed-service-for-apache-flink
+   672→  Date: May 1, 2023 | Host: aws.amazon.com
+   673→  Snippet: May 1, 2023 — This post demonstrates how we can use Amazon Managed Service for Apache Flink to run an online RCF algorithm for anomaly detection .
+   674→- Service suggestion for data analysis with outlier and
+   675→  URL: https://repost.aws/questions/QUpMdrV3cKQra3EouSkdv-MA/service-suggestion-for-data-analysis-with-outlier-and-pattern-detection
+   676→  Date: Feb 13, 2025 | Host: repost.aws
+   677→  Snippet: Feb 13, 2025 — QuickSight's ML-powered anomaly detection can help you identify outliers and patterns in your data without requiring you to specify all ... Read more
+   678→- Introducing AWS Glue Data Quality anomaly detection
+   679→  URL: https://aws.amazon.com/blogs/big-data/introducing-aws-glue-data-quality-anomaly-detection
+   680→  Date: Aug 8, 2024 | Host: aws.amazon.com
+   681→  Snippet: Aug 8, 2024 — The anomaly detection algorithm takes a minimum of three data points to learn and start predicting. After three runs, you may see multiple ... Read more
+   682→- Data Engineering at Scale - Building a Real-time
+   683→  URL: https://razorpay.com/blog/data-classification-real-time-highway
+   684→  Date: Jan 22, 2020 | Host: razorpay.com
+   685→  Snippet: Jan 22, 2020 — At Razorpay , we have data coming into our systems at an extremely high scale and from a variety of sources. To ensure and enable that the ... Read more
+   686→- Real-time time series anomaly detection for streaming
+   687→  URL: https://aws.amazon.com/blogs/big-data/real-time-time-series-anomaly-detection-for-streaming-applications-on-amazon-managed-service-for-apache-flink
+   688→  Date: May 23, 2023 | Host: aws.amazon.com
+   689→  Snippet: May 23, 2023 — In this post, we present a streaming time series anomaly detection algorithm based on matrix profiles and left-discords, inspired by Lu et al., ... Read more
+   690→
+   691→=== razorpay_decomp.json ===
+   692→- Razorpay's Authentication Revamp
+   693→  URL: https://engineering.razorpay.com/razorpays-authentication-revamp-turbocharging-performance-b8bb9d750fe8
+   694→  Date: Oct 20, 2023 | Host: engineering.razorpay.com
+   695→  Snippet: Oct 20, 2023 — At R a zorpay, the “Decomp Initiative” was launched to transition from a monolithic system to a microservices architecture.
+   696→- Monolith to Module Federation at RazorpayX
+   697→  URL: https://engineering.razorpay.com/monolith-to-module-federation-8c400b4e5646
+   698→  Date: Dec 7, 2022 | Host: engineering.razorpay.com
+   699→  Snippet: Dec 7, 2022 — The journey of migrating our architecture from a monolith to a module federated micro-frontend . Learn about the challenges we faced and how ...
+   700→- Razorpay's journey to microservices - Arpit's Newsletter
+
+[showing lines 351-700 of 1257; use offset=701 with limit to continue reading]

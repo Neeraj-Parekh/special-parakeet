@@ -1,0 +1,729 @@
+     1→"""Cost-optimal decision policy (Bahnsen Bayes Minimum Risk, ICMLA 2013).
+     2→
+     3→This module implements four pieces of the cost-sensitive decision layer:
+     4→
+     5→1. ``optimal_decision`` — per-order 3-way (ACCEPT/REVIEW/REJECT) Bayes minimum
+     6→   risk decision layer. Chooses the action with the lowest expected monetary
+     7→   cost given the model probability ``p = P(RTO | order)``. Supports the
+     8→   per-amount FN cost from Bahnsen Eq.(5) via the ``amount_inr`` argument
+     9→   (Day 4 Track N — V3 §11.6 5-way intervention policy).
+    10→
+    11→2. ``optimal_intervention`` — full V3 §11.6 5-way intervention policy argmin
+    12→   over {ship, otp_verify, partial_cod, address_check, hold}. Per-transaction
+    13→   FN cost = ``amount_inr`` (Bahnsen Eq.(5) — not constant), per-intervention
+    14→   cost + per-intervention effectiveness (Pragma 2025 OTP/address-check RTO
+    15→   reduction rates).
+    16→
+    17→3. ``calibrate_probabilities`` — Bahnsen Eq.(6) post-resampling probability
+    18→   recalibration. Required when training uses SMOTE/under-sampling so the
+    19→   inflated minority prior is undone before cost-sensitive decisions fire.
+    20→
+    21→4. ``cost_curve_sweep`` + ``bootstrap_cost_ci`` + ``find_cost_crossover`` —
+    22→   Drummond & Holte cost-curve analysis over a labeled dataset. Threshold sweep
+    23→   with bootstrap confidence intervals (row-marginal-preserving resampling per
+    24→   their skill ``bootstrap_performance_ci``). Used by the
+    25→   ``/v1/policy/cost-curves`` endpoint to power the dashboard explorer.
+    26→
+    27→References
+    28→----------
+    29→- Bahnsen, Stojanovic, Aouada, Ottersten — *Cost Sensitive Credit Card Fraud
+    30→  Detection using Bayes Minimum Risk*, ICMLA 2013, DOI 10.1109/ICMLA.2013.68
+    31→  Eq.(5) BMR rule (per-transaction amount = FN cost), Eq.(6) recalibration:
+    32→  ``P*(f|x) = P(f|x) · P_orig / P_und``
+    33→- Drummond & Holte — *Cost Curves: An Improved Method for Visualizing
+    34→  Classifier Performance*, Machine Learning 65:95-130 (2006),
+    35→  DOI 10.1007/s10994-006-8199-5
+    36→"""
+    37→from __future__ import annotations
+    38→
+    39→import math
+    40→from typing import Sequence
+    41→
+    42→
+    43→# ---------------------------------------------------------------------------
+    44→# 0. V3 §11.6 5-way intervention vocabulary + default weights (Track N)
+    45→# ---------------------------------------------------------------------------
+    46→# The full per-transaction intervention set the cost-optimizer can recommend.
+    47→# Track C's 3-way optimal_decision() collapses REVIEW into a single OTP step;
+    48→# Track N surfaces the granular interventions that the operations team can
+    49→# actually execute. The 5 interventions are ordered by escalating friction /
+    50→# human-involvement, mirroring the V3 §11.6 policy table.
+    51→INTERVENTIONS: tuple[str, ...] = (
+    52→    "ship",            # baseline: ship the order, no friction
+    53→    "otp_verify",      # selective OTP / IVR call before ship
+    54→    "partial_cod",     # collect a partial amount upfront, ship balance COD
+    55→    "address_check",   # call-center address verification (NPCI / India Post API)
+    56→    "hold",            # manual review queue (case opened, ops SLA timer)
+    57→)
+    58→
+    59→# Default weights for the 5-way intervention cost model. Track C's
+    60→# DEFAULT_COST_WEIGHTS (3-way) is a *subset* of this — the 5-way policy
+    61→# re-uses c_fp / c_fn / c_block from the 3-way layer when the operator's
+    62→# decision collapses back to ACCEPT/REJECT equivalents. Per-intervention
+    63→# effectiveness rates are from the Pragma 2025 RTO-mitigation benchmark
+    64→# (docs/research/INDEX.md) for OTP (0.78-0.84), partial COD (0.60-0.70),
+    65→# and address validation (0.42-0.48). Conservative point estimates are used.
+    66→DEFAULT_INTERVENTION_WEIGHTS: dict[str, float] = {
+    67→    "c_ship_fp": 50.0,                     # FP cost: ship a bad order → review fee (capped)
+    68→    "c_ship_fn": 0.0,                      # FN cost for ship = 0 (ship is baseline; loss IS amount)
+    69→    "c_otp": 5.0,                          # OTP send + verification labour, INR
+    70→    "c_otp_effectiveness": 0.82,           # OTP reduces RTO probability by 82%
+    71→    "c_partial_cod": 10.0,                 # partial COD collection cost, INR
+    72→    "c_partial_cod_effectiveness": 0.65,   # partial COD reduces RTO by 65%
+    73→    "c_address_check": 3.0,                # address validation cost (call/API), INR
+    74→    "c_address_check_effectiveness": 0.45, # address check reduces RTO by 45%
+    75→    "c_hold": 20.0,                        # hold for manual review ops time, INR
+    76→    "c_hold_fn": 0.0,                      # if hold + still ships + returns → FN = amount
+    77→    "c_block": 1000.0,                     # block: lost sale + customer churn, INR
+    78→    "c_hold_residual_ship_rate": 0.30,     # 30% of held orders still ship + can return
+    79→}
+    80→
+    81→
+    82→# ---------------------------------------------------------------------------
+    83→# 1. Per-order Bayes Minimum Risk decision layer (Bahnsen Eq.(5))
+    84→# ---------------------------------------------------------------------------
+    85→
+    86→def optimal_decision(
+    87→    p: float,
+    88→    c_fp: float = 50.0,
+    89→    c_fn: float = 600.0,
+    90→    c_otp: float = 5.0,
+    91→    c_block: float = 1000.0,
+    92→    otp_effectiveness: float = 0.82,
+    93→    amount_inr: float | None = None,
+    94→) -> tuple[str, dict]:
+    95→    """Three-way cost-optimal decision.
+    96→
+    97→    Parameters
+    98→    ----------
+    99→    p : float
+   100→        Calibrated ``P(RTO | order)`` in [0, 1]. Use ``calibrate_probabilities``
+   101→        first if training resampled the minority class.
+   102→    c_fp : float
+   103→        Cost of a false positive — a good order held for manual review (INR).
+   104→        Industry: admin / review fee ~₹50.
+   105→    c_fn : float
+   106→        Cost of a false negative — an RTO'd order shipped anyway (INR).
+   107→        Industry: reverse logistics + refund + churn ~₹600 on average. This
+   108→        is the *constant* fallback; pass ``amount_inr`` to use the true
+   109→        per-transaction FN cost from Bahnsen Eq.(5) (Day 4 Track N — V3
+   110→        §11.6 intervention policy).
+   111→    c_otp : float
+   112→        Cost of running selective OTP / address verification on a REVIEW'd
+   113→        order (INR). ~₹5 per OTP send + verification labour.
+   114→    c_block : float
+   115→        Cost of blocking a legitimate order (INR) — goodwill / churn hit.
+   116→        ~₹1000 per false-decline (per Razorpay RTO Shield 2024 study).
+   117→    otp_effectiveness : float
+   118→        Probability that an OTP / address-check catches an RTO'd order.
+   119→        Published industry range 0.78–0.84 (we use the conservative 0.82).
+   120→    amount_inr : float | None
+   121→        Per-transaction order amount (INR). If provided, overrides ``c_fn``
+   122→        with the per-amount FN cost (Bahnsen Eq.(5): FN cost = Amt_i, NOT a
+   123→        constant). This is the headline of the Bahnsen 2013 paper — the FN
+   124→        cost is the actual amount at stake, so a ₹52,000 order has a 86×
+   125→        higher FN cost than a ₹600 order, and the cost-optimal decision can
+   126→        differ for the *same* probability. None → use ``c_fn`` (constant).
+   127→
+   128→    Returns
+   129→    -------
+   130→    (decision, costs) : tuple[str, dict]
+   131→        decision ∈ {"ACCEPT", "REVIEW", "REJECT"} with the lowest expected
+   132→        cost; costs is the full breakdown for audit / dashboard explainability.
+   133→
+   134→    Math
+   135→    ----
+   136→    fn_cost = amount_inr if amount_inr is not None else c_fn     # Bahnsen Eq.(5)
+   137→    cost_accept = p · fn_cost                                     # ship normally
+   138→    cost_review = c_otp + (1 − p)·c_fp + p·(1 − otp_eff)·fn_cost # selective OTP
+   139→    cost_reject = (1 − p) · c_block                               # block outright
+   140→    decision    = argmin over the three.
+   141→
+   142→    This is the Bahnsen BMR rule (Eq.(5)) specialized to three ordered actions
+   143→    instead of a binary flag/no-flag. When ``amount_inr`` is supplied the FN
+   144→    cost becomes per-transaction (the paper's real-financial-cost matrix,
+   145→    Table III), which is the run-up to Track N's full 5-way intervention
+   146→    policy in :func:`optimal_intervention`.
+   147→    """
+   148→    # Per-amount FN cost (Bahnsen Eq.(5)): if the operator passes the order
+   149→    # amount, the FN cost IS the amount (the loss of shipping an RTO is the
+   150→    # shipment value itself — not a constant). Otherwise fall back to the
+   151→    # constant ``c_fn`` (Track C behaviour).
+   152→    fn_cost = float(amount_inr) if amount_inr is not None else float(c_fn)
+   153→    cost_accept = p * fn_cost
+   154→    cost_review = c_otp + (1 - p) * c_fp + p * (1 - otp_effectiveness) * fn_cost
+   155→    cost_reject = (1 - p) * c_block
+   156→    costs = {
+   157→        "ACCEPT": round(cost_accept, 2),
+   158→        "REVIEW": round(cost_review, 2),
+   159→        "REJECT": round(cost_reject, 2),
+   160→    }
+   161→    decision = min(costs, key=lambda k: costs[k])
+   162→    return decision, costs
+   163→
+   164→
+   165→# ---------------------------------------------------------------------------
+   166→# 2. V3 §11.6 5-way intervention policy argmin (Track N)
+   167→# ---------------------------------------------------------------------------
+   168→
+   169→def optimal_intervention(
+   170→    p: float,
+   171→    amount_inr: float,
+   172→    weights: dict | None = None,
+   173→) -> tuple[str, dict]:
+   174→    """V3 §11.6 5-way intervention policy argmin.
+   175→
+   176→    Extends Track C's 3-way ``optimal_decision()`` to the full V3 §11.6
+   177→    intervention set: ``{ship, otp_verify, partial_cod, address_check, hold}``.
+   178→    Per Bahnsen 2013 BMR Eq.(5), the per-transaction FN cost is the order
+   179→    amount ``amount_inr`` (NOT a constant). Per Drummond & Holte 2006, the
+   180→    cost-curve analysis surfaces the threshold where the cost-optimal
+   181→    intervention changes (consumed by ``/v1/policy/cost-curves``'s
+   182→    ``intervention_crossover`` field — Track N).
+   183→
+   184→    Parameters
+   185→    ----------
+   186→    p : float
+   187→        Calibrated ``P(RTO | order)`` in [0, 1].
+   188→    amount_inr : float
+   189→        Order amount in INR. Used as the per-transaction FN cost per Bahnsen
+   190→        Eq.(5) — the loss of shipping an RTO is the shipment value.
+   191→    weights : dict | None
+   192→        Override of :data:`DEFAULT_INTERVENTION_WEIGHTS`. Pass a partial dict
+   193→        to override only specific knobs (e.g. a different OTP effectiveness for
+   194→        a different country).
+   195→
+   196→    Returns
+   197→    -------
+   198→    (intervention, costs) : tuple[str, dict]
+   199→        intervention ∈ ``INTERVENTIONS`` with the lowest expected cost;
+   200→        costs is the full breakdown across all 5 interventions for audit /
+   201→        dashboard explainability.
+   202→
+   203→    Math (per intervention)
+   204→    -------------------------
+   205→    ship          : p · amount                          # ship + return → lose amount
+   206→    otp_verify    : c_otp + (1 − eff_otp) · p · amount  # OTP catches 82%
+   207→    partial_cod   : c_partial_cod + (1 − eff_cod) · p · amount
+   208→    address_check : c_address_check + (1 − eff_addr) · p · amount
+   209→    hold          : c_hold + residual_ship_rate · p · amount
+   210→                                                            # 30% of held orders still ship
+   211→                                                            # + can return → expected FN
+   212→    intervention  = argmin over the five.
+   213→
+   214→    The effectiveness rates are taken from the Pragma 2025 RTO-mitigation
+   215→    benchmark (OTP 0.78-0.84, partial COD 0.60-0.70, address check 0.42-0.48).
+   216→    The 30% residual ship rate for ``hold`` reflects the operational reality
+   217→    that a human reviewer will still ship ~30% of held orders after a quick
+   218→    manual sanity check.
+   219→
+   220→    This is the headline of the Bahnsen 2013 BMR paper (per-amount FN cost +
+   221→    per-intervention cost) specialized to the 5 ordered interventions
+   222→    available in the COD e-commerce RTO setting — Track N's V3 §11.6 surface.
+   223→    """
+   224→    w = {**DEFAULT_INTERVENTION_WEIGHTS, **(weights or {})}
+   225→    amt = float(amount_inr)
+   226→    p = float(p)
+   227→
+   228→    # Expected cost of each intervention. Each "soft" intervention (OTP /
+   229→    # partial COD / address check) costs a small fee upfront AND reduces (not
+   230→    # eliminates) the residual RTO probability; the residual RTO probability
+   231→    # is multiplied by the per-amount FN cost (Bahnsen Eq.(5)). The "ship"
+   232→    # baseline has zero intervention cost but the full amount at risk. The
+   233→    # "hold" intervention has a fixed ops cost + a residual ship rate (some
+   234→    # held orders still ship after manual review).
+   235→    costs = {
+   236→        "ship": p * amt,  # baseline: lose amount if it returns
+   237→        "otp_verify": w["c_otp"]
+   238→        + (1.0 - w["c_otp_effectiveness"]) * p * amt,
+   239→        "partial_cod": w["c_partial_cod"]
+   240→        + (1.0 - w["c_partial_cod_effectiveness"]) * p * amt,
+   241→        "address_check": w["c_address_check"]
+   242→        + (1.0 - w["c_address_check_effectiveness"]) * p * amt,
+   243→        "hold": w["c_hold"]
+   244→        + w["c_hold_residual_ship_rate"] * p * amt,
+   245→    }
+   246→    # Round for clean audit + dashboard rendering; argmin uses raw values
+   247→    # then we re-key the rounded dict for the response. (Tie-break: order
+   248→    # of insertion — ship > otp_verify > partial_cod > address_check > hold —
+   249→    # the lowest-friction intervention wins ties.)
+   250→    rounded = {k: round(v, 2) for k, v in costs.items()}
+   251→    intervention = min(costs, key=lambda k: costs[k])
+   252→    return intervention, rounded
+   253→
+   254→
+   255→# ---------------------------------------------------------------------------
+   256→# 3. Bahnsen Eq.(6) post-resampling probability recalibration
+   257→# ---------------------------------------------------------------------------
+   258→
+   259→def calibrate_probabilities(
+   260→    probs: float | Sequence[float],
+   261→    p_orig: float,
+   262→    p_und: float,
+   263→) -> float | list[float]:
+   264→    """Recalibrate probabilities after minority-class under-sampling.
+   265→
+   266→    Implements Bahnsen et al. (ICMLA 2013, DOI 10.1109/ICMLA.2013.68) Eq.(6):
+   267→
+   268→        P*(f|x) = P(f|x) · P_orig / P_und
+   269→        P*(l|x) = 1 − P*(f|x)
+   270→
+   271→    where ``P_orig`` is the minority (fraud / RTO) prior in the *original* (pre-
+   272→    resampling) dataset and ``P_und`` is the minority prior in the *resampled*
+   273→    training set. Under-sampling inflates the minority prior; the calibration
+   274→    ratio undoes that inflation so the BMR cost comparison is honest.
+   275→
+   276→    Parameters
+   277→    ----------
+   278→    probs : float | Sequence[float]
+   279→        Model's predicted minority-class probabilities after under-sampling.
+   280→        Scalar or 1-D sequence (numpy arrays / lists / tuples accepted).
+   281→    p_orig : float
+   282→        Original minority-class prior ``P(fraud)`` in the raw data — e.g. 0.0467
+   283→        for Bahnsen's European card dataset, ~0.23 for our CODScore RTO data.
+   284→    p_und : float
+   285→        Minority-class prior in the resampled training set — e.g. 0.50 for S1
+   286→        balanced sampling, 0.10 for S10, etc. Use ``p_orig`` to make this a
+   287→        no-op when no resampling was applied.
+   288→
+   289→    Returns
+   290→    -------
+   291→    float | list[float]
+   292→        Calibrated probabilities, clipped to [0, 1]. Scalar in → scalar out,
+   293→        sequence in → list out. When ``p_orig == p_und`` (no resampling), the
+   294→        probabilities are returned unchanged (no-op fast path).
+   295→
+   296→    Edge cases
+   297→    ----------
+   298→    - ``p_und == 0`` → division-by-zero; returns all-zeros (the model produced
+   299→      no positive labels in training, so any positive prediction is unsound;
+   300→      better to refuse than to inflate to +inf).
+   301→    - ``p_orig == 0`` → all calibrated probabilities are 0 (the original data
+   302→      had no positives; the calibrated probability is undefined and we
+   303→      conservatively refuse to flag anything).
+   304→    - NaN inputs → NaNs are propagated (callers must drop them).
+   305→    - Inputs already in [0, 1] are preserved; inputs outside [0, 1] are clipped
+   306→      before applying the ratio (a numerical safety net).
+   307→    """
+   308→    # No-op fast path: ratio is 1.0 → unchanged probabilities. This is the
+   309→    # default in production until SMOTE / under-sampling is wired in (Day 2+
+   310→    # Track G). Skipping the math avoids floating-point drift on calibrated
+   311→    # probabilities when no resampling was used. We still clip out-of-range
+   312→    # inputs so downstream BMR cost math never sees a negative or >1 prob.
+   313→    if p_und == p_orig:
+   314→        if isinstance(probs, (list, tuple)):
+   315→            return [max(0.0, min(1.0, float(p))) if p is not None and not (isinstance(p, float) and math.isnan(p)) else float("nan") for p in probs]
+   316→        if probs is None or (isinstance(probs, float) and math.isnan(probs)):
+   317→            return float("nan")
+   318→        return max(0.0, min(1.0, float(probs)))
+   319→
+   320→    # Division-by-zero guard: refuse to produce inflated predictions.
+   321→    if p_und == 0:
+   322→        if isinstance(probs, (list, tuple)):
+   323→            return [0.0 for _ in probs]
+   324→        return 0.0
+   325→
+   326→    ratio = float(p_orig) / float(p_und)
+   327→    # If p_orig == 0, ratio is 0 → all calibrated probabilities are 0 (handled
+   328→    # implicitly by the multiplication).
+   329→
+   330→    if isinstance(probs, (list, tuple)):
+   331→        out: list[float] = []
+   332→        for v in probs:
+   333→            if v is None or (isinstance(v, float) and math.isnan(v)):
+   334→                out.append(float("nan"))
+   335→                continue
+   336→            x = max(0.0, min(1.0, float(v)))
+   337→            out.append(max(0.0, min(1.0, x * ratio)))
+   338→        return out
+   339→
+   340→    # Scalar path
+   341→    if probs is None or (isinstance(probs, float) and math.isnan(probs)):
+   342→        return float("nan")
+   343→    x = max(0.0, min(1.0, float(probs)))
+   344→    return max(0.0, min(1.0, x * ratio))
+   345→
+   346→
+   347→# ---------------------------------------------------------------------------
+   348→# 3. Drummond-Holte cost-curve analysis (2006)
+   349→# ---------------------------------------------------------------------------
+   350→
+   351→def _default_thresholds() -> list[float]:
+   352→    return [round(0.05 * i, 2) for i in range(1, 20)]  # 0.05, 0.10, ..., 0.95
+   353→
+   354→
+   355→def cost_curve_sweep(
+   356→    y_true: Sequence[int],
+   357→    probs: Sequence[float],
+   358→    c_fp: float = 50.0,
+   359→    c_fn: float = 600.0,
+   360→    thresholds: Sequence[float] | None = None,
+   361→) -> list[dict]:
+   362→    """Threshold sweep producing a Drummond-Holte cost-curve table.
+   363→
+   364→    For each threshold ``t``, the binary decision is "REJECT if p ≥ t else
+   365→    ACCEPT". The confusion matrix is computed against ground truth ``y_true``
+   366→    (1 = RTO returned, 0 = delivered). Cost uses the Bahnsen cost matrix:
+   367→
+   368→        - TP (caught RTO, correctly rejected): ``c_fp`` (admin / review fee)
+   369→        - FP (good order, wrongly rejected):   ``c_fp`` (goodwill + churn)
+   370→        - FN (missed RTO, shipped anyway):    ``c_fn`` (reverse logistics + refund)
+   371→        - TN (correctly shipped):              0
+   372→
+   373→    Parameters
+   374→    ----------
+   375→    y_true, probs : sequences of equal length
+   376→        Ground-truth labels (0/1) and model probabilities. Padded / NaN entries
+   377→        raise ValueError — clean them upstream.
+   378→    c_fp, c_fn : float
+   379→        Cost weights; defaults match ``optimal_decision`` so the cost-minimizing
+   380→        threshold reported here aligns with the per-order BMR policy.
+   381→    thresholds : sequence of float | None
+   382→        Sweep points; defaults to 0.05 → 0.95 step 0.05 (19 points).
+   383→
+   384→    Returns
+   385→    -------
+   386→    list of dict, one per threshold:
+   387→        {threshold, tp, fp, fn, tn, cost, precision, recall}
+   388→
+   389→    Notes
+   390→    -----
+   391→    Precision / recall use the standard definitions:
+   392→        precision = TP / (TP + FP)
+   393→        recall    = TP / (TP + FN)
+   394→    """
+   395→    n = len(y_true)
+   396→    if len(probs) != n:
+   397→        raise ValueError(
+   398→            f"y_true and probs length mismatch: {n} vs {len(probs)}"
+   399→        )
+   400→    if n == 0:
+   401→        raise ValueError("empty input — need at least one labeled sample")
+   402→
+   403→    ts = list(thresholds) if thresholds is not None else _default_thresholds()
+   404→
+   405→    # Vectorize with plain Python so the function has zero external deps —
+   406→    # numpy callers can wrap the output for plotting; pure-Python keeps the
+   407→    # BMR skill importable in minimal envs (per skill.yaml dep spec).
+   408→    y = [int(bool(v)) for v in y_true]
+   409→    p = [float(v) for v in probs]
+   410→
+   411→    total_pos = sum(y)
+   412→    total_neg = n - total_pos
+   413→
+   414→    out: list[dict] = []
+   415→    for t in ts:
+   416→        tp = fp = fn = tn = 0
+   417→        for yi, pi in zip(y, p):
+   418→            flagged = pi >= t
+   419→            if yi == 1 and flagged:
+   420→                tp += 1
+   421→            elif yi == 0 and flagged:
+   422→                fp += 1
+   423→            elif yi == 1 and not flagged:
+   424→                fn += 1
+   425→            else:  # yi == 0 and not flagged
+   426→                tn += 1
+   427→        cost = (tp + fp) * c_fp + fn * c_fn
+   428→        precision = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+   429→        recall = (tp / total_pos) if total_pos > 0 else 0.0
+   430→        out.append({
+   431→            "threshold": float(t),
+   432→            "tp": tp, "fp": fp, "fn": fn, "tn": tn,
+   433→            "cost": round(cost, 2),
+   434→            "precision": round(precision, 4),
+   435→            "recall": round(recall, 4),
+   436→        })
+   437→    return out
+   438→
+   439→
+   440→def bootstrap_cost_ci(
+   441→    y_true: Sequence[int],
+   442→    probs: Sequence[float],
+   443→    c_fp: float = 50.0,
+   444→    c_fn: float = 600.0,
+   445→    thresholds: Sequence[float] | None = None,
+   446→    n_resamples: int = 500,
+   447→    confidence: float = 0.90,
+   448→    seed: int | None = 42,
+   449→) -> dict[str, dict]:
+   450→    """Bootstrap confidence intervals on cost at each threshold.
+   451→
+   452→    Implements Drummond & Holte's ``bootstrap_performance_ci`` capability:
+   453→    resample the confusion matrix conditioned on row marginals (deployment
+   454→    class frequency fixed). Two binomials are sampled per bootstrap iteration
+   455→    — one for the positive class, one for the negative — so the class priors
+   456→    are preserved. This is the statistically correct way to put CIs on cost
+   457→    (the standard "resample rows with replacement" trick conflates prior
+   458→    uncertainty with conditional-performance uncertainty; the row-marginals
+   459→    fix preserves the class prior — see Drummond-Holte §3.6).
+   460→
+   461→    Parameters
+   462→    ----------
+   463→    y_true, probs : sequences
+   464→    c_fp, c_fn : float
+   465→    thresholds : sequence | None
+   466→    n_resamples : int
+   467→        ≥500 recommended by Drummond-Holte skill.yaml. Default 500.
+   468→    confidence : float
+   469→        Coverage of the CI — 0.90 for 90% CI (5th and 95th percentile).
+   470→    seed : int | None
+   471→        Random seed for reproducibility. None → non-deterministic.
+   472→
+   473→    Returns
+   474→    -------
+   475→    dict mapping str(threshold) → {"low": float, "high": float, "mean": float}
+   476→
+   477→    Performance
+   478→    -----------
+   479→    Pure Python; ~500 resamples × 19 thresholds × N samples. For our 7,235-row
+   480→    training set this is ~70M ops, completing in ~3-5 sec. Acceptable for a
+   481→    dashboard endpoint. Numpy refactor Day 2 Track F if needed.
+   482→    """
+   483→    import random as _random
+   484→
+   485→    if n_resamples < 1:
+   486→        raise ValueError(f"n_resamples must be ≥ 1, got {n_resamples}")
+   487→    if not (0.0 < confidence < 1.0):
+   488→        raise ValueError(f"confidence must be in (0, 1), got {confidence}")
+   489→
+   490→    ts = list(thresholds) if thresholds is not None else _default_thresholds()
+   491→    n = len(y_true)
+   492→    if len(probs) != n:
+   493→        raise ValueError("y_true and probs length mismatch")
+   494→    if n == 0:
+   495→        raise ValueError("empty input — cannot bootstrap")
+   496→
+   497→    rng = _random.Random(seed) if seed is not None else _random.Random()
+   498→
+   499→    # Split indices by class — preserves row marginals per Drummond-Holte
+   500→    pos_idx = [i for i, y in enumerate(y_true) if int(bool(y)) == 1]
+   501→    neg_idx = [i for i, y in enumerate(y_true) if int(bool(y)) == 0]
+   502→
+   503→    if not pos_idx or not neg_idx:
+   504→        # Cannot compute CIs without both classes; return degenerate band
+   505→        return {
+   506→            str(float(t)): {"low": 0.0, "high": 0.0, "mean": 0.0}
+   507→            for t in ts
+   508→        }
+   509→
+   510→    # Precompute per-class probs + threshold indicators
+   511→    pos_p = [float(probs[i]) for i in pos_idx]
+   512→    neg_p = [float(probs[i]) for i in neg_idx]
+   513→    n_pos = len(pos_idx)
+   514→    n_neg = len(neg_idx)
+   515→
+   516→    # cost per resample per threshold
+   517→    samples: dict[float, list[float]] = {float(t): [] for t in ts}
+   518→
+   519→    for _ in range(n_resamples):
+   520→        # Resample within each class (preserves row marginals — Drummond-Holte §3.6)
+   521→        pos_sample = [pos_p[rng.randrange(n_pos)] for _ in range(n_pos)]
+   522→        neg_sample = [neg_p[rng.randrange(n_neg)] for _ in range(n_neg)]
+   523→        for t in ts:
+   524→            tp = sum(1 for p in pos_sample if p >= t)
+   525→            fp = sum(1 for p in neg_sample if p >= t)
+   526→            fn = n_pos - tp
+   527→            cost = (tp + fp) * c_fp + fn * c_fn
+   528→            samples[float(t)].append(cost)
+   529→
+   530→    alpha = (1.0 - confidence) / 2.0
+   531→    lo_pct = alpha * 100.0
+   532→    hi_pct = (1.0 - alpha) * 100.0
+   533→
+   534→    out: dict[str, dict] = {}
+   535→    for t in ts:
+   536→        key = str(float(t))
+   537→        dist = sorted(samples[float(t)])
+   538→        lo = dist[int(lo_pct / 100.0 * len(dist))]
+   539→        hi = dist[int(hi_pct / 100.0 * len(dist)) - 1] if len(dist) > 1 else dist[0]
+   540→        mean = sum(dist) / len(dist)
+   541→        out[key] = {
+   542→            "low": round(lo, 2),
+   543→            "high": round(hi, 2),
+   544→            "mean": round(mean, 2),
+   545→            "n_resamples": n_resamples,
+   546→            "confidence": confidence,
+   547→        }
+   548→    return out
+   549→
+   550→
+   551→def find_cost_crossover(
+   552→    incumbent: list[dict],
+   553→    challenger: list[dict],
+   554→) -> dict:
+   555→    """Find the threshold where challenger beats incumbent (Drummond-Holte).
+   556→
+   557→    Implements the ``find_model_crossover`` capability: scan the cost sweep of
+   558→    two candidate models and return the threshold(s) where one becomes cheaper
+   559→    than the other, plus the per-region winner and the maximum vertical
+   560→    advantage (cost gap).
+   561→
+   562→    Parameters
+   563→    ----------
+   564→    incumbent, challenger : list of dict
+   565→        Both must be outputs of ``cost_curve_sweep`` — list of dicts each
+   566→        containing ``threshold`` and ``cost`` keys, sorted by threshold.
+   567→
+   568→    Returns
+   569→    -------
+   570→    dict with keys:
+   571→        ``crossover_threshold`` (float | None)  — first threshold where
+   572→            challenger's cost < incumbent's cost; None if challenger never wins.
+   573→        ``per_region_winner`` (list[dict])  — for each threshold:
+   574→            {threshold, incumbent_cost, challenger_cost, winner}.
+   575→        ``max_advantage`` (float)  — max (incumbent_cost − challenger_cost) at
+   576→            any threshold where challenger wins; 0.0 if challenger never wins.
+   577→    """
+   578→    if not incumbent or not challenger:
+   579→        raise ValueError("both incumbent and challenger sweeps are required")
+   580→    inc_by_t = {float(r["threshold"]): r for r in incumbent}
+   581→    cha_by_t = {float(r["threshold"]): r for r in challenger}
+   582→    ts = sorted(set(inc_by_t) & set(cha_by_t))
+   583→    if not ts:
+   584→        raise ValueError("incumbent and challenger have no thresholds in common")
+   585→
+   586→    per_region: list[dict] = []
+   587→    crossover: float | None = None
+   588→    max_adv: float = 0.0
+   589→    for t in ts:
+   590→        ic = float(inc_by_t[t]["cost"])
+   591→        cc = float(cha_by_t[t]["cost"])
+   592→        if cc < ic:
+   593→            winner = "challenger"
+   594→            if crossover is None:
+   595→                crossover = t
+   596→            max_adv = max(max_adv, ic - cc)
+   597→        elif cc > ic:
+   598→            winner = "incumbent"
+   599→        else:
+   600→            winner = "tie"
+   601→        per_region.append({
+   602→            "threshold": t,
+   603→            "incumbent_cost": round(ic, 2),
+   604→            "challenger_cost": round(cc, 2),
+   605→            "winner": winner,
+   606→        })
+   607→    return {
+   608→        "crossover_threshold": crossover,
+   609→        "per_region_winner": per_region,
+   610→        "max_advantage": round(max_adv, 2),
+   611→    }
+   612→
+   613→
+   614→# ---------------------------------------------------------------------------
+   615→# 5. V3 §11.6 intervention-curve sweep + crossover (Track N)
+   616→# ---------------------------------------------------------------------------
+   617→
+   618→def intervention_curve_sweep(
+   619→    amount_inr: float,
+   620→    thresholds: Sequence[float] | None = None,
+   621→    weights: dict | None = None,
+   622→) -> list[dict]:
+   623→    """Threshold sweep producing the V3 §11.6 5-way intervention-curve table.
+   624→
+   625→    For each probability threshold ``t`` in ``thresholds`` (default 0.05 →
+   626→    0.95 step 0.05), call :func:`optimal_intervention` and record the chosen
+   627→    intervention + the full cost breakdown across the 5 interventions. This
+   628→    is the 5-way analog of :func:`cost_curve_sweep`'s 3-way binary sweep.
+   629→
+   630→    Parameters
+   631→    ----------
+   632→    amount_inr : float
+   633→        Per-transaction FN cost (Bahnsen Eq.(5)) — the order amount in INR.
+   634→    thresholds : sequence of float | None
+   635→        Sweep points; defaults to 0.05 → 0.95 step 0.05 (19 points), matching
+   636→        :func:`cost_curve_sweep` so the dashboard renders the 3-way and 5-way
+   637→        curves on the same threshold axis.
+   638→    weights : dict | None
+   639→        Override of :data:`DEFAULT_INTERVENTION_WEIGHTS`.
+   640→
+   641→    Returns
+   642→    -------
+   643→    list of dict, one per threshold:
+   644→        {threshold, intervention, costs}
+   645→    where ``costs`` is the full {ship, otp_verify, partial_cod,
+   646→    address_check, hold} → cost-INR breakdown.
+   647→    """
+   648→    ts = list(thresholds) if thresholds is not None else _default_thresholds()
+   649→    out: list[dict] = []
+   650→    for t in ts:
+   651→        intervention, costs = optimal_intervention(float(t), amount_inr, weights)
+   652→        out.append({
+   653→            "threshold": float(t),
+   654→            "intervention": intervention,
+   655→            "costs": costs,
+   656→        })
+   657→    return out
+   658→
+   659→
+   660→def find_intervention_crossover(sweep: list[dict]) -> dict:
+   661→    """Find the threshold(s) where the cost-optimal intervention changes.
+   662→
+   663→    Implements the Drummond-Holte ``find_model_crossover`` capability for
+   664→    the V3 §11.6 5-way intervention sweep: walk the sweep and detect every
+   665→    threshold where the argmin intervention changes (e.g. ship → otp_verify
+   666→    at one threshold, otp_verify → partial_cod at a later one). Returns the
+   667→    per-region intervention labels and the boundary thresholds.
+   668→
+   669→    Parameters
+   670→    ----------
+   671→    sweep : list of dict
+   672→        Output of :func:`intervention_curve_sweep`.
+   673→
+   674→    Returns
+   675→    -------
+   676→    dict with keys:
+   677→        ``crossover_thresholds`` (list[float])  — every threshold where the
+   678→            optimal intervention changed vs the previous threshold. Empty if
+   679→            the same intervention is optimal across the whole sweep.
+   680→        ``per_region_intervention`` (list[dict])  — for each threshold:
+   681→            {threshold, intervention}.
+   682→        ``regions`` (list[dict])  — collapsed contiguous ranges:
+   683→            {low_threshold, high_threshold, intervention, n_points}.
+   684→    """
+   685→    if not sweep:
+   686→        raise ValueError("empty intervention sweep — cannot find crossover")
+   687→    per_region: list[dict] = []
+   688→    for r in sweep:
+   689→        per_region.append({
+   690→            "threshold": float(r["threshold"]),
+   691→            "intervention": r["intervention"],
+   692→        })
+   693→    crossovers: list[float] = []
+   694→    prev_intervention = per_region[0]["intervention"]
+   695→    for entry in per_region[1:]:
+   696→        if entry["intervention"] != prev_intervention:
+   697→            crossovers.append(entry["threshold"])
+   698→            prev_intervention = entry["intervention"]
+   699→    # Collapse into contiguous regions for dashboard rendering
+   700→    regions: list[dict] = []
+   701→    cur_intervention = per_region[0]["intervention"]
+   702→    cur_lo = per_region[0]["threshold"]
+   703→    cur_count = 1
+   704→    for i, entry in enumerate(per_region[1:], start=1):
+   705→        if entry["intervention"] == cur_intervention:
+   706→            cur_count += 1
+   707→        else:
+   708→            regions.append({
+   709→                "low_threshold": cur_lo,
+   710→                "high_threshold": per_region[i - 1]["threshold"],
+   711→                "intervention": cur_intervention,
+   712→                "n_points": cur_count,
+   713→            })
+   714→            cur_intervention = entry["intervention"]
+   715→            cur_lo = entry["threshold"]
+   716→            cur_count = 1
+   717→    # Final region
+   718→    regions.append({
+   719→        "low_threshold": cur_lo,
+   720→        "high_threshold": per_region[-1]["threshold"],
+   721→        "intervention": cur_intervention,
+   722→        "n_points": cur_count,
+   723→    })
+   724→    return {
+   725→        "crossover_thresholds": crossovers,
+   726→        "per_region_intervention": per_region,
+   727→        "regions": regions,
+   728→    }
+   729→

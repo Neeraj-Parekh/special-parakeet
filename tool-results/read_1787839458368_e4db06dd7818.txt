@@ -1,0 +1,608 @@
+     1→"""Tests for Track H Day 2 — V3 missing endpoints + Merkle audit intervals +
+     2→dual-control override.
+     3→
+     4→Closes §A items 15 (V3 endpoints not in openapi.json), 16 (override single-
+     5→admin vs V3 §12.1 dual-control contradiction), §C item T10 (V3-specified
+     6→missing endpoints), §D item P11 (tamper-evident audit incomplete — Merkle
+     7→intervals).
+     8→
+     9→Source:
+    10→* SoK: Security of Autonomous LLM Agents in Agentic Commerce (Mao 2026,
+    11→  arXiv:2604.15367v2). Capability ``recommend_layered_defenses`` layer 5
+    12→  (market & compliance monitoring with tamper-evident audit trails) +
+    13→  ``audit_agent_mandate_scoping`` (the attenuated-task-scoped rule vs
+    14→  broad authority check that the dual-control override enforces).
+    15→* ARCHITECTURE_V3.md §10.3 (audit integrity v3 — outbox + Merkle interval
+    16→  sealing + ``/v1/audit/{id}/proof``) + §12.1 (principal matrix —
+    17→  override decision requires dual-control).
+    18→
+    19→Test layout (8 tests):
+    20→* ``test_merkle_proof_after_seal`` — unit test on MerkleSealer: log N
+    21→  records via the AuditLogger.log path in file mode (which doesn't seal),
+    22→  call MerkleSealer._merkle_root directly on the leaves, verify it
+    23→  reconstructs from a manually-built proof. The Postgres path is
+    24→  exercised by tests/test_db.py::test_audit_log_to_postgres (which
+    25→  skips without DATABASE_URL).
+    26→* ``test_merkle_proof_404_before_seal`` — the GET /v1/audit/{id}/proof
+    27→  endpoint returns 404 if no interval has been sealed (which is the
+    28→  case in file mode + in Postgres mode before the first seal). Admin
+    29→  scope required.
+    30→* ``test_simulate_dry_run`` — POST /v1/simulate, verify the decision is
+    31→  returned BUT no audit record was written (the audit tail N is the
+    32→  same before + after).
+    33→* ``test_simulate_admin_only_no_scorer_no_422`` — actually scorer
+    34→  scope is the right scope for /v1/simulate per the spec (it's a
+    35→  read-only what-if explorer). Verify admin scope ALSO works (admin
+    36→  can do everything scorer can).
+    37→* ``test_usage_admin_only`` — scorer scope gets 401 (admin-only
+    38→  endpoint).
+    39→* ``test_usage_returns_counts`` — POST some orders, GET /v1/usage,
+    40→  verify the counts dict has the expected shape + the recent count
+    41→  is greater than 0.
+    42→* ``test_dual_control_override_requires_two_keys`` — single admin key
+    43→  via the legacy query-param path still works (backward-compat);
+    44→  the new dual-control JSON-body path requires BOTH keys (one key
+    45→  missing → 403).
+    46→* ``test_dual_control_same_key_rejected`` — same key twice → 400
+    47→  (cannot self-approve per V3 §12.1).
+    48→* ``test_dual_control_two_different_keys_succeeds`` — 2 different admin
+    49→  keys → 200, audit records both signature digests.
+    50→
+    51→File mode is used throughout (no DATABASE_URL → tests/test_db.py covers
+    52→the Postgres path with proper skipping). MerkleSealer's pure-Python
+    53→math is exercised in unit form here; the full Postgres flow is gated on
+    54→DATABASE_URL in tests/test_db.py.
+    55→"""
+    56→from __future__ import annotations
+    57→
+    58→import hashlib
+    59→import sys
+    60→import uuid
+    61→from pathlib import Path
+    62→
+    63→import pytest
+    64→from fastapi.testclient import TestClient
+    65→
+    66→sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    67→
+    68→from src.api.routes import create_app  # noqa: E402
+    69→from src.audit.logger import MerkleSealer  # noqa: E402
+    70→
+    71→
+    72→SCORER = {"Authorization": "Bearer score-demo-key"}
+    73→ADMIN = {"Authorization": "Bearer admin-demo-key"}
+    74→
+    75→VALID = {
+    76→    "order_id": "H-T1",
+    77→    "amount_inr": 899,
+    78→    "category": "Fashion",
+    79→    "customer_id": "CUST-H1",
+    80→}
+    81→
+    82→
+    83→@pytest.fixture(autouse=True)
+    84→def _clear_override_nonce_cache_between_tests():
+    85→    """Day 7 Wave 1 (Subagent 14-d — A2 fix) — clear the module-level
+    86→    in-memory LRU+TTL nonce cache + the HKDF derived-key cache between
+    87→    tests so the replay-protection state doesn't leak across test cases.
+    88→    Each test that exercises the dual-control override path should be
+    89→    able to assert "first sighting → 200; second sighting → 409"
+    90→    without being shadowed by a prior test's nonce cache entry.
+    91→    """
+    92→    # Imported lazily so module-import order doesn't matter (the
+    93→    # fixture is invoked per-test, after the routes module has been
+    94→    # imported by the TestClient setup).
+    95→    from src.api.routes import _clear_override_nonce_cache
+    96→    _clear_override_nonce_cache()
+    97→    yield
+    98→    _clear_override_nonce_cache()
+    99→
+   100→
+   101→def _fresh_nonce() -> str:
+   102→    """Helper — generate a fresh 16-byte hex nonce (32 chars) for the
+   103→    dual-control override request body. ``uuid.uuid4().hex`` is 32
+   104→    chars (16 bytes of entropy) which is sufficient at the override
+   105→    endpoint's traffic rate."""
+   106→    return uuid.uuid4().hex
+   107→
+   108→
+   109→# ---------------------------------------------------------------------------
+   110→# MerkleSealer unit tests — pure-Python math, no DB.
+   111→# ---------------------------------------------------------------------------
+   112→
+   113→
+   114→def test_merkle_root_padding_to_power_of_two():
+   115→    """The Merkle root of N leaves (N not a power of 2) must equal the
+   116→    root of the same leaves padded with the last leaf's hash to the
+   117→    next power of 2 (RFC 6962-style padding)."""
+   118→    leaves = ["a" * 64, "b" * 64, "c" * 64]  # 3 leaves → pad to 4
+   119→    root = MerkleSealer._merkle_root(leaves)
+   120→    # Manual recompute with padding.
+   121→    padded = leaves + [leaves[-1]]
+   122→    level = padded
+   123→    while len(level) > 1:
+   124→        nxt = []
+   125→        for i in range(0, len(level), 2):
+   126→            nxt.append(hashlib.sha256((level[i] + level[i + 1]).encode()).hexdigest())
+   127→        level = nxt
+   128→    assert root == level[0]
+   129→    # Empty → GENESIS.
+   130→    assert MerkleSealer._merkle_root([]) == "0" * 64
+   131→
+   132→
+   133→def test_merkle_proof_reconstructs_root():
+   134→    """The Merkle proof for a leaf at position P, when combined with the
+   135→    leaf hash, must reconstruct the same root as ``MerkleSealer._merkle_root``
+   136→    over the whole leaf list. This is the inclusion-proof invariant
+   137→    (RFC 6962 §2.1.1).
+   138→
+   139→    T1.3 FIX: the prior version of this test had an ``or True`` tautology
+   140→    at its final assert — it tried both ``sha256(leaf + sibling)`` and
+   141→    ``sha256(sibling + leaf)`` at each level but ALWAYS picked the right-
+   142→    side form regardless of the leaf's parity, so for odd indices (where
+   143→    the sibling is on the LEFT) the reconstruction silently broke + the
+   144→    ``or True`` papered over the bug. The proof BUILDER in
+   145→    ``MerkleSealer._build_proof_path`` was already correct (it emits the
+   146→    sibling's position explicitly); only the test's reconstruction was
+   147→    buggy. This rewrite routes through the shared static helper +
+   148→    honors each step's ``position`` field so the proof builder is
+   149→    exercised for BOTH even and odd leaf indices.
+   150→
+   151→    Coverage:
+   152→      * 5 leaves (odd → exercises the RFC 6962 padding case: pad to 8
+   153→        with the last leaf's hash repeated).
+   154→      * 4 positions: 0 (even), 1 (odd), 2 (even), 4 (odd, last). Each
+   155→        has a different sibling-position pattern across tree levels —
+   156→        together they cover every left/right bookkeeping branch.
+   157→    """
+   158→    leaves = [hashlib.sha256(f"leaf-{i}".encode()).hexdigest() for i in range(5)]
+   159→    root = MerkleSealer._merkle_root(leaves)
+   160→    # Sanity: 5 leaves pad to 8 (3 duplicates of the last leaf).
+   161→    assert root == MerkleSealer._merkle_root(
+   162→        leaves + [leaves[-1]] * 3
+   163→    ), "padding rule mismatch — _merkle_root must use last-leaf-repeat"
+   164→
+   165→    for position in (0, 1, 2, 4):
+   166→        proof_path = MerkleSealer._build_proof_path(leaves, position)
+   167→        # Proof length must be ceil(log2(padded_size)) = 3 (padded to 8).
+   168→        assert len(proof_path) == 3, (
+   169→            f"position {position}: expected 3 proof steps (8-leaf padded "
+   170→            f"tree → log2(8) levels), got {len(proof_path)}"
+   171→        )
+   172→        # Reconstruct root from leaf hash + proof path. The sibling's
+   173→        # position field tells us the order: "right" → parent = H(leaf + sib),
+   174→        # "left" → parent = H(sib + leaf). This is the RFC 6962 invariant.
+   175→        h = leaves[position]
+   176→        for step in proof_path:
+   177→            if step["position"] == "right":
+   178→                h = hashlib.sha256((h + step["hash"]).encode()).hexdigest()
+   179→            else:  # "left"
+   180→                h = hashlib.sha256((step["hash"] + h).encode()).hexdigest()
+   181→        assert h == root, (
+   182→            f"position {position} proof failed to reconstruct root: "
+   183→            f"got {h}, want {root}. Proof path was: {proof_path}"
+   184→        )
+   185→
+   186→
+   187→# ---------------------------------------------------------------------------
+   188→# GET /v1/audit/{id}/proof — 404 before seal + admin scope required.
+   189→# ---------------------------------------------------------------------------
+   190→
+   191→
+   192→def test_merkle_proof_endpoint_requires_admin():
+   193→    """Scorer-scope key gets 401 on /v1/audit/{id}/proof (admin-only)."""
+   194→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   195→        r = client.get("/v1/audit/1/proof", headers=SCORER)
+   196→        assert r.status_code == 401, r.text
+   197→
+   198→
+   199→def test_merkle_proof_404_before_seal():
+   200→    """In file mode (no DATABASE_URL), the Merkle layer is inactive.
+   201→    GET /v1/audit/{id}/proof returns 404 with a clear message pointing
+   202→    at /v1/audit/verify-chain as the alternative."""
+   203→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   204→        # Score an order so audit record id=1 exists in file mode.
+   205→        client.post("/risk/score", json=VALID, headers=SCORER)
+   206→        r = client.get("/v1/audit/1/proof", headers=ADMIN)
+   207→        assert r.status_code == 404, r.text
+   208→        body = r.json()
+   209→        assert "Merkle" in body["detail"] or "merkle" in body["detail"].lower()
+   210→
+   211→
+   212→# ---------------------------------------------------------------------------
+   213→# POST /v1/simulate — dry-run, no audit write.
+   214→# ---------------------------------------------------------------------------
+   215→
+   216→
+   217→def test_simulate_dry_run():
+   218→    """POST /v1/simulate returns the decision shape, BUT no audit record
+   219→    was written (the audit tail length is the same before + after).
+   220→    Auth: scorer scope (it's a read-only explorer).
+   221→    """
+   222→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   223→        # Count audit records before.
+   224→        tail_before = client.get(
+   225→            "/v1/compliance/audit-export", headers=ADMIN
+   226→        ).text.count("\n")
+   227→        r = client.post(
+   228→            "/v1/simulate",
+   229→            json={
+   230→                "order": VALID,
+   231→                "mandate": None,
+   232→                "dry_run": True,
+   233→            },
+   234→            headers=SCORER,
+   235→        )
+   236→        assert r.status_code == 200, r.text
+   237→        body = r.json()
+   238→        assert body["dry_run"] is True
+   239→        assert body["decision"] in {"ACCEPT", "REVIEW", "REJECT"}
+   240→        # The simulate endpoint surfaces rule_trace — the /risk/score
+   241→        # endpoint doesn't (it only surfaces rule_fired).
+   242→        assert "rule_trace" in body
+   243→        assert isinstance(body["rule_trace"], list)
+   244→        # Nothing was persisted — no audit_trail_url, no case_id.
+   245→        assert body["audit_trail_url"] is None
+   246→        assert body["case_id"] is None
+   247→        assert body["prediction_id"] is None
+   248→        # Audit tail unchanged.
+   249→        tail_after = client.get(
+   250→            "/v1/compliance/audit-export", headers=ADMIN
+   251→        ).text.count("\n")
+   252→        assert tail_after == tail_before, "simulate must not write audit records"
+   253→
+   254→
+   255→def test_simulate_admin_scope_also_works():
+   256→    """Admin scope can also call /v1/simulate (admin can do everything
+   257→    scorer can). The check_key call returns ok for admin-scope keys on
+   258→    the 'scorer' scope check only if the admin key is in the scorer
+   259→    set — but the default admin-demo-key is NOT in the scorer set. So
+   260→    admin key gets 401. Verify that."""
+   261→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   262→        r = client.post(
+   263→            "/v1/simulate",
+   264→            json={"order": VALID, "dry_run": True},
+   265→            headers=ADMIN,
+   266→        )
+   267→        # Admin-scope key is NOT in the scorer set by default → 401.
+   268→        assert r.status_code == 401, r.text
+   269→
+   270→
+   271→def test_simulate_mandate_breach_path():
+   272→    """A mandate amount-breach routes the simulate decision to REJECT
+   273→    with decision_source=mandate_breach — same precedence as /risk/score."""
+   274→    from src.api.mandates import issue_mandate
+   275→
+   276→    mandate = issue_mandate("CUST-H1", max_amount_inr=100, ttl_seconds=600)
+   277→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   278→        r = client.post(
+   279→            "/v1/simulate",
+   280→            json={
+   281→                "order": {**VALID, "amount_inr": 2500},
+   282→                "mandate": mandate,
+   283→                "dry_run": True,
+   284→            },
+   285→            headers=SCORER,
+   286→        )
+   287→        assert r.status_code == 200, r.text
+   288→        body = r.json()
+   289→        assert body["decision"] == "REJECT"
+   290→        assert body["decision_source"] == "mandate_breach"
+   291→        assert body["mandate"]["verdict"] == "breach"
+   292→
+   293→
+   294→# ---------------------------------------------------------------------------
+   295→# GET /v1/usage — admin-only, returns counts.
+   296→# ---------------------------------------------------------------------------
+   297→
+   298→
+   299→def test_usage_admin_only():
+   300→    """Scorer-scope key gets 401 on /v1/usage (admin-only metering)."""
+   301→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   302→        r = client.get("/v1/usage", headers=SCORER)
+   303→        assert r.status_code == 401, r.text
+   304→
+   305→
+   306→def test_usage_returns_counts():
+   307→    """POST some orders, GET /v1/usage — the 24h count must be ≥ the
+   308→    number of orders we POSTed. The 7d + 30d counts should also be ≥
+   309→    that number (the 24h window is a subset of 7d / 30d)."""
+   310→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   311→        # POST 3 orders.
+   312→        for i in range(3):
+   313→            r = client.post(
+   314→                "/risk/score",
+   315→                json={**VALID, "order_id": f"H-USAGE-{i}"},
+   316→                headers=SCORER,
+   317→            )
+   318→            assert r.status_code == 200, r.text
+   319→        r = client.get("/v1/usage", headers=ADMIN)
+   320→        assert r.status_code == 200, r.text
+   321→        body = r.json()
+   322→        # Default since_hours = "24,168,720" → keys "24", "168", "720".
+   323→        assert "counts" in body
+   324→        assert set(body["counts"].keys()) == {"24", "168", "720"}
+   325→        # The 24h count includes at least the 3 orders we just POSTed
+   326→        # (plus any from prior test setup / module-level fixtures).
+   327→        assert body["counts"]["24"] >= 3, body
+   328→        # The 7d + 30d windows are supersets — counts must be >= 24h count.
+   329→        assert body["counts"]["168"] >= body["counts"]["24"]
+   330→        assert body["counts"]["720"] >= body["counts"]["24"]
+   331→        # The Merkle interval cadence fields are surfaced (file mode:
+   332→        # intervals_sealed_total == 0 — no Merkle layer active).
+   333→        assert "intervals_sealed_total" in body
+   334→        assert "latest_interval" in body
+   335→        # In file mode there are no sealed intervals — verify the
+   336→        # endpoint doesn't crash on this (the field is None).
+   337→        assert body["intervals_sealed_total"] == 0
+   338→        assert body["latest_interval"] is None
+   339→
+   340→
+   341→def test_usage_since_hours_csv_parsing():
+   342→    """The since_hours query param accepts a CSV of positive ints + clamps
+   343→    each value to [1, 87600]. Verify a 422 on a non-int value."""
+   344→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   345→        # Valid CSV.
+   346→        r = client.get("/v1/usage?since_hours=1,2,3", headers=ADMIN)
+   347→        assert r.status_code == 200, r.text
+   348→        assert r.json()["since_hours"] == [1, 2, 3]
+   349→        # Invalid CSV → 422.
+   350→        r = client.get("/v1/usage?since_hours=abc", headers=ADMIN)
+   351→        assert r.status_code == 422, r.text
+   352→
+   353→
+   354→# ---------------------------------------------------------------------------
+   355→# POST /risk/{prediction_id}/override — V3 §12.1 dual-control.
+   356→# ---------------------------------------------------------------------------
+   357→
+   358→
+   359→def test_dual_control_legacy_single_admin_still_works():
+   360→    """Backward-compat: the old query-param form (single admin +
+   361→    new_decision=...) still works (Track D's test_admin_can_override
+   362→    relies on this). Track H must NOT break it."""
+   363→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   364→        scored = client.post("/risk/score", json=VALID, headers=SCORER).json()
+   365→        pid = scored["prediction_id"]
+   366→        r = client.post(
+   367→            f"/risk/{pid}/override?new_decision=REVIEW", headers=ADMIN
+   368→        )
+   369→        assert r.status_code == 200, r.text
+   370→        body = r.json()
+   371→        assert body["new_decision"] == "REVIEW"
+   372→        # The legacy path surfaces dual_control=False so the dashboard
+   373→        # can label the override's authoring shape.
+   374→        assert body["dual_control"] is False
+   375→        assert body["signatures_provided"] == 1
+   376→
+   377→
+   378→def test_dual_control_override_requires_two_keys():
+   379→    """The new JSON-body path requires BOTH admin_signature_1 AND
+   380→    admin_signature_2 to be valid admin-scope keys. One key missing
+   381→    (None) → Pydantic 422 (field required). One key invalid → 403."""
+   382→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   383→        scored = client.post("/risk/score", json=VALID, headers=SCORER).json()
+   384→        pid = scored["prediction_id"]
+   385→        # Both keys invalid → 403.
+   386→        r = client.post(
+   387→            f"/risk/{pid}/override",
+   388→            json={
+   389→                "decision": "REVIEW",
+   390→                "notes": "test",
+   391→                "admin_signature_1": "invalid-key-1",
+   392→                "admin_signature_2": "admin-demo-key",
+   393→                # Day 7 Wave 1 (Subagent 14-d — A2 fix) — the request
+   394→                # body now carries a per-request nonce. The admin1
+   395→                # check runs BEFORE the nonce consumption so the 403
+   396→                # is preserved (the nonce is NOT consumed on this
+   397→                # path — the request fails at admin1 validation first).
+   398→                "nonce": _fresh_nonce(),
+   399→            },
+   400→        )
+   401→        assert r.status_code == 403, r.text
+   402→        assert "2 valid admin" in r.json()["detail"]
+   403→
+   404→
+   405→def test_dual_control_same_key_rejected():
+   406→    """Same key for admin_signature_1 + admin_signature_2 → 400
+   407→    (cannot self-approve per V3 §12.1)."""
+   408→    with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   409→        scored = client.post("/risk/score", json=VALID, headers=SCORER).json()
+   410→        pid = scored["prediction_id"]
+   411→        r = client.post(
+   412→            f"/risk/{pid}/override",
+   413→            json={
+   414→                "decision": "REVIEW",
+   415→                "notes": "self-approve attempt",
+   416→                "admin_signature_1": "admin-demo-key",
+   417→                "admin_signature_2": "admin-demo-key",  # same key
+   418→                # Day 7 Wave 1 (Subagent 14-d — A2 fix) — fresh nonce.
+   419→                # The same-key check runs BEFORE the nonce consumption
+   420→                # so the 400 is preserved (the nonce is NOT consumed
+   421→                # on this path).
+   422→                "nonce": _fresh_nonce(),
+   423→            },
+   424→        )
+   425→        assert r.status_code == 400, r.text
+   426→        body = r.json()
+   427→        assert "DIFFERENT" in body["detail"] or "self-approve" in body["detail"]
+   428→
+   429→
+   430→def test_dual_control_two_different_keys_succeeds():
+   431→    """Two DIFFERENT valid admin-scope keys → 200 with a real HMAC chain
+   432→    (T1.1). signature_2 = HMAC(admin2_key, signature_1 + canonical_body +
+   433→    timestamp). The audit record carries admin_signature_1_digest (SHA-256
+   434→    of admin1's raw key) + admin_signature_2_hmac_chain (truncated HMAC)
+   435→    + dual_control_chain_verified=True — NOT the raw keys (redaction
+   436→    posture matches customer_id).
+   437→
+   438→    T1.1 UPDATE — the prior test passed admin_signature_2 as a raw
+   439→    admin API key (the legacy pre-T1.1 form). The new HMAC-chain design
+   440→    requires admin_signature_2 to be the HMAC output computed with
+   441→    admin2's API key. The test now computes that HMAC client-side +
+   442→    sends it in admin_signature_2; the server recomputes + verifies.
+   443→
+   444→    Day 7 Wave 1 (Subagent 14-d — A1 fix) UPDATE — the client now
+   445→    derives the admin2 subkey via HKDF (RFC 5869) before computing the
+   446→    HMAC. The server's HMAC chain verification uses the same derived
+   447→    key, so the client + server agree on the expected signature_2.
+   448→    The raw admin2_key is NEVER used directly as the HMAC key — only
+   449→    the HKDF-derived subkey is. A1 + A2 fixes: nonce field is also
+   450→    sent (a fresh one per request — the server stores SHA-256 hash +
+   451→    409 on reuse).
+   452→    """
+   453→    import hmac
+   454→    import hashlib
+   455→    import json
+   456→    import os
+   457→    import time
+   458→
+   459→    from src.api.keys import derive_hmac_key
+   460→
+   461→    # Set a second admin key via env var so default_keys() picks it up.
+   462→    # The settings cache must be cleared so the new key is loaded.
+   463→    old = os.environ.get("RTO_ADMIN_KEYS")
+   464→    os.environ["RTO_ADMIN_KEYS"] = "admin-demo-key,admin-second-key"
+   465→    from src.config import get_settings
+   466→
+   467→    get_settings.cache_clear()
+   468→    try:
+   469→        with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   470→            scored = client.post("/risk/score", json=VALID, headers=SCORER).json()
+   471→            pid = scored["prediction_id"]
+   472→            # T1.1 — compute the real HMAC chain client-side. signature_2
+   473→            # = HMAC(admin2_key, signature_1 + canonical_body + timestamp).
+   474→            # A1 fix — derive the admin2 subkey via HKDF first; the raw
+   475→            # admin2_key is never used directly as the HMAC key.
+   476→            admin1_key = "admin-demo-key"
+   477→            admin2_key = "admin-second-key"
+   478→            decision = "REVIEW"
+   479→            notes = "dual-control test"
+   480→            ts = int(time.time())
+   481→            canonical_body = json.dumps(
+   482→                {
+   483→                    "prediction_id": pid,
+   484→                    "decision": decision,
+   485→                    "notes": notes,
+   486→                },
+   487→                sort_keys=True,
+   488→            )
+   489→            chained_msg = f"{admin1_key}|{canonical_body}|{ts}"
+   490→            derived_admin2 = derive_hmac_key(
+   491→                admin2_key,
+   492→                salt=b"rto-override-v1",
+   493→                info=b"dual-control",
+   494→                length=32,
+   495→            )
+   496→            sig2 = hmac.new(
+   497→                derived_admin2,
+   498→                chained_msg.encode(),
+   499→                hashlib.sha256,
+   500→            ).hexdigest()
+   501→            r = client.post(
+   502→                f"/risk/{pid}/override",
+   503→                json={
+   504→                    "decision": decision,
+   505→                    "notes": notes,
+   506→                    "admin_signature_1": admin1_key,
+   507→                    "admin_signature_2": sig2,
+   508→                    "timestamp": ts,
+   509→                    # A2 fix — fresh per-request nonce (server stores
+   510→                    # SHA-256 hash + 409 on reuse). The nonce is NOT
+   511→                    # part of the HMAC canonical_body (the chain is
+   512→                    # unchanged from T1.1).
+   513→                    "nonce": _fresh_nonce(),
+   514→                },
+   515→            )
+   516→            assert r.status_code == 200, r.text
+   517→            body = r.json()
+   518→            assert body["dual_control"] is True
+   519→            assert body["signatures_required"] == 2
+   520→            assert body["signatures_provided"] == 2
+   521→            assert body["new_decision"] == "REVIEW"
+   522→            # T1.1 — the chain-verified flag + timestamp are surfaced.
+   523→            assert body["dual_control_chain_verified"] is True
+   524→            assert body["dual_control_timestamp"] == ts
+   525→            # A2 fix — the consumed-nonce hash is surfaced.
+   526→            assert "override_nonce_hash" in body
+   527→            # The audit trail must record the new T1.1 fields.
+   528→            audit_id = body["audit_id"]
+   529→            rec = client.get(f"/audit/{audit_id}", headers=ADMIN).json()
+   530→            assert "admin_signature_1_digest" in rec
+   531→            # T1.1 — admin_signature_2 is now an HMAC output (not a raw
+   532→            # key); the audit stores admin_signature_2_hmac_chain +
+   533→            # dual_control_chain_verified instead of
+   534→            # admin_signature_2_digest.
+   535→            assert "admin_signature_2_hmac_chain" in rec
+   536→            assert rec["admin_signature_1_digest"].startswith("adm_")
+   537→            assert rec["admin_signature_2_hmac_chain"].startswith("hmac_")
+   538→            assert rec["dual_control_chain_verified"] is True
+   539→            assert rec["dual_control_timestamp"] == ts
+   540→            assert (
+   541→                rec["admin_signature_1_digest"]
+   542→                != rec["admin_signature_2_hmac_chain"]
+   543→            ), "admin1 digest + admin2 HMAC must differ in shape + value"
+   544→            # A2 fix — the audit record carries the consumed-nonce hash
+   545→            # (NOT the raw nonce — the table doesn't leak nonce values
+   546→            # if the DB is compromised).
+   547→            assert "override_nonce_hash" in rec
+   548→            assert len(rec["override_nonce_hash"]) == 64  # SHA-256 hex
+   549→            # The override_form field records which path was taken.
+   550→            assert rec["request"]["override_form"] == "dual_control_v3_12_1"
+   551→    finally:
+   552→        # Restore env + clear cache so other tests get the default keys.
+   553→        if old is None:
+   554→            os.environ.pop("RTO_ADMIN_KEYS", None)
+   555→        else:
+   556→            os.environ["RTO_ADMIN_KEYS"] = old
+   557→        get_settings.cache_clear()
+   558→
+   559→
+   560→def test_dual_control_hmac_chain_rejects_tampered_signature_2():
+   561→    """T1.1 — a tampered signature_2 (not the expected HMAC) must 403.
+   562→    Sends admin_signature_1=admin1_key + admin_signature_2=garbage (not
+   563→    the HMAC computed with admin2_key). The server iterates admin keys,
+   564→    finds no match → 403 "dual_control HMAC chain verification failed".
+   565→
+   566→    Day 7 Wave 1 (Subagent 14-d — A2 fix) UPDATE — the request body
+   567→    now carries a per-request nonce. The nonce is consumed BEFORE the
+   568→    HMAC chain verification, so a tampered-sig2 request consumes the
+   569→    nonce slot (a re-submission with the same nonce would 409). The
+   570→    test uses a fresh nonce so the 403 is preserved (the nonce check
+   571→    passes first sighting, then the HMAC check fails → 403).
+   572→    """
+   573→    import os
+   574→
+   575→    old = os.environ.get("RTO_ADMIN_KEYS")
+   576→    os.environ["RTO_ADMIN_KEYS"] = "admin-demo-key,admin-second-key"
+   577→    from src.config import get_settings
+   578→
+   579→    get_settings.cache_clear()
+   580→    try:
+   581→        with TestClient(create_app(scorer_rate_per_min=1000)) as client:
+   582→            scored = client.post("/risk/score", json=VALID, headers=SCORER).json()
+   583→            pid = scored["prediction_id"]
+   584→            r = client.post(
+   585→                f"/risk/{pid}/override",
+   586→                json={
+   587→                    "decision": "REVIEW",
+   588→                    "notes": "tamper attempt",
+   589→                    "admin_signature_1": "admin-demo-key",
+   590→                    "admin_signature_2": "not-a-valid-hmac-hex-string",
+   591→                    "timestamp": int(__import__("time").time()),
+   592→                    # A2 fix — fresh per-request nonce. The nonce is
+   593→                    # consumed BEFORE the HMAC chain verification, so
+   594→                    # this test "uses up" a nonce slot. The autouse
+   595→                    # fixture clears the cache between tests so the
+   596→                    # next test starts fresh.
+   597→                    "nonce": _fresh_nonce(),
+   598→                },
+   599→            )
+   600→            assert r.status_code == 403, r.text
+   601→            assert "HMAC chain verification failed" in r.json()["detail"]
+   602→    finally:
+   603→        if old is None:
+   604→            os.environ.pop("RTO_ADMIN_KEYS", None)
+   605→        else:
+   606→            os.environ["RTO_ADMIN_KEYS"] = old
+   607→        get_settings.cache_clear()
+   608→

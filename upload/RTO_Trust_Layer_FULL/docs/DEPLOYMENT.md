@@ -1,48 +1,9 @@
 # Deployment — RTO Trust Layer
 
-Four deployment paths, each verified to the extent the environment
+Three deployment paths, each verified to the extent the environment
 allows. Pick the one that fits your use case.
 
-## 1. Vercel (dashboard preview — no card required) — RECOMMENDED
-
-The Next.js dashboard at `web/` deploys to Vercel's Hobby tier (free,
-no credit card required). The dashboard has a built-in mock-mode
-fallback (`src/lib/api-proxy.ts` returns mock data + sets
-`X-Mock-Mode: true` when the Python backend is unreachable) so the
-deploy renders a fully-populated dashboard even with no backend.
-
-### Deploy steps (~3 min)
-
-1. Go to https://vercel.com → New Project → Import from GitHub
-2. Select `Neeraj-Parekh/special-parakeet`
-3. **Root Directory: `web`** (critical — the Next.js app is the `web/` subfolder)
-4. Framework auto-detected as Next.js → Deploy
-5. URL: `https://special-parakeet-web-xxxx.vercel.app` — shareable
-
-### Two demo modes
-
-- **Mock mode (default, no backend):** the dashboard shows 3 demo
-  orders (ACCEPT / REVIEW / REJECT) with a "preview without backend"
-  badge. Polished + shareable but not live inference.
-- **Live mode (optional):** run the Python API on your laptop
-  (`RTO_SCORER_KEYS=score-demo-key uvicorn src.api.routes:create_app
-  --factory --port 8000`), expose it via a free tunnel
-  (`cloudflared tunnel --url http://localhost:8000` or `ngrok`), then
-  set the Vercel project's `API_BASE_URL` env var to the tunnel URL.
-  The dashboard then calls the real model live — SHAP, risk score,
-  audit trail, all real, all over the public Vercel URL.
-
-### Why Vercel over Render here
-
-- Vercel Hobby tier requires NO credit card. Render's free web
-  services require a card on file.
-- The dashboard's mock-mode fallback means a Vercel deploy renders
-  cleanly with zero backend — Render would need the Python service
-  running to serve anything.
-- Vercel cold-starts are faster for Next.js (the dashboard is
-  server-rendered + cached at the edge).
-
-## 2. Render (production demo — card required)
+## 1. Render (production demo — free tier)
 
 The repo's `render.yaml` is a Render Blueprint. One-command deploy:
 

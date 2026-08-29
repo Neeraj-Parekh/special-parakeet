@@ -13,7 +13,7 @@ Blueprints → New Blueprint Instance → select repo → done."
 ## Steps for the user (~2 minutes)
 
 1. Open https://render.com/dashboard in your browser (you're already
-   logged in — your Render API token `<REDACTED — rotate at render.com/account/api-keys if this was ever public>`
+   logged in — your Render API token `<REDACTED: dead Render API token, revoked by user 2025-08-29>`
    is registered to "My Workspace" team).
 
 2. First-time only: install the Render GitHub App.

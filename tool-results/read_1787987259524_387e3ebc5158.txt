@@ -1,0 +1,836 @@
+     1→"""Tamper-evident audit log with SHA-256 hash chain + Merkle interval sealing.
+     2→
+     3→Dual-mode: Postgres (when ``DATABASE_URL`` is set) or JSONL file fallback
+     4→(otherwise — the 63 existing tests run this way). The Postgres schema lives
+     5→in ``alembic/versions/001_initial.py`` (table ``audit_records``); the file
+     6→format is unchanged from the original implementation.
+     7→
+     8→raw_hash = sha256(canonical(record_without_hash_fields) + previous_raw_hash).
+     9→Editing any historical record breaks every subsequent link; ``verify_chain``
+    10→recomputes the full chain for compliance audits (per SoK Mao 2026 paper —
+    11→gap #11 in 05-PAPER-SKILLS-MAP.md, the Merkle-interval sealing extension is
+    12→Track H Day 2's job; the per-record hash chain here is the foundation).
+    13→
+    14→Day 2 Track H — Merkle interval sealing (V3 §10.3). ON TOP of the
+    15→per-record hash chain (additional layer — the per-record chain is
+    16→unchanged). Every N records (default 1000) or T seconds (default 3600),
+    17→``MerkleSealer`` computes the Merkle root of the interval's raw_hash
+    18→leaves, chains it to the previous interval's root, and inserts a row in
+    19→``audit_merkle_intervals`` (migration 002). The interval roots form a
+    20→coarser tamper-evidence layer enabling O(log N) inclusion proofs per
+    21→record (vs O(N) full-chain recompute). Only active in Postgres mode —
+    22→file mode keeps the per-record hash chain only (sufficient for tests).
+    23→"""
+    24→from __future__ import annotations
+    25→
+    26→import hashlib
+    27→import json
+    28→import threading
+    29→import uuid
+    30→from datetime import datetime, timezone
+    31→from pathlib import Path
+    32→
+    33→GENESIS = "0" * 64
+    34→
+    35→
+    36→def self_salt() -> str:
+    37→    """Salt for ``redact_customer()``. Centralised via ``Settings`` (Day 2
+    38→    Track E). Kept for backward-compat — existing call sites use the bare
+    39→    function; new code should read ``get_settings().rto_audit_salt``.
+    40→    """
+    41→    from src.config import get_settings
+    42→
+    43→    return get_settings().rto_audit_salt
+    44→
+    45→
+    46→def redact_customer(customer_id: str) -> str:
+    47→    """Never store raw customer identifiers; store salted digest prefix."""
+    48→    return "cust_" + hashlib.sha256(f"{customer_id}:{self_salt()}".encode()).hexdigest()[:16]
+    49→
+    50→
+    51→def canonical(payload: dict) -> str:
+    52→    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    53→
+    54→
+    55→# ------------------------------------------------------------------ #
+    56→# Merkle interval sealing (V3 §10.3 — Day 2 Track H)                 #
+    57→# ------------------------------------------------------------------ #
+    58→
+    59→
+    60→class MerkleSealer:
+    61→    """Merkle interval sealing per V3 §10.3.
+    62→
+    63→    Every N records (default 1000) or T seconds (default 3600), compute
+    64→    a Merkle root of the batch's ``raw_hash`` leaves, chain it to the
+    65→    previous interval's root, store the interval.
+    66→
+    67→    This is ADDITIONAL to the per-record hash chain (Track E Day 2) —
+    68→    it's a coarser tamper-evidence layer that enables O(log N) proof
+    69→    generation per record (vs O(N) full-chain recompute via
+    70→    ``AuditLogger.verify_chain()``). The per-record ``raw_hash`` is the
+    71→    leaf; ``audit_merkle_intervals.merkle_root`` is the interval root;
+    72→    ``audit_merkle_intervals.prev_interval_root`` chains intervals
+    73→    together so cross-interval tampering is detected (same model as
+    74→    Track E's per-record ``prev_hash``).
+    75→
+    76→    Source: SoK (Mao 2026) capability ``recommend_layered_defenses``
+    77→    layer 5 — "market & compliance monitoring with tamper-evident audit
+    78→    trails"; ``audit_agent_mandate_scoping`` (the dual-control override
+    79→    in routes.py consumes this tamper-evidence layer so both admin
+    80→    signatures are anchored to a verifiable root, not just the live
+    81→    hash chain tip).
+    82→
+    83→    File mode is a no-op: the per-record hash chain is enough for tests
+    84→    + local dev without Postgres. Merkle is a Postgres-mode enhancement.
+    85→    """
+    86→
+    87→    def __init__(
+    88→        self,
+    89→        conn=None,
+    90→        interval_size: int = 1000,
+    91→        interval_seconds: int = 3600,
+    92→    ):
+    93→        # Postgres connection (None in file mode → no-op). Shared with
+    94→        # the parent AuditLogger's connection — no extra pool needed.
+    95→        self.conn = conn
+    96→        self.interval_size = interval_size
+    97→        self.interval_seconds = interval_seconds
+    98→        # Pending (record_id, raw_hash) pairs since the last seal.
+    99→        # Bounded by interval_size; flushed to audit_merkle_intervals on
+   100→        # add() when len(self._pending) >= interval_size or by an
+   101→        # explicit seal_interval() call (e.g. from a cron / shutdown hook).
+   102→        self._pending: list[tuple[int, str]] = []
+   103→        # First-record timestamp so the time-based seal trigger can compute
+   104→        # elapsed since the interval opened (independent of record count).
+   105→        self._interval_started_at: datetime | None = None
+   106→
+   107→    # ------------------------------------------------------------------ #
+   108→    # Public API — add / seal / proof                                    #
+   109→    # ------------------------------------------------------------------ #
+   110→
+   111→    def add(self, record_id: int, raw_hash: str) -> dict | None:
+   112→        """Add a record to the pending interval. Seal if threshold reached.
+   113→
+   114→        Called by ``AuditLogger._log_postgres`` after every INSERT so the
+   115→        sealer tracks new records in real time. The first record's
+   116→        timestamp seeds ``_interval_started_at`` for the time-based
+   117→        trigger (so an idle period after a partial interval still flushes
+   118→        on the next ``seal_interval()`` even with no fresh traffic).
+   119→        """
+   120→        if self.conn is None:
+   121→            # File mode — no-op (per-record hash chain is enough there).
+   122→            return None
+   123→        if not self._pending:
+   124→            self._interval_started_at = datetime.now(timezone.utc)
+   125→        self._pending.append((record_id, raw_hash))
+   126→        # Seal when EITHER threshold trips (count OR elapsed). The count
+   127→        # trigger fires inline; the time trigger is checked here too so
+   128→        # a long quiet gap after a partial batch doesn't leave the
+   129→        # interval open forever (the cron hook calls seal_interval() too).
+   130→        if len(self._pending) >= self.interval_size:
+   131→            return self.seal()
+   132→        if self._interval_started_at is not None:
+   133→            elapsed = (datetime.now(timezone.utc) - self._interval_started_at).total_seconds()
+   134→            if elapsed >= self.interval_seconds and len(self._pending) > 0:
+   135→                return self.seal()
+   136→        return None
+   137→
+   138→    def seal(self) -> dict | None:
+   139→        """Seal the current pending batch into a Merkle interval.
+   140→
+   141→        Returns the interval metadata dict (merkle_root, prev_root,
+   142→        leaf_count) on success, None if there's nothing to seal or the
+   143→        sealer is in file mode (conn is None). After sealing, the
+   144→        pending batch is cleared + the next add() starts a fresh
+   145→        interval. Idempotent — calling seal() with an empty pending
+   146→        list is a no-op.
+   147→
+   148→        ATOMICITY CONTRACT (T1.2): ``seal()`` does NOT call
+   149→        ``self.conn.commit()`` — the caller is responsible for committing
+   150→        the transaction. Two call paths exist:
+   151→
+   152→          1. ``_log_postgres`` → ``add()`` → ``seal()`` (when the count
+   153→             OR time threshold trips mid-INSERT). The caller's outer
+   154→             ``self._conn.commit()`` persists the audit INSERT + the
+   155→             seal's INSERT/UPDATEs together. If ``seal()`` raises, the
+   156→             caller's ``except`` rolls the whole thing back — no orphan
+   157→             audit row without a Merkle interval (the per-record hash
+   158→             chain stays clean).
+   159→          2. ``AuditLogger.seal_interval()`` → ``seal()`` (cron / shutdown
+   160→             hook). That method commits explicitly after ``seal()``
+   161→             returns.
+   162→
+   163→        This contract is what makes Merkle sealing ATOMIC with the audit
+   164→        INSERT — the prior implementation committed the audit INSERT first
+   165→        and called ``sealer.add()`` second, so a seal failure left a
+   166→        committed audit row WITHOUT a Merkle interval (silent tamper-chain
+   167→        break). The new contract ties both writes to ONE transaction.
+   168→        """
+   169→        if not self._pending or self.conn is None:
+   170→            return None
+   171→        # Compute Merkle root of the raw_hash leaves. Padding to a power
+   172→        # of 2 keeps the tree balanced so the proof builder's index
+   173→        # arithmetic (sibling_idx = idx ^ 1) is consistent across levels.
+   174→        leaves = [h for _, h in self._pending]
+   175→        merkle_root = self._merkle_root(leaves)
+   176→        # Get previous interval's root (None on first interval → genesis).
+   177→        with self.conn.cursor() as cur:
+   178→            cur.execute(
+   179→                "SELECT merkle_root FROM audit_merkle_intervals "
+   180→                "ORDER BY interval_id DESC LIMIT 1"
+   181→            )
+   182→            prev = cur.fetchone()
+   183→        prev_root = prev[0] if prev else GENESIS
+   184→        # Insert the interval row + backfill the per-record columns
+   185→        # (interval_id + interval_position) so the proof builder can
+   186→        # locate a record's interval + leaf index in O(1).
+   187→        #
+   188→        # NOTE: NO self.conn.commit() here — the caller commits (see the
+   189→        # ATOMICITY CONTRACT above). This is the T1.2 fix: committing
+   190→        # here would persist the seal writes BEFORE the audit INSERT in
+   191→        # the _log_postgres path, breaking atomicity the same way the
+   192→        # old code did (just with the order reversed).
+   193→        with self.conn.cursor() as cur:
+   194→            cur.execute(
+   195→                """
+   196→                INSERT INTO audit_merkle_intervals
+   197→                  (start_record_id, end_record_id, merkle_root,
+   198→                   prev_interval_root, leaf_count)
+   199→                VALUES (%s, %s, %s, %s, %s)
+   200→                RETURNING interval_id
+   201→                """,
+   202→                (
+   203→                    self._pending[0][0],
+   204→                    self._pending[-1][0],
+   205→                    merkle_root,
+   206→                    prev_root,
+   207→                    len(leaves),
+   208→                ),
+   209→            )
+   210→            interval_id = cur.fetchone()[0]
+   211→            # Per-record backfill is O(M) where M = interval_size (default
+   212→            # 1000) — cheap. The interval_id returned above is used in
+   213→            # the UPDATE (no need for currval() — we already have it in
+   214→            # Python).
+   215→            for pos, (rid, _) in enumerate(self._pending):
+   216→                cur.execute(
+   217→                    """
+   218→                    UPDATE audit_records
+   219→                       SET interval_id = %s, interval_position = %s
+   220→                     WHERE id = %s
+   221→                    """,
+   222→                    (interval_id, pos, rid),
+   223→                )
+   224→        self._pending = []
+   225→        self._interval_started_at = None
+   226→        return {
+   227→            "interval_id": interval_id,
+   228→            "merkle_root": merkle_root,
+   229→            "prev_root": prev_root,
+   230→            "leaf_count": len(leaves),
+   231→        }
+   232→
+   233→    @staticmethod
+   234→    def _merkle_root(leaves: list[str]) -> str:
+   235→        """Compute Merkle root from leaf hashes. Pad to power of 2.
+   236→
+   237→        Padding uses the LAST leaf's hash repeated (RFC 6962-style) so
+   238→        the tree is balanced without introducing a synthetic zero-leaf
+   239→        that a verifier would need to special-case. Empty leaf list →
+   240→        GENESIS (the same ``"0"*64`` constant Track E's hash chain uses
+   241→        as the genesis ``prev_hash``).
+   242→        """
+   243→        if not leaves:
+   244→            return GENESIS
+   245→        # Pad to next power of 2.
+   246→        size = 1
+   247→        while size < len(leaves):
+   248→            size *= 2
+   249→        padded = leaves + [leaves[-1]] * (size - len(leaves))
+   250→        # Build tree level-by-level: parent = sha256(left + right).
+   251→        level = padded
+   252→        while len(level) > 1:
+   253→            next_level = []
+   254→            for i in range(0, len(level), 2):
+   255→                combined = hashlib.sha256(
+   256→                    (level[i] + level[i + 1]).encode()
+   257→                ).hexdigest()
+   258→                next_level.append(combined)
+   259→            level = next_level
+   260→        return level[0]
+   261→
+   262→    @staticmethod
+   263→    def _build_proof_path(leaves: list[str], position: int) -> list[dict]:
+   264→        """Build a Merkle inclusion proof path from leaf to interval root.
+   265→
+   266→        Pure-Python — no DB queries. Called by ``proof(record_id)`` after
+   267→        the leaves + position are fetched from the audit_records table,
+   268→        AND called directly by the unit tests in
+   269→        ``tests/test_v3_endpoints.py`` so the proof-builder math is
+   270→        exercised WITHOUT a Postgres dependency.
+   271→
+   272→        Returns a list of ``{"position": "left"|"right", "hash": <hex>}``
+   273→        entries, one per tree level from leaf to root. The sibling at
+   274→        each level is at index ``idx ^ 1`` (RFC 6962 §2.1.1):
+   275→
+   276→          * If ``idx`` is even, sibling is at ``idx + 1`` → RIGHT sibling.
+   277→          * If ``idx`` is odd,  sibling is at ``idx - 1`` → LEFT  sibling.
+   278→
+   279→        The position bookkeeping at the ``"right" if sibling_idx > idx
+   280→        else "left"`` line correctly emits both sides — the prior test
+   281→        ``test_merkle_proof_reconstructs_root`` had an ``or True`` tautology
+   282→        because its OWN reconstruction logic always picked
+   283→        ``sha256(leaf + sibling)`` (the right-side form) regardless of
+   284→        position, which silently broke for odd indices where the sibling
+   285→        is on the LEFT. The proof BUILDER here was correct; the test's
+   286→        reconstruction was buggy. T1.3 fixes both by routing through
+   287→        this shared static helper.
+   288→        """
+   289→        if not leaves or position < 0 or position >= len(leaves):
+   290→            return []
+   291→        # Pad to next power of 2 (same rule as _merkle_root).
+   292→        size = 1
+   293→        while size < len(leaves):
+   294→            size *= 2
+   295→        level = leaves + [leaves[-1]] * (size - len(leaves))
+   296→        proof: list[dict] = []
+   297→        idx = position
+   298→        while len(level) > 1:
+   299→            sibling_idx = idx ^ 1  # XOR 1: pairs (0,1), (2,3), ...
+   300→            if sibling_idx < len(level):
+   301→                # Even idx → sibling_idx = idx+1 → sibling is RIGHT.
+   302→                # Odd  idx → sibling_idx = idx-1 → sibling is LEFT.
+   303→                proof.append(
+   304→                    {
+   305→                        "position": "right" if sibling_idx > idx else "left",
+   306→                        "hash": level[sibling_idx],
+   307→                    }
+   308→                )
+   309→            else:
+   310→                # Defensive fallback for an unpadded tree (unreachable
+   311→                # here because we pad above, but kept for safety).
+   312→                proof.append({"position": "right", "hash": level[-1]})
+   313→            # Compute next level (parent hashes).
+   314→            next_level = []
+   315→            for i in range(0, len(level), 2):
+   316→                combined = hashlib.sha256(
+   317→                    (level[i] + level[i + 1 if i + 1 < len(level) else i]).encode()
+   318→                ).hexdigest()
+   319→                next_level.append(combined)
+   320→            level = next_level
+   321→            idx //= 2
+   322→        return proof
+   323→
+   324→    def proof(self, record_id: int) -> dict | None:
+   325→        """Generate Merkle proof for a record: path from leaf to interval root.
+   326→
+   327→        Returns None if the record doesn't exist, has no interval_id
+   328→        (i.e. the sealer hasn't reached the threshold + the cron seal
+   329→        hasn't fired), or the sealer is in file mode. The proof dict
+   330→        contains the sibling hashes from leaf to root, the interval's
+   331→        root + prev_interval_root (chain anchor), leaf_count, sealed_at
+   332→        — enough to verify inclusion in O(log N) without recomputing
+   333→        the whole tree.
+   334→        """
+   335→        if self.conn is None:
+   336→            return None
+   337→        # Get the record's interval + position.
+   338→        with self.conn.cursor() as cur:
+   339→            cur.execute(
+   340→                "SELECT interval_id, interval_position, raw_hash "
+   341→                "FROM audit_records WHERE id = %s",
+   342→                (record_id,),
+   343→            )
+   344→            row = cur.fetchone()
+   345→        if not row or row[0] is None:
+   346→            # Record not found, OR interval not yet sealed.
+   347→            return None
+   348→        interval_id, position, leaf_hash = row
+   349→        # Get all leaves in this interval (the proof builder needs to
+   350→        # descend from the leaf position; siblings at each level are
+   351→        # looked up by index — pre-fetched once per proof for simplicity
+   352→        # rather than one query per tree level).
+   353→        with self.conn.cursor() as cur:
+   354→            cur.execute(
+   355→                "SELECT raw_hash FROM audit_records WHERE interval_id = %s "
+   356→                "ORDER BY interval_position",
+   357→                (interval_id,),
+   358→            )
+   359→            leaves = [r[0] for r in cur.fetchall()]
+   360→        # Build proof via the shared static helper so the pure-Python
+   361→        # math is testable WITHOUT a Postgres dependency (T1.3 — the
+   362→        # unit tests in test_v3_endpoints.py call _build_proof_path
+   363→        # directly; this method just wraps it with DB hydration).
+   364→        proof = self._build_proof_path(leaves, position)
+   365→        # Get the interval's metadata for the chain anchor.
+   366→        with self.conn.cursor() as cur:
+   367→            cur.execute(
+   368→                """
+   369→                SELECT merkle_root, prev_interval_root, leaf_count, sealed_at
+   370→                  FROM audit_merkle_intervals WHERE interval_id = %s
+   371→                """,
+   372→                (interval_id,),
+   373→            )
+   374→            interval = cur.fetchone()
+   375→        if not interval:
+   376→            return None
+   377→        return {
+   378→            "record_id": record_id,
+   379→            "leaf_hash": leaf_hash,
+   380→            "interval_id": interval_id,
+   381→            "position": position,
+   382→            "proof": proof,
+   383→            "merkle_root": interval[0],
+   384→            "prev_interval_root": interval[1],
+   385→            "leaf_count": interval[2],
+   386→            "sealed_at": interval[3].isoformat() if interval[3] else None,
+   387→        }
+   388→
+   389→
+   390→class AuditLogger:
+   391→    """Append-only audit log, tamper-evident hash chain, O(1) indexed reads.
+   392→
+   393→    Dual-mode (Day 2 Track E):
+   394→      * Postgres mode (``settings.database_url`` set): INSERT into
+   395→        ``audit_records``; reads via ``SELECT ... WHERE audit_id = %s``;
+   396→        chain verification via ``SELECT audit_id, body, raw_hash, prev_hash
+   397→        FROM audit_records ORDER BY id ASC``.
+   398→      * File mode (no DSN): the original JSONL append + byte-offset index.
+   399→
+   400→    The hash-chain math is identical between modes (``canonical(body) +
+   401→    prev_hash``) so a verifier computes the same hash either way.
+   402→
+   403→    Day 2 Track H — Merkle interval sealing (V3 §10.3). In Postgres
+   404→    mode, ``__init__`` constructs a ``MerkleSealer`` sharing the same
+   405→    connection; ``_log_postgres`` calls ``sealer.add(record_id, raw_hash)``
+   406→    after every INSERT so the sealer tracks new records in real time.
+   407→    File mode skips Merkle (the per-record hash chain is enough there).
+   408→    """
+   409→
+   410→    HASH_FIELDS = ("previous_hash", "raw_hash")
+   411→
+   412→    def __init__(self, path: str = "out/audit.jsonl", model_version: str = "dev"):
+   413→        from src.config import get_settings
+   414→
+   415→        self.settings = get_settings()
+   416→        self.model_version = model_version
+   417→        self._lock = threading.Lock()
+   418→
+   419→        if self.settings.is_postgres:
+   420→            # Postgres mode — open one persistent psycopg connection per logger
+   421→            # instance. We use a single connection (not a pool) because the
+   422→            # API is single-process + the audit log is the write-hot path;
+   423→            # a pool would add latency for no benefit at this scale.
+   424→            import psycopg
+   425→
+   426→            self._conn = psycopg.connect(self.settings.database_url, autocommit=False)
+   427→            self.path = Path(path)  # kept for backward-compat (audit_tail reads)
+   428→            self.path.touch(exist_ok=True)  # so audit_logger.path.exists() is True
+   429→            # Track last_hash from the most recent row so we can chain without
+   430→            # a SELECT on every INSERT. Hydrated lazily on first log() call
+   431→            # (cheap query; we'd rather not slow __init__ if the table is empty).
+   432→            self._last_hash_cached: str | None = None
+   433→            # Day 2 Track H — Merkle interval sealer (V3 §10.3). Shares
+   434→            # the parent connection so audit INSERT + Merkle seal happen
+   435→            # in the same transaction (atomic; partial-failure recovery
+   436→            # is left to Postgres's WAL, not Python try/except).
+   437→            self.sealer = MerkleSealer(conn=self._conn)
+   438→        else:
+   439→            # File mode — original behaviour, unchanged. The Merkle
+   440→            # sealer is a no-op here (per-record hash chain is enough
+   441→            # for tests; Merkle is a Postgres-mode enhancement).
+   442→            self._conn = None
+   443→            self.path = Path(path)
+   444→            self._index: dict[str, int] = {}
+   445→            self.last_hash = GENESIS
+   446→            self.sealer = None
+   447→            if self.path.exists():
+   448→                with self.path.open() as f:
+   449→                    for offset, line in enumerate(f):
+   450→                        rec = json.loads(line)
+   451→                        self._index[rec.get("audit_id", "")] = offset
+   452→                        self.last_hash = rec.get("raw_hash", self.last_hash)
+   453→
+   454→    # ------------------------------------------------------------------ #
+   455→    # Public API — log / read / verify_chain / tail / merkle             #
+   456→    # ------------------------------------------------------------------ #
+   457→
+   458→    def log(self, payload: dict) -> str:
+   459→        """Append a record. Returns the audit_id (caller surfaces it in the
+   460→        response so the dashboard can link ``/audit/{id}``)."""
+   461→        if self._conn is not None:
+   462→            return self._log_postgres(payload)
+   463→        return self._log_file(payload)
+   464→
+   465→    def read(self, audit_id: str) -> dict | None:
+   466→        if self._conn is not None:
+   467→            return self._read_postgres(audit_id)
+   468→        return self._read_file(audit_id)
+   469→
+   470→    def verify_chain(self) -> tuple[bool, int, str]:
+   471→        """Recompute entire chain. Returns (ok, records_checked, first_bad_id)."""
+   472→        if self._conn is not None:
+   473→            return self._verify_chain_postgres()
+   474→        return self._verify_chain_file()
+   475→
+   476→    def tail(self, limit: int = 300) -> list[dict]:
+   477→        """Return the last ``limit`` audit records (most-recent last).
+   478→
+   479→        Used by the ``/v1/models/drift`` endpoint (recent feature distributions
+   480→        for PSI) and the ``/v1/compliance/audit-export`` CSV export. In
+   481→        Postgres mode this is a ``SELECT ... ORDER BY id DESC LIMIT %s``;
+   482→        in file mode it's the tail of the JSONL.
+   483→        """
+   484→        if self._conn is not None:
+   485→            with self._conn.cursor() as cur:
+   486→                cur.execute(
+   487→                    "SELECT body FROM audit_records ORDER BY id DESC LIMIT %s",
+   488→                    (limit,),
+   489→                )
+   490→                rows = cur.fetchall()
+   491→            return [r[0] for r in rows][::-1]  # chronological order at the end
+   492→        if not self.path.exists():
+   493→            return []
+   494→        lines = self.path.read_text().splitlines()
+   495→        return [json.loads(line) for line in lines[-limit:] if line.strip()]
+   496→
+   497→    def seal_interval(self) -> dict | None:
+   498→        """Force-seal the pending Merkle interval (Day 2 Track H — V3 §10.3).
+   499→
+   500→        Public hook for a cron / shutdown / admin-endpoint call so a
+   501→        partial interval can be sealed without waiting for the count
+   502→        threshold. Returns the interval metadata on seal, None if there
+   503→        was nothing pending or the logger is in file mode.
+   504→
+   505→        T1.2 ATOMICITY: ``MerkleSealer.seal()`` no longer commits — it
+   506→        writes the interval row + per-record backfill within the caller's
+   507→        transaction. This method (the cron/shutdown call path) is the
+   508→        caller, so it commits explicitly here. If seal() raises, the
+   509→        except below rolls back; the pending list is left intact so the
+   510→        next call can retry.
+   511→        """
+   512→        if self.sealer is None:
+   513→            return None
+   514→        with self._lock:
+   515→            try:
+   516→                result = self.sealer.seal()
+   517→                # Commit only after seal() returned cleanly — the seal
+   518→                # writes (audit_merkle_intervals INSERT + audit_records
+   519→                # UPDATE backfill) are persisted together.
+   520→                self._conn.commit()
+   521→                return result
+   522→            except Exception:
+   523→                # Roll back any partial seal writes; the in-memory
+   524→                # _pending list is preserved because seal() only clears
+   525→                # it on success (after the INSERT/UPDATE loop finishes
+   526→                # without raising).
+   527→                self._conn.rollback()
+   528→                raise
+   529→
+   530→    def merkle_proof(self, record_id: int) -> dict | None:
+   531→        """Generate Merkle inclusion proof for an audit record (V3 §10.3).
+   532→
+   533→        Returns None in file mode (no Merkle layer) OR if the record's
+   534→        interval hasn't been sealed yet. The ``GET /v1/audit/{id}/proof``
+   535→        endpoint surfaces this — when None, the endpoint returns 404 so
+   536→        the caller can distinguish "no record" vs "record exists but
+   537→        interval not sealed yet" (the latter is fixable by calling
+   538→        ``seal_interval()`` first).
+   539→        """
+   540→        if self.sealer is None:
+   541→            return None
+   542→        return self.sealer.proof(record_id)
+   543→
+   544→    def merkle_intervals(self, limit: int = 100) -> list[dict]:
+   545→        """Return the last N sealed intervals (compliance audit endpoint).
+   546→
+   547→        Returns ``[]`` in file mode. Used by the ``/v1/usage`` endpoint
+   548→        + the admin audit dashboard to surface the sealing cadence +
+   549→        interval chain (each row's ``prev_interval_root`` chains to the
+   550→        prior row's ``merkle_root`` — a verifier can recompute this
+   551→        client-side in O(M) where M = number of intervals).
+   552→        """
+   553→        if self._conn is None:
+   554→            return []
+   555→        with self._conn.cursor() as cur:
+   556→            cur.execute(
+   557→                """
+   558→                SELECT interval_id, start_record_id, end_record_id,
+   559→                       merkle_root, prev_interval_root, leaf_count, sealed_at
+   560→                  FROM audit_merkle_intervals
+   561→                 ORDER BY interval_id DESC LIMIT %s
+   562→                """,
+   563→                (limit,),
+   564→            )
+   565→            rows = cur.fetchall()
+   566→        return [
+   567→            {
+   568→                "interval_id": r[0],
+   569→                "start_record_id": r[1],
+   570→                "end_record_id": r[2],
+   571→                "merkle_root": r[3],
+   572→                "prev_interval_root": r[4],
+   573→                "leaf_count": r[5],
+   574→                "sealed_at": r[6].isoformat() if r[6] else None,
+   575→            }
+   576→            for r in rows
+   577→        ]
+   578→
+   579→    def usage_counts(self, since_hours: tuple[int, ...] = (24, 168, 720)) -> dict:
+   580→        """Per-window audit-record counts for the ``/v1/usage`` metering
+   581→        endpoint. Returns ``{str(h): count, ...}`` for each h in
+   582→        ``since_hours`` (default last 24h / 7d / 30d).
+   583→
+   584→        Postgres mode: ``SELECT count(*) FROM audit_records WHERE
+   585→        created_at > now() - interval '%s hours'``. File mode: scan the
+   586→        JSONL + filter by the record's ``timestamp`` field. Cheap on
+   587→        either side — the audit table is indexed on ``created_at DESC``
+   588→        (Track E migration 001), so the count is an index-only scan.
+   589→        """
+   590→        out: dict[str, int] = {}
+   591→        if self._conn is not None:
+   592→            with self._conn.cursor() as cur:
+   593→                for h in since_hours:
+   594→                    cur.execute(
+   595→                        "SELECT count(*) FROM audit_records "
+   596→                        "WHERE created_at > now() - interval '%s hours'",
+   597→                        (h,),
+   598→                    )
+   599→                    out[str(h)] = int(cur.fetchone()[0])
+   600→            return out
+   601→        # File mode — scan + filter by timestamp.
+   602→        if not self.path.exists():
+   603→            return {str(h): 0 for h in since_hours}
+   604→        now = datetime.now(timezone.utc)
+   605→        cutoffs = {h: now.timestamp() - h * 3600 for h in since_hours}
+   606→        counts = {h: 0 for h in since_hours}
+   607→        try:
+   608→            for line in self.path.read_text().splitlines():
+   609→                if not line.strip():
+   610→                    continue
+   611→                try:
+   612→                    rec = json.loads(line)
+   613→                    ts = rec.get("timestamp")
+   614→                    if not ts:
+   615→                        continue
+   616→                    parsed = datetime.fromisoformat(ts).timestamp()
+   617→                    for h in since_hours:
+   618→                        if parsed >= cutoffs[h]:
+   619→                            counts[h] += 1
+   620→                except (json.JSONDecodeError, ValueError, TypeError):
+   621→                    continue
+   622→        except OSError:
+   623→            return {str(h): 0 for h in since_hours}
+   624→        return {str(h): counts[h] for h in since_hours}
+   625→
+   626→    # ------------------------------------------------------------------ #
+   627→    # Postgres mode                                                      #
+   628→    # ------------------------------------------------------------------ #
+   629→
+   630→    def _hydrate_last_hash_postgres(self) -> str:
+   631→        if self._last_hash_cached is not None:
+   632→            return self._last_hash_cached
+   633→        with self._conn.cursor() as cur:
+   634→            cur.execute(
+   635→                "SELECT raw_hash FROM audit_records ORDER BY id DESC LIMIT 1"
+   636→            )
+   637→            row = cur.fetchone()
+   638→            self._last_hash_cached = row[0] if row else GENESIS
+   639→            return self._last_hash_cached
+   640→
+   641→    def _log_postgres(self, payload: dict) -> str:
+   642→        audit_id = f"aud_{uuid.uuid4().hex[:16]}"
+   643→        ts = datetime.now(timezone.utc).isoformat()
+   644→        # Body — the full audit record minus the hash fields (which are
+   645→        # computed below). Stored as JSONB so consumers can query arbitrary
+   646→        # paths. Note the body includes audit_id, timestamp, model_version
+   647→        # + every key in payload (per Track D: request, decision,
+   648→        # decision_source, cost_breakdown, reason_codes, mandate_*,
+   649→        # bh_purpose_code, device_id, user_id, breach_note, rule_fired,
+   650→        # degraded, features_used, latency_ms, case_id, probability).
+   651→        body = {
+   652→            "audit_id": audit_id,
+   653→            "timestamp": ts,
+   654→            "model_version": self.model_version,
+   655→            **payload,
+   656→        }
+   657→        prev_hash = self._hydrate_last_hash_postgres()
+   658→        raw_hash = self._hash(body, prev=prev_hash)
+   659→        with self._lock:
+   660→            try:
+   661→                with self._conn.cursor() as cur:
+   662→                    cur.execute(
+   663→                        """
+   664→                        INSERT INTO audit_records
+   665→                          (audit_id, body, raw_hash, prev_hash, created_at,
+   666→                           model_version, mandate_type, bh_purpose_code,
+   667→                           device_id, user_id)
+   668→                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+   669→                        RETURNING id
+   670→                        """,
+   671→                        (
+   672→                            audit_id,
+   673→                            json.dumps(body, default=str),
+   674→                            raw_hash,
+   675→                            prev_hash,
+   676→                            ts,
+   677→                            self.model_version,
+   678→                            payload.get("mandate_type"),
+   679→                            payload.get("bh_purpose_code"),
+   680→                            payload.get("device_id"),
+   681→                            payload.get("user_id"),
+   682→                        ),
+   683→                    )
+   684→                    record_id_row = cur.fetchone()
+   685→                    record_id = record_id_row[0] if record_id_row else None
+   686→                    # Day 2 Track H — T1.2 atomicity fix. Feed the new
+   687→                    # record to the Merkle sealer BEFORE commit so the
+   688→                    # audit INSERT + any inline seal() writes (audit_merkle_
+   689→                    # intervals INSERT + audit_records UPDATE backfill)
+   690→                    # share ONE transaction. Either both commit or both
+   691→                    # roll back — tamper-evidence can never silently break
+   692→                    # (no orphan audit row without a Merkle interval).
+   693→                    #
+   694→                    # ``sealer.add`` is a no-op if interval_size hasn't been
+   695→                    # reached yet (it just appends to the pending list).
+   696→                    # When the threshold trips, ``seal()`` runs inline + the
+   697→                    # interval row + per-record backfill are persisted by
+   698→                    # the same commit() below.
+   699→                    #
+   700→                    # DESIGN CHANGE (T1.2): the prior implementation committed
+   701→                    # the audit INSERT at this point and then called
+   702→                    # ``sealer.add`` AFTER — wrapped in a broad
+   703→                    # ``except Exception: pass`` that swallowed sealer
+   704→                    # failures. That meant a broken Merkle interval was
+   705→                    # invisible: the audit row was committed without its
+   706→                    # tamper-evidence layer. Now ``sealer.add`` is moved
+   707→                    # BEFORE commit; the broad swallow is removed; on
+   708→                    # failure the whole transaction rolls back. Better to
+   709→                    # lose one audit row (caller will see the exception +
+   710→                    # can retry) than have a silently-broken Merkle chain.
+   711→                    if record_id is not None and self.sealer is not None:
+   712→                        self.sealer.add(record_id, raw_hash)
+   713→                # Commit AFTER both audit INSERT + any inline seal writes.
+   714→                # If seal() raised above, control never reaches here —
+   715→                # the except below rolls back + re-raises.
+   716→                self._conn.commit()
+   717→            except Exception:
+   718→                # Roll back the whole transaction — audit INSERT + any
+   719→                # partial Merkle seal writes are discarded. The per-record
+   720→                # hash chain stays clean (no orphan audit row without a
+   721→                # Merkle interval). Re-raise so the caller knows the audit
+   722→                # write failed (the API layer surfaces a 500; the client
+   723→                # can retry with a new audit_id).
+   724→                self._conn.rollback()
+   725→                raise
+   726→            # Only cache the new tip hash AFTER successful commit —
+   727→            # caching on a rolled-back hash would desync the chain.
+   728→            self._last_hash_cached = raw_hash
+   729→        return audit_id
+   730→
+   731→    def _read_postgres(self, audit_id: str) -> dict | None:
+   732→        with self._conn.cursor() as cur:
+   733→            cur.execute(
+   734→                """
+   735→                SELECT body, raw_hash, prev_hash
+   736→                FROM audit_records WHERE audit_id = %s
+   737→                """,
+   738→                (audit_id,),
+   739→            )
+   740→            row = cur.fetchone()
+   741→        if row is None:
+   742→            return None
+   743→        body, raw_hash, prev_hash = row
+   744→        # Merge hash fields back into the body so the file-mode test
+   745→        # assertions (which read ``rec["raw_hash"]``) work unchanged.
+   746→        body = dict(body) if isinstance(body, dict) else json.loads(body)
+   747→        body["raw_hash"] = raw_hash
+   748→        body["previous_hash"] = prev_hash
+   749→        return body
+   750→
+   751→    def _verify_chain_postgres(self) -> tuple[bool, int, str]:
+   752→        expected_prev = GENESIS
+   753→        n = 0
+   754→        with self._conn.cursor() as cur:
+   755→            cur.execute(
+   756→                """
+   757→                SELECT audit_id, body, raw_hash, prev_hash
+   758→                FROM audit_records ORDER BY id ASC
+   759→                """
+   760→            )
+   761→            rows = cur.fetchall()
+   762→        for audit_id, body, raw_hash, prev_hash in rows:
+   763→            body_dict = dict(body) if isinstance(body, dict) else json.loads(body)
+   764→            stored_prev = prev_hash
+   765→            stored_raw = raw_hash
+   766→            want_prev = expected_prev
+   767→            want_raw = self._hash(body_dict, prev=want_prev)
+   768→            ok = stored_prev == want_prev and stored_raw == want_raw
+   769→            if not ok:
+   770→                return False, n, audit_id
+   771→            expected_prev = stored_raw
+   772→            n += 1
+   773→        return True, n, ""
+   774→
+   775→    # ------------------------------------------------------------------ #
+   776→    # File mode (unchanged behaviour from the original implementation)   #
+   777→    # ------------------------------------------------------------------ #
+   778→
+   779→    def _log_file(self, payload: dict) -> str:
+   780→        audit_id = str(uuid.uuid4())
+   781→        base = {
+   782→            "audit_id": audit_id,
+   783→            "timestamp": datetime.now(timezone.utc).isoformat(),
+   784→            "model_version": self.model_version,
+   785→            **payload,
+   786→        }
+   787→        with self._lock:
+   788→            base["previous_hash"] = self.last_hash
+   789→            base["raw_hash"] = self._hash(base)
+   790→            self.path.parent.mkdir(parents=True, exist_ok=True)
+   791→            with self.path.open("a") as f:
+   792→                self._index[audit_id] = f.tell()
+   793→                f.write(json.dumps(base, default=str) + "\n")
+   794→            self.last_hash = base["raw_hash"]
+   795→        return audit_id
+   796→
+   797→    def _read_file(self, audit_id: str) -> dict | None:
+   798→        offset = self._index.get(audit_id)
+   799→        if offset is None or not self.path.exists():
+   800→            return None
+   801→        with self.path.open() as f:
+   802→            f.seek(offset)
+   803→            return json.loads(f.readline())
+   804→
+   805→    def _verify_chain_file(self) -> tuple[bool, int, str]:
+   806→        expected_prev = GENESIS
+   807→        n = 0
+   808→        if not self.path.exists():
+   809→            return True, 0, ""
+   810→        with self.path.open() as f:
+   811→            for line in f:
+   812→                rec = json.loads(line)
+   813→                stored_hashes = {k: rec.get(k) for k in self.HASH_FIELDS}
+   814→                body = {k: v for k, v in rec.items() if k not in self.HASH_FIELDS}
+   815→                want_prev = expected_prev
+   816→                want_raw = self._hash(body, prev=want_prev)
+   817→                hashes_ok = (
+   818→                    stored_hashes["previous_hash"] == want_prev
+   819→                    and stored_hashes["raw_hash"] == want_raw
+   820→                )
+   821→                if not hashes_ok:
+   822→                    return False, n, rec.get("audit_id", "?")
+   823→                expected_prev = stored_hashes["raw_hash"]
+   824→                n += 1
+   825→        return True, n, ""
+   826→
+   827→    # ------------------------------------------------------------------ #
+   828→    # Hash math — shared between modes                                   #
+   829→    # ------------------------------------------------------------------ #
+   830→
+   831→    @staticmethod
+   832→    def _hash(record: dict, prev: str | None = None) -> str:
+   833→        body = {k: v for k, v in record.items() if k not in AuditLogger.HASH_FIELDS}
+   834→        prev_hash = prev if prev is not None else record.get("previous_hash", GENESIS)
+   835→        return hashlib.sha256((canonical(body) + prev_hash).encode()).hexdigest()
+   836→

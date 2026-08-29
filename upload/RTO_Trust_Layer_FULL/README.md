@@ -233,6 +233,127 @@ spec, superseded) and [`docs/ARCHITECTURE_V3.md`](docs/ARCHITECTURE_V3.md)
 authoritative for engineering decisions, ARCHITECTURE.md is the
 user-facing consolidation).
 
+## Engineering status (2025-08-29)
+
+This section is the honest delta from the most recent hardening pass. Three
+real bugs were closed; the audit trail for each is in `docs/`.
+
+### 1. SHAP explainability — fixed (was returning all 0.0)
+
+`src/models/explain.py` now prefers `shap.TreeExplainer` for the live
+`HistGradientBoostingClassifier` (shap 0.42+ supports HistGB directly;
+the original "NOT supported" comment was outdated). KernelExplainer
+remains the fallback for non-tree models.
+
+The real root cause of "SHAP returns all 0.0" was NOT KernelExplainer
+itself — it was that KernelExplainer fell back to a 1-row background =
+the input itself when the lifespan background cache was empty, making
+every marginal contribution trivially zero. TreeExplainer sidesteps
+this entirely: it computes exact TreeSHAP values from the tree
+structure with the model's expected value as base, no background
+dataset needed.
+
+Verified: `explain_with_shap` on a real HistGB returns 8/8 non-zero
+values (was 0/8), max abs 1.07, `method=shap_tree`. Full suite:
+**397 passed, 11 skipped, 0 failures.**
+
+### 2. Audit hash-chain — fixed (was reporting intact:false)
+
+`verify_chain` was working correctly — it detected real chain breaks.
+The 7.3 MB `out/audit.jsonl` had 87 internal breaks caused by
+**concurrent writers** (test suite + dev server) racing on the shared
+file with only in-process `threading.Lock` (which serializes threads,
+not processes).
+
+Fix: `src/audit/logger.py:_log_file` now acquires `fcntl.flock(LOCK_EX)`
+on the audit file before computing `previous_hash`, so concurrent
+writers serialize at the OS level. After acquiring the lock it
+re-derives the true last record's `raw_hash` (O(1) per write) so the
+chain links correctly even if another process appended since
+construction. Verified: 2 concurrent processes × 50 records = 100
+records, `intact=True, records_checked=100`.
+
+The broken fragment was rotated to `out/audit.broken-fragment-2025-08-29.jsonl`
+(preserved for forensics; `out/` is gitignored so it stays local).
+Full diagnosis: [`docs/MERKLE_AUDIT_DIAGNOSIS.md`](docs/MERKLE_AUDIT_DIAGNOSIS.md).
+
+### 3. Secret hygiene — purged
+
+A dead Render API token had been committed to git history (commit
+`766f0ae`) and was scrubbed from the working tree later but **still
+lived in the historical blob**. Purged from all 21 commits via
+`git filter-repo --replace-text` (the token was already revoked by the
+user, so this is hygiene, not emergency). Worklog 8-char prefix
+scrubbed. Full audit + the exact redaction commands:
+[`docs/SECRET_SCAN_REPORT.md`](docs/SECRET_SCAN_REPORT.md).
+
+**Required user action:** force-push the rewritten history to GitHub:
+```bash
+cd /home/sync/upload/RTO_Trust_Layer_FULL
+git push --force-with-lease origin main   # use YOUR GitHub PAT/SSH key
+```
+
+### New comprehensive UML
+
+[`docs/UML_COMPREHENSIVE.md`](docs/UML_COMPREHENSIVE.md) — 2,112 lines,
+19 Mermaid diagrams across 10 sections (C4 L1/L2, component, class,
+6 sequence diagrams, ERD derived from all 7 Alembic migrations, DFD,
+3 deployment topologies, 2 state, 2 activity). Every endpoint, class,
+and table is traceable to a real file + line range. 28 endpoints
+enumerated by grepping the actual `@router` decorators.
+
+---
+
+## Deployment
+
+Two paths. Pick based on whether you want the dashboard only, or the
+dashboard + the Python API.
+
+### Path A — Vercel (dashboard only, no credit card, ~3 min)
+
+The `web/` directory is a self-contained Next.js app that talks to the
+FastAPI backend via a configurable `NEXT_PUBLIC_API_BASE_URL`. With no
+backend configured it falls back to mock-mode so the dashboard renders
+cleanly for a demo.
+
+1. Push the repo to GitHub (done — `Neeraj-Parekh/special-parakeet`).
+2. Go to https://vercel.com → New Project → Import the repo.
+3. Set **Root Directory** to `web`.
+4. Set env var `NEXT_PUBLIC_API_BASE_URL` to your Render URL (from
+   Path B) once the backend is up, or leave unset for mock-mode.
+5. Deploy. Vercel gives you a public `*.vercel.app` URL instantly.
+
+**Security note (read this):** never paste a Vercel token (`vcp_...`)
+into chat, a commit message, or a doc. Generate one at
+https://vercel.com/account/tokens only when needed, store it as an
+environment variable in the deploy shell, and revoke immediately after
+use. A token was accidentally pasted in plaintext during this session;
+it has been flagged for revocation — see
+[`docs/SECRET_SCAN_REPORT.md`](docs/SECRET_SCAN_REPORT.md) §4.
+
+### Path B — Render (dashboard + API, single free web service)
+
+The repo's `render.yaml` is a one-command Blueprint. The FastAPI app
+serves the API at `/` and the pre-built dashboard at `/dashboard`
+(same origin — no CORS, no second service to cold-start).
+
+1. Push the repo to GitHub (done).
+2. Go to https://render.com → New → Blueprint Instance.
+3. Select the `Neeraj-Parekh/special-parakeet` repo.
+4. Render reads `render.yaml` → click Apply.
+5. URL: `https://rto-trust-layer.onrender.com` (or similar).
+6. Verify:
+   ```bash
+   curl -s https://rto-trust-layer.onrender.com/health | jq .
+   curl -s https://rto-trust-layer.onrender.com/dashboard/ | head
+   ```
+Render free tier: 750 instance-hours/month, spins down after 15 min
+idle (~30s cold start), no persistent disk (audit JSONL is wiped on
+re-deploy — for RBI MRM compliance, set `DATABASE_URL` to a Render
+managed Postgres after first apply).
+
+Full deploy walkthrough: [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
+
 ---
 
 ## Identity

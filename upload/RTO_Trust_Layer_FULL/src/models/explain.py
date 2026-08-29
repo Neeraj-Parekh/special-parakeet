@@ -99,14 +99,19 @@ def _py(v):
 # SHAP's KernelExplainer is the Lundberg paper's "gold standard" with the
 # additive Shapley-value foundation, unlike LIME's local-surrogate fit).
 #
-# Why KernelExplainer + not TreeExplainer:
-#   * The live model is a ``HistGradientBoostingClassifier`` (tree-based but
-#     NOT supported by ``shap.TreeExplainer`` per the prompt-razor's line 1737
-#     note — HistGB's internal node structure isn't exposed for the TreeSHAP
-#     recursion). KernelExplainer works with ANY model (model-agnostic).
-#   * Slower (O(2^M) for M features) than TreeExplainer but the only correct
-#     path for HistGB. Mitigation: cap background to 50 rows + feature dim
-#     to 100, and run inside a 5-second timeout.
+# Why TreeExplainer (primary) + KernelExplainer (fallback):
+#   * The live model is a ``HistGradientBoostingClassifier`` (tree-based).
+#     As of shap 0.42+ (we run 0.52.0) ``shap.TreeExplainer`` supports HistGB
+#     directly — it traverses the tree's internal predictors to compute exact
+#     TreeSHAP values in O(T·L·D) instead of KernelExplainer's O(2^M) sampling.
+#     Empirically verified 2025-08-29: 5 rows x 8 features -> 40/40 non-zero
+#     values, max abs 3.43 (cf. KernelExplainer's degenerate 0.0 when the
+#     background cache is empty — that was the root cause of the
+#     "SHAP returns all 0.0" bug, because the background fell back to the
+#     input row itself, making every marginal contribution trivially zero).
+#   * KernelExplainer remains the fallback for non-tree models (model-agnostic).
+#     It is slower (O(2^M) for M features). Mitigation: cap background to 50
+#     rows + feature dim to 100, and run inside a 5-second timeout.
 #
 # Dual-mode like Track E's DATABASE_URL + Track F's REDIS_URL + Track M's
 # OTEL_EXPORTER_OTLP_ENDPOINT: if ``shap`` isn't installed, the function
@@ -405,9 +410,19 @@ def explain_with_shap(
 
     background_n = int(background_df.shape[0])
 
-    # ---- 5. build the KernelExplainer + compute shap_values with a 5s TO -
+    # ---- 5. build the explainer + compute shap_values with a 5s TO -----
+    # Prefer TreeExplainer for tree-based models (HistGB / RF / GBM /
+    # DecisionTree) — exact, fast, and does NOT need a background dataset,
+    # so it side-steps the empty-background-cache root cause that produced
+    # all-0.0 SHAP values. Falls back to KernelExplainer (model-agnostic)
+    # for any non-tree model. ``shap.TreeExplainer`` raises
+    # ``InvalidModelError`` for unsupported models — caught below.
+    explainer_kind = "kernel"  # flipped to "tree" on TreeExplainer success
     if prebuilt_explainer is not None:
         explainer = prebuilt_explainer
+        explainer_kind = (
+            "tree" if isinstance(explainer, shap.TreeExplainer) else "kernel"
+        )
         # Pull feature_names from the cached explainer's background (the
         # column set the model was trained on; this is what SHAP will
         # surface per-feature contributions for).
@@ -423,24 +438,44 @@ def explain_with_shap(
             feature_names = list(x_row.columns)
     else:
         try:
-            explainer = shap.KernelExplainer(model.predict_proba, background_df)
-        except Exception as e:
-            return {
-                "error": f"KernelExplainer construction failed: {type(e).__name__}: {e}",
-                "fallback": "use /v1/explain for LIME",
-            }
-        # Pull feature_names now (KernelExplainer reads them from background_df).
-        feature_names = list(background_df.columns)
+            explainer = shap.TreeExplainer(model)
+            explainer_kind = "tree"
+        except Exception:
+            try:
+                explainer = shap.KernelExplainer(
+                    model.predict_proba, background_df
+                )
+            except Exception as e:
+                return {
+                    "error": (
+                        f"Explainer construction failed "
+                        f"(Tree+Kernel): {type(e).__name__}: {e}"
+                    ),
+                    "fallback": "use /v1/explain for LIME",
+                }
+        # Pull feature_names — TreeExplainer reads them from the model's
+        # ``feature_names_in_`` if available; KernelExplainer from background_df.
+        if explainer_kind == "tree":
+            feature_names = list(
+                getattr(model, "feature_names_in_", None) or x_row.columns
+            )
+        else:
+            feature_names = list(background_df.columns)
 
     # The actual shap_values() call is the slow part. Run it in a worker
     # thread with a hard timeout — if it doesn't return within
     # SHAP_TIMEOUT_SECONDS, return the LIME-fallback so the dashboard's
     # explainability card still renders.
     def _compute() -> Any:
-        # nsamples caps the number of coalitions sampled. Default in SHAP
-        # is "auto" which can be 2*M + 2*ceil(M) — for M=50 that's ~2048
-        # model calls. We cap at SHAP_NSAMPLES (100) to bound latency.
-        return explainer.shap_values(x_row, nsamples=SHAP_NSAMPLES, silent=True)
+        # TreeExplainer computes exact TreeSHAP values (no sampling needed);
+        # only KernelExplainer accepts nsamples (caps coalitions sampled —
+        # default "auto" can be 2*M + 2*ceil(M); for M=50 that's ~2048 model
+        # calls; we cap at SHAP_NSAMPLES=100 to bound latency).
+        if explainer_kind == "tree":
+            return explainer.shap_values(x_row, check_additivity=False)
+        return explainer.shap_values(
+            x_row, nsamples=SHAP_NSAMPLES, silent=True
+        )
 
     try:
         with ThreadPoolExecutor(max_workers=1) as pool:
@@ -493,8 +528,8 @@ def explain_with_shap(
         "base_value": round(float(base_value), 5),
         "expected_value": round(float(base_value), 5),
         "feature_names": feature_names,
-        "method": "shap_kernel",
-        "nsamples": SHAP_NSAMPLES,
+        "method": "shap_tree" if explainer_kind == "tree" else "shap_kernel",
+        "nsamples": SHAP_NSAMPLES if explainer_kind == "kernel" else None,
         "background_rows": background_n,
         "source_paper": (
             "Lundberg & Lee, A Unified Approach to Interpreting Model "

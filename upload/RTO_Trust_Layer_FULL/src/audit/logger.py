@@ -785,13 +785,49 @@ class AuditLogger:
             **payload,
         }
         with self._lock:
-            base["previous_hash"] = self.last_hash
-            base["raw_hash"] = self._hash(base)
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a") as f:
-                self._index[audit_id] = f.tell()
-                f.write(json.dumps(base, default=str) + "\n")
-            self.last_hash = base["raw_hash"]
+            # Cross-process safety: acquire an exclusive OS lock on the
+            # file so concurrent writers (test suite + dev server, or
+            # parallel pytest workers) serialize. Without this, each
+            # process's in-memory ``last_hash`` diverges and appended
+            # records interleave with stale ``previous_hash`` links, so
+            # ``verify_chain`` reports real chain breaks (the 87 breaks in
+            # out/audit.jsonl were exactly this race). The in-process
+            # ``self._lock`` only serializes threads, not processes.
+            import fcntl
+            with self.path.open("a+") as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                try:
+                    # Re-derive the TRUE last record's raw_hash NOW that
+                    # we hold the lock — another process may have appended
+                    # since __init__ hydrated ``self.last_hash``. O(1) per
+                    # write: seek to end, back up ~16KB, parse last line.
+                    f.seek(0, 2)
+                    end = f.tell()
+                    if end == 0:
+                        true_prev = self.last_hash if self.last_hash else GENESIS
+                    else:
+                        read_size = min(end, 16384)
+                        f.seek(end - read_size)
+                        chunk = f.read(read_size)
+                        lines = [l for l in chunk.splitlines() if l.strip()]
+                        if lines:
+                            true_prev = json.loads(lines[-1]).get(
+                                "raw_hash", self.last_hash
+                            )
+                        else:
+                            true_prev = self.last_hash
+                    base["previous_hash"] = true_prev
+                    base["raw_hash"] = self._hash(base)
+                    f.seek(0, 2)  # seek to end before write
+                    self._index[audit_id] = f.tell()
+                    f.write(json.dumps(base, default=str) + "\n")
+                    f.flush()
+                    import os as _os
+                    _os.fsync(f.fileno())
+                    self.last_hash = base["raw_hash"]
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
         return audit_id
 
     def _read_file(self, audit_id: str) -> dict | None:

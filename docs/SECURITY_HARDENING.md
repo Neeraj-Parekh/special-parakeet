@@ -508,3 +508,13 @@ in order of exploitability:
 - `AUDIT_REPORT.md` — the brutal, evidence-based audit; gap 2
   (Merkle file-mode break) and gap 6 (AsyncAuditLogger dead code)
   are security-relevant.
+
+
+---
+
+## See also
+
+- [`docs/GAP_VERIFICATION.md`](./GAP_VERIFICATION.md) — the 18-item TIER 1/2/3 verification matrix (11 real, 4 stub, 3 doc-only) with `file:line` evidence + live curl captures.
+- [`docs/ARCHITECTURE_OVERVIEW.md`](./ARCHITECTURE_OVERVIEW.md) §8 — model lineage (v2.1 mock → Kaggle HistGB PR 0.1027 → weighted_ens PR 0.1076 pending deploy).
+- [`README.md`](../README.md) — the canonical entry point.
+

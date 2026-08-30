@@ -496,3 +496,13 @@ year + title are given so a senior engineer can find it.
   Vercel-only-path latency figures.
 - `vercel.json` — the Vercel deployment config (no security / latency
   knobs; just `framework: nextjs`, `installCommand: bun install`).
+
+
+---
+
+## See also
+
+- [`docs/GAP_VERIFICATION.md`](./GAP_VERIFICATION.md) — the 18-item TIER 1/2/3 verification matrix (11 real, 4 stub, 3 doc-only) with `file:line` evidence + live curl captures.
+- [`docs/ARCHITECTURE_OVERVIEW.md`](./ARCHITECTURE_OVERVIEW.md) §8 — model lineage (v2.1 mock → Kaggle HistGB PR 0.1027 → weighted_ens PR 0.1076 pending deploy).
+- [`README.md`](../README.md) — the canonical entry point.
+

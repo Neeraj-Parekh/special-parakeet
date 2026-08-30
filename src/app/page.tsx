@@ -259,7 +259,7 @@ function PageHeader() {
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
-        <ShieldAlert className="size-5 text-success" aria-hidden />
+        <ShieldAlert className="size-5 text-muted-foreground" aria-hidden />
         <h1 className="text-2xl font-semibold tracking-tight">Risk Console</h1>
       </div>
       <p className="text-sm text-muted-foreground">

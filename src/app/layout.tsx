@@ -29,9 +29,6 @@ export const metadata: Metadata = {
     "Next.js",
   ],
   authors: [{ name: "RTO Trust Layer" }],
-  icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
-  },
   openGraph: {
     title: "RTO Trust Layer — Risk Console",
     description:

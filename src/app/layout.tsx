@@ -29,6 +29,8 @@ export const metadata: Metadata = {
     "Next.js",
   ],
   authors: [{ name: "RTO Trust Layer" }],
+  // Next.js 16 auto-detects src/app/icon.svg and serves it as the favicon.
+  // No external CDN dependency — see public/logo.svg for the same branded icon.
   openGraph: {
     title: "RTO Trust Layer — Risk Console",
     description:

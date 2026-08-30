@@ -66,3 +66,7 @@ verify-*.png
 
 # Security: pre-redaction backup dir (broken gitlink, no .gitmodules; never commit)
 upload/RTO_Trust_Layer_FULL.bak-pre-redact/
+
+# Runtime PID/sandbox artifacts
+.zscripts/
+*.pid

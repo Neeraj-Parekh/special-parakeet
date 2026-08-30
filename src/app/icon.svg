@@ -1,4 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="RTO Trust Layer">
-  <path d="M16 3.2 L26.5 7 V14.8 C26.5 21 22 25.8 16 27.8 C10 25.8 5.5 21 5.5 14.8 V7 Z" fill="#10b981"/>
-  <path d="M11 15.6 L14.4 19 L21 12.4" stroke="#ffffff" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <rect width="32" height="32" rx="6" fill="#0f172a"/>
+  <path d="M16 4 L26 8 V16 C26 22 21 26 16 28 C11 26 6 22 6 16 V8 Z" fill="#10b981"/>
+  <path d="M11 16 L14.5 19.5 L21 13" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>

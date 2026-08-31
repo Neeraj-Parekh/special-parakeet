@@ -46,6 +46,8 @@ import {
   type ReasonCode,
   type ScoreResponse,
 } from "@/lib/mock-data";
+import { formatINR } from "@/lib/format";
+import { useRecentDecisions, type RecentDecision } from "@/lib/session-decisions";
 import { ShapWaterfall } from "@/components/shap-waterfall";
 import { RulesToggleCard } from "@/components/rules-toggle-card";
 import { AgentConsole } from "@/components/agent-console";
@@ -53,69 +55,10 @@ import { NarrativePivotCard } from "@/components/narrative-pivot-card";
 import { CostCurveSlider } from "@/components/cost-curve-slider";
 
 // ----------------------------------------------------------------------------
-// Recent-decisions table (in-session local state — survives nav?)
-// We use a Zustand-style module-level store so the list survives a
-// page navigation away and back. Persisted to sessionStorage so a
-// refresh doesn't wipe a 30-second judge demo mid-flight.
+// Recent-decision history lives in src/lib/session-decisions.ts — a
+// sessionStorage-backed module store shared with the Dashboard metrics row
+// and the Checkout demo, so a judge demo never loses its history.
 // ----------------------------------------------------------------------------
-
-interface RecentDecision {
-  prediction_id: string;
-  order_id: string;
-  amount_inr: number;
-  payment_method: string;
-  decision: Decision;
-  probability: number | null;
-  decision_source: string;
-  mock: boolean;
-  ts: number;
-}
-
-const RECENT_KEY = "rto-recent-decisions";
-let recentListeners: Array<() => void> = [];
-let recentCache: RecentDecision[] = [];
-
-function loadRecent(): RecentDecision[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.sessionStorage.getItem(RECENT_KEY);
-    if (raw) return JSON.parse(raw) as RecentDecision[];
-  } catch {
-    /* ignore */
-  }
-  return [];
-}
-
-function saveRecent(v: RecentDecision[]) {
-  if (typeof window === "undefined") return;
-  try {
-    window.sessionStorage.setItem(RECENT_KEY, JSON.stringify(v.slice(0, 50)));
-  } catch {
-    /* ignore */
-  }
-  recentCache = v;
-  recentListeners.forEach((fn) => fn());
-}
-
-function useRecentDecisions(): [RecentDecision[], (d: RecentDecision) => void, () => void] {
-  const [, force] = React.useReducer((x) => x + 1, 0);
-  React.useEffect(() => {
-    recentCache = loadRecent();
-    const fn = () => force();
-    recentListeners.push(fn);
-    return () => {
-      recentListeners = recentListeners.filter((f) => f !== fn);
-    };
-  }, []);
-  const add = React.useCallback((d: RecentDecision) => {
-    const next = [d, ...loadRecent()].slice(0, 50);
-    saveRecent(next);
-  }, []);
-  const clear = React.useCallback(() => {
-    saveRecent([]);
-  }, []);
-  return [recentCache, add, clear];
-}
 
 // ----------------------------------------------------------------------------
 // Page
@@ -189,6 +132,7 @@ export default function RiskConsolePage() {
           decision: (data.decision || "REVIEW") as Decision,
           probability: data.probability,
           decision_source: data.decision_source,
+          latency_ms: data.latency_ms ?? null,
           mock: r.headers.get("X-Mock-Mode") === "true",
           ts: Date.now(),
         });
@@ -258,14 +202,11 @@ export default function RiskConsolePage() {
 function PageHeader() {
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center gap-2">
-        <ShieldAlert className="size-5 text-success" aria-hidden />
-        <h1 className="text-2xl font-semibold tracking-tight">Risk Console</h1>
-      </div>
-      <p className="text-sm text-muted-foreground">
-        Paste an order, click Score, see the Bahnsen Bayes Minimum Risk verdict + explainability. The 3 demo
-        orders cover all four Track-C decision layers — cost-optimal BMR, rules-engine BLOCK, REVIEW rule
-        gate, and mandate breach.
+      <h1 className="text-2xl font-semibold tracking-tight">Risk Scoring</h1>
+      <p className="max-w-2xl text-sm text-muted-foreground">
+        Paste an order, click Score, and see the cost-optimal Bahnsen BMR verdict with a full
+        explainability trail. The 3 demo orders cover all four decision layers — cost-optimal
+        BMR, rules-engine BLOCK, REVIEW rule gate, and mandate breach.
       </p>
     </div>
   );
@@ -287,13 +228,21 @@ function OrderFormCard({
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base">
-          <ListChecks className="size-4 text-muted-foreground" aria-hidden />
-          Score an order
-        </CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <ListChecks className="size-4 text-brand-500" aria-hidden />
+            Score a COD order
+          </CardTitle>
+          <Badge
+            variant="outline"
+            className="border-brand-500/25 bg-brand-500/10 text-[10px] font-semibold text-brand-600"
+          >
+            LIVE API
+          </Badge>
+        </div>
         <CardDescription>
-          Every field maps 1:1 to <code className="text-xs">OrderIn</code> on{" "}
-          <code className="text-xs">POST /risk/score</code>.
+          Every field maps 1:1 to <code className="font-mono text-xs">OrderIn</code> on{" "}
+          <code className="font-mono text-xs">POST /risk/score</code>.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -440,7 +389,7 @@ function OrderFormCard({
           </Field>
         </div>
         <Button
-          className="w-full"
+          className="h-11 w-full font-semibold"
           onClick={onScore}
           disabled={loading || !order.order_id || !order.amount_inr}
         >
@@ -544,12 +493,19 @@ function ResultCard({
       </Card>
     );
   }
+  const barClass =
+    result.decision === "ACCEPT"
+      ? "bar-accept"
+      : result.decision === "REVIEW"
+        ? "bar-review"
+        : "bar-reject";
   return (
     <Card>
+      <div className={`-mt-6 h-1.5 rounded-t-xl ${barClass}`} aria-hidden />
       <CardHeader>
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <CardTitle className="text-base">Verdict</CardTitle>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {mock && <MockModeBadge mock={mock} />}
             <DecisionSourcePill source={result.decision_source} />
           </div>
@@ -658,10 +614,10 @@ function DecisionSurface({ decision }: { decision: Decision | null }) {
   else if (decision === "REJECT") cls = "decision-reject";
   return (
     <div
-      className={`flex size-24 shrink-0 items-center justify-center rounded-xl border text-2xl font-bold ${cls}`}
+      className={`flex h-11 min-w-36 shrink-0 items-center justify-center rounded-full border px-5 text-sm font-bold tracking-wide ${cls}`}
       aria-label={`Decision: ${decision || "—"}`}
     >
-      {decision ? decision[0] : "—"}
+      {decision || "—"}
     </div>
   );
 }
@@ -745,35 +701,42 @@ function CostBreakdownTable({ breakdown }: { breakdown: CostBreakdown }) {
   ];
   const min = Math.min(...rows.map((r) => r.cost));
   return (
-    <div className="rounded-md border border-border/70 bg-muted/30 p-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Cost breakdown</h3>
+    <div className="rounded-lg border border-border/70 bg-white p-4">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">Cost breakdown — Bahnsen Eq.1</h3>
         <span className="text-[10px] text-muted-foreground">
-          Bahnsen Eq.1 · c_fp=50 · c_fn=600 · c_otp=5 · c_block=1000
+          c_fp=₹50 · c_fn=₹600 · c_otp=₹5 · c_block=₹1000
         </span>
       </div>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Decision</TableHead>
-            <TableHead className="text-right">Expected cost (₹)</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows.map((r) => (
-            <TableRow key={r.label}>
-              <TableCell className="font-mono text-xs">{r.label}</TableCell>
-              <TableCell
-                className={`text-right font-mono text-xs ${
-                  r.cost === min ? "text-success font-semibold" : ""
+      <div className="grid grid-cols-3 gap-3">
+        {rows.map((r) => {
+          const isChosen = r.cost === min;
+          return (
+            <div
+              key={r.label}
+              className={`rounded-lg border p-3 text-center transition-colors duration-200 ease-brand ${
+                isChosen
+                  ? "border-brand-500/40 bg-brand-500/5"
+                  : "border-border bg-muted/40"
+              }`}
+            >
+              <p className="mb-1 text-xs text-muted-foreground">{r.label}</p>
+              <p
+                className={`font-mono text-base font-bold tabular-nums ${
+                  isChosen ? "text-brand-600" : "text-foreground"
                 }`}
               >
-                {r.cost.toLocaleString("en-IN")}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+                {formatINR(r.cost)}
+              </p>
+              {isChosen && (
+                <p className="mt-1 text-[10px] font-semibold uppercase tracking-wider text-brand-600">
+                  cost-optimal
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -863,8 +826,8 @@ function RecentDecisionsCard({
                     <TableCell className="font-mono text-xs">
                       {r.order_id}
                     </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      ₹{r.amount_inr.toLocaleString("en-IN")}
+                    <TableCell className="font-mono text-xs tabular-nums">
+                      {formatINR(r.amount_inr)}
                     </TableCell>
                     <TableCell className="font-mono text-xs">
                       {r.probability === null ? "—" : r.probability.toFixed(3)}

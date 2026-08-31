@@ -454,6 +454,8 @@ function HowItWorks() {
 interface FeedRow {
   order: LiveOrder;
   ok: boolean;
+  status: number | null;
+  throttled: boolean;
   prediction_id: string | null;
   decision: string | null;
   probability: number | null;
@@ -491,6 +493,8 @@ function useLiveStream(keys: ReturnType<typeof useApiKeys>) {
         const row: FeedRow = {
           order,
           ok: false,
+          status: null,
+          throttled: false,
           prediction_id: null,
           decision: null,
           probability: null,
@@ -500,18 +504,36 @@ function useLiveStream(keys: ReturnType<typeof useApiKeys>) {
           ts: Date.now(),
         };
         try {
-          const t0 = performance.now();
-          const r = await fetch("/api/risk/score", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...buildAuthHeader(keys, "scorer"),
-            },
-            body: JSON.stringify(order),
-          });
+          const doFetch = () =>
+            fetch("/api/risk/score", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...buildAuthHeader(keys, "scorer"),
+              },
+              body: JSON.stringify(order),
+            });
+          let t0 = performance.now();
+          let r = await doFetch();
+          // Cold-start throttle (RULE-005, 429 + Retry-After) — honor it
+          // like a well-behaved API client: wait, retry once.
+          if (r.status === 429) {
+            row.throttled = true;
+            row.status = 429;
+            const ra = (await r.json().catch(() => null)) as {
+              retry_after?: number;
+            } | null;
+            const waitMs = Math.min(ra?.retry_after ?? 5, 8) * 1000;
+            if (!stopRef.current) {
+              await new Promise((res) => setTimeout(res, waitMs));
+            }
+            t0 = performance.now();
+            r = await doFetch();
+          }
           const latency = Math.round(performance.now() - t0);
           const mock = r.headers.get("X-Mock-Mode") === "true";
           row.latency_ms = latency;
+          row.status = r.status;
           row.mock = mock;
           const data = (await r.json().catch(() => null)) as ScoreResponse | null;
           if (r.ok && data) {
@@ -734,6 +756,11 @@ function FeedRowView({ row }: { row: FeedRow }) {
         </div>
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
           {row.ok && <DecisionSourcePill source={row.decision_source} />}
+          {row.throttled && (
+            <span className="inline-flex items-center rounded-md border border-warning/50 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium text-warning">
+              429 · retried after Retry-After
+            </span>
+          )}
           {row.probability != null && (
             <span className="font-mono tabular-nums">
               p={(row.probability * 100).toFixed(0)}%
@@ -746,11 +773,15 @@ function FeedRowView({ row }: { row: FeedRow }) {
         <p className="font-mono text-sm font-semibold tabular-nums text-foreground">
           {formatINR(o.amount_inr)}
         </p>
-        {row.latency_ms != null && (
+        {row.ok && row.latency_ms != null ? (
           <p className="font-mono text-[10px] tabular-nums text-muted-foreground">
             {formatNum(row.latency_ms)} ms
           </p>
-        )}
+        ) : row.status != null ? (
+          <p className="font-mono text-[10px] tabular-nums text-muted-foreground">
+            HTTP {row.status}
+          </p>
+        ) : null}
       </div>
     </div>
   );

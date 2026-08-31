@@ -19,11 +19,13 @@
 //   Cross-Origin-Opener-Policy: same-origin
 //
 // SEC-5 cold-start throttle: first 60s after process boot, the
-// /api/risk/score path is capped at 10 req/s. Over-budget requests
-// get 429 with Retry-After. This is the #1 serverless attack vector
-// (cold-start flooding — see worklog §17 feature-poisoning). The
-// counter is per-instance in-memory; in multi-replica deployments,
-// the real cap is enforced by a Redis token bucket (documented in
+// /api/risk/score path is capped at 10 req/s (per-second bucket — the
+// 60-bucket array below is a rolling index of the CURRENT minute, not
+// a 60-second request total). Over-budget requests get 429 with
+// Retry-After. This is the #1 serverless attack vector (cold-start
+// flooding — see worklog §17 feature-poisoning). The counter is
+// per-instance in-memory; in multi-replica deployments, the real cap
+// is enforced by a Redis token bucket (documented in
 // docs/SECURITY_HARDENING.md §8).
 
 import { NextResponse, type NextRequest } from "next/server";
@@ -38,10 +40,11 @@ const BOOT_EPOCH = Date.now();
 const COLD_START_WINDOW_MS = 60_000;
 const COLD_START_RPS_CAP = 10;
 
-// In-process rolling-window counter (60 buckets of 1s each).
+// In-process second buckets (rolling index over the current minute).
 const buckets = new Array(60).fill(0);
 let bucketHead = Math.floor(Date.now() / 1000) % 60;
 
+/** Advance the rolling index, zeroing stale seconds. Idempotent. */
 function rollWindow(now: number): number {
   const sec = Math.floor(now / 1000);
   const head = sec % 60;
@@ -52,13 +55,7 @@ function rollWindow(now: number): number {
     buckets[bucketHead] = 0;
     diff--;
   }
-  return buckets.reduce((a, b) => a + b, 0);
-}
-
-function recordHit(now: number): void {
-  rollWindow(now);
-  const head = Math.floor(now / 1000) % 60;
-  buckets[head] += 1;
+  return head;
 }
 
 export function proxy(req: NextRequest): NextResponse {
@@ -77,12 +74,13 @@ export function proxy(req: NextRequest): NextResponse {
   );
   res.headers.set("Cross-Origin-Opener-Policy", "same-origin");
 
-  // SEC-5 — cold-start throttle on the hot path.
+  // SEC-5 — cold-start throttle on the hot path: 10 requests per
+  // SECOND (current bucket), only during the first 60s after boot.
   const path = req.nextUrl.pathname;
   const now = Date.now();
   if (path === "/api/risk/score" && now - BOOT_EPOCH < COLD_START_WINDOW_MS) {
-    const inFlight = rollWindow(now);
-    if (inFlight >= COLD_START_RPS_CAP) {
+    const head = rollWindow(now);
+    if (buckets[head] >= COLD_START_RPS_CAP) {
       return new NextResponse(
         JSON.stringify({
           detail:
@@ -103,7 +101,7 @@ export function proxy(req: NextRequest): NextResponse {
         },
       );
     }
-    recordHit(now);
+    buckets[head] += 1;
   }
   return res;
 }

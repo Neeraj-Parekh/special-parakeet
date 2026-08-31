@@ -61,5 +61,12 @@ upload/system-design-context.txt
 # Security: tool-results dir (never commit — may contain dumped secrets)
 tool-results/
 
+# Local browser-verification screenshots (dev artifacts, not source)
+verify-*.png
+
 # Security: pre-redaction backup dir (broken gitlink, no .gitmodules; never commit)
 upload/RTO_Trust_Layer_FULL.bak-pre-redact/
+
+# Runtime PID/sandbox artifacts
+.zscripts/
+*.pid

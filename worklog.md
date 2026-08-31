@@ -4468,3 +4468,24 @@ Stage Summary:
 - GitHub main = 434ff74; production = https://rto-trust-layer.vercel.app (browser-verified end-to-end).
 - Sandbox reset incident absorbed: local history rebuilt via merge, filemode churn ignored, no work lost (remote + Vercel held the prior state).
 - Tokens remain inline-only (chat-scoped). Rotate GitHub PAT + Vercel token after the hackathon.
+
+---
+Task ID: DEMO-1
+Agent: main (Z.ai Code orchestrator)
+Task: User asked for a "demo dashboard of how the thing will work in real life" — the Dashboard existed but started at zero (session-only metrics). Build the real-life demo layer: a live operations stream + how-it-works narration, verify end-to-end, ship to GitHub + Vercel.
+
+Work Log:
+- Answered the gap: /dashboard was honest but static (zeroes until manual scoring). No self-narrating "product working in real life" surface existed.
+- CREATED src/lib/live-demo.ts — deterministic 25-order story arc (no RNG): calm daytime flow → first fraud block (100% returner) → mixed flow w/ rule REVIEWs → hard blocks (₹34K repeat-returner, ₹52K RULE-001 rules_engine_block) → recovery → shared-device ring burst (3 customers, one device D-SHR-042). Profiles calibrated against mockScore math (rules → mandate → Bahnsen BMR cost argmin; p>0.893 → REJECT, p<0.1015 → ACCEPT) AND the trained model's expected behavior. Honesty contract in header: synthetic orders (SIMULATION badge), real API output for every verdict/cost/latency.
+- UPGRADED (console)/dashboard/page.tsx — (1) "How it works" 4-step strip (COD order placed → Signals scored → Cost-optimal verdict → Sealed & saved; icons, numbered, light); (2) LiveOpsCard: Run/Stop/Reset-demo controls, progress bar n/25, pending "scoring…" row, live feed (DecisionBadge + DecisionSourcePill + p% + device + INR + client-measured latency; amber note chips for risk context incl. shared-device ring; max-h-96 scroll), completion summary (counts + blocked ₹ + audit/cases links); (3) useLiveStream engine: async loop 1/order ~1.4s apart, POST /api/risk/score w/ scorer auth, every result pushRecent() → KPI cards + decision split climb LIVE off the session store; unmount-safe (stopRef); reset also clears session (video retake).
+- LOCAL VERIFICATION: lint 0; stream run → "25 orders · 7 accepted · 11 OTP-gated · 7 blocked · ₹1,18,200 stopped", metrics 25/₹1,18,200/29ms/INTACT, zero console errors; Reset zeroes metrics; mobile 390 no overflow; VLM audit: "production-grade... highly credible merchant product", "no defects" on strip + KPI cards (INTACT truncation flag disproven via DOM).
+- PROD BUG FOUND+FIXED (afc0979): first prod deploy showed 12/25 calls 429 — network log proved HTTP 429 from order 14 on. Root cause in src/proxy.ts SEC-5 cold-start throttle: the cap compared rollWindow() (sum of ALL 60 one-second buckets = 60s request total) against COLD_START_RPS_CAP=10 — implemented as 10 req/MINUTE, 60× stricter than the documented 10 req/s. Cold Vercel edge instance (fresh judge visit) + stream (1 call/1.4s) exhausted the budget at ~order 14. Locally never seen (dev server always >60s warm). FIX: check the CURRENT second bucket (true 10 req/s burst protection; stream-paced traffic never trips). Verified by restart + tight burst: 200×10 then 429×5, paced call 1.2s later → 200.
+- CLIENT RESILIENCE (same commit): live stream honors 429 + Retry-After (parse body retry_after, cap 8s, retry once, latency measured from final attempt); throttled rows show amber "429 · retried" chip; failed rows show HTTP status instead of latency.
+- SHIPPED: 28112e8 (feature) + afc0979 (fix) pushed to github.com/Neeraj-Parekh/special-parakeet main; Vercel prod deployed twice (rto-trust-layer-ebhrg26bb aliased).
+- PRODUCTION RE-VERIFIED: cold-instance stream → "Stream complete — 25 orders · 7 accepted · 11 OTP-gated · 7 blocked · ₹1,18,200 RTO value stopped", metrics 25/₹1,18,200/308ms/INTACT, 0 error rows, 0 throttled rows, 0 console errors; mobile 390 no overflow; VLM final: "clean and well-structured with no obvious visual defects... professional".
+
+Stage Summary:
+- The Dashboard is now the real-life demo surface: How-it-works strip (value loop) + Live operations stream (Run button → 25 synthetic orders through the REAL scoring API → KPIs/split climb live → summary with ₹ blocked) + Reset for video retakes. Deterministic story = same demo every run, first take recordable.
+- Real bug fixed en route: SEC-5 throttle was 10 req/MINUTE (60× stricter than spec) — now true 10 req/s per-second buckets; + well-behaved 429/Retry-After retry in the demo client.
+- GitHub main = afc0979; production = https://rto-trust-layer.vercel.app (browser-verified end-to-end, cold start included).
+- Demo video beat now available: open Dashboard → narrate the 4 steps → click "Run demo stream" → point at feed (fraud blocks, ring burst) → end on "₹1,18,200 RTO value stopped" summary.

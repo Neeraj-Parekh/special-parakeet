@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1400px; background: #ffffff; font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+  .canvas { position: relative; width: 1400px; height: 640px; background: #ffffff; }
+
+  .node {
+    position: absolute; border-radius: 10px; padding: 18px 20px;
+    border: 2.5px solid #92761f; background: #f8f6ef;
+  }
+  .node.det  { border-color: #4e4732; background: #f2f1f0; }
+  .node.side { border-style: dashed; border-color: #3aa0c2; background: #f2f8fa; }
+  .node h4 { font-size: 26px; color: #151513; font-weight: 700; margin-bottom: 8px; }
+  .node p  { font-size: 19px; color: #55534a; line-height: 1.35; }
+  .node .tag { display: inline-block; margin-top: 10px; font-size: 16px; font-weight: 700;
+               letter-spacing: 1.5px; color: #7e7c74; text-transform: uppercase; }
+
+  .stage-label { position: absolute; font-size: 15px; font-weight: 700; letter-spacing: 2px;
+                 color: #a48e4b; text-transform: uppercase; }
+  svg.wire { position: absolute; inset: 0; width: 1400px; height: 640px; pointer-events: none; }
+  .lane { position: absolute; font-size: 15px; color: #7e7c74; }
+</style>
+</head>
+<body>
+<div class="canvas">
+  <svg class="wire" viewBox="0 0 1400 640">
+    <defs>
+      <marker id="arr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+        <path d="M0,0 L8,4.5 L0,9 Z" fill="#4e4732"/>
+      </marker>
+    </defs>
+    <!-- main pipeline arrows -->
+    <line x1="252" y1="200" x2="298" y2="200" stroke="#4e4732" stroke-width="2.5" marker-end="url(#arr)"/>
+    <line x1="540" y1="200" x2="586" y2="200" stroke="#4e4732" stroke-width="2.5" marker-end="url(#arr)"/>
+    <line x1="828" y1="200" x2="874" y2="200" stroke="#4e4732" stroke-width="2.5" marker-end="url(#arr)"/>
+    <line x1="1116" y1="200" x2="1162" y2="200" stroke="#4e4732" stroke-width="2.5" marker-end="url(#arr)"/>
+    <!-- decision fan-out to cases + audit (adjacent-layer only) -->
+    <path d="M 1240 246 L 1240 320" stroke="#4e4732" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+    <path d="M 1240 392 L 1240 448" stroke="#4e4732" stroke-width="2" fill="none" marker-end="url(#arr)"/>
+    <!-- copilot dashed advisory link (no write path) -->
+    <line x1="700" y1="465" x2="700" y2="415" stroke="#3aa0c2" stroke-width="2" stroke-dasharray="7,6" marker-end="url(#arr)"/>
+  </svg>
+
+  <div class="stage-label" style="left:36px; top:60px;">Request path &mdash; deterministic hot path (&lt;100 ms target)</div>
+
+  <div class="node det" style="left:36px; top:120px; width:216px;">
+    <h4>API Request</h4>
+    <p>JWT auth &middot; scope guard &middot; cold-start throttle</p>
+    <span class="tag">Edge proxy</span>
+  </div>
+
+  <div class="node det" style="left:298px; top:120px; width:242px;">
+    <h4>Rules Engine</h4>
+    <p>Compiled rule DSL &middot; JSON &rarr; AST &middot; hard stops first</p>
+    <span class="tag">Deterministic</span>
+  </div>
+
+  <div class="node" style="left:586px; top:120px; width:242px;">
+    <h4>P(RTO) Model</h4>
+    <p>HistGB &rarr; ONNX &middot; 79-feature store &middot; top-5 reason codes</p>
+    <span class="tag">ML inference</span>
+  </div>
+
+  <div class="node" style="left:874px; top:120px; width:242px;">
+    <h4>Cost Optimizer</h4>
+    <p>Bahnsen BMR &middot; expected-loss argmin in merchant rupees</p>
+    <span class="tag">Decision math</span>
+  </div>
+
+  <div class="node" style="left:1162px; top:120px; width:206px;">
+    <h4>Decision</h4>
+    <p>ACCEPT / REVIEW / REJECT &middot; decision_source recorded</p>
+    <span class="tag">Verdict</span>
+  </div>
+
+  <div class="node det" style="left:1162px; top:322px; width:206px;">
+    <h4>Case Queue</h4>
+    <p>Analyst workload &middot; SLA clocks (4h / 24h / 72h)</p>
+    <span class="tag">G5 cases</span>
+  </div>
+
+  <div class="node det" style="left:1162px; top:450px; width:206px;">
+    <h4>Audit Ledger</h4>
+    <p>Merkle-chained, tamper-evident &middot; exportable</p>
+    <span class="tag">G2 audit</span>
+  </div>
+
+  <div class="node side" style="left:520px; top:465px; width:360px;">
+    <h4>Operator Copilot (LLM)</h4>
+    <p>Advisory Q&amp;A only &middot; refusal verdicts computed BEFORE the LLM &middot; zero write paths &middot; fails to canned deterministic refusal</p>
+    <span class="tag">Bounded AI</span>
+  </div>
+
+  <div class="lane" style="left:520px; top:585px; width:600px;">
+    Dashed link = advisory-only. The LLM can never block, override, or delete &mdash; enforced in code, not by prompt.
+  </div>
+</div>
+</body>
+</html>

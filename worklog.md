@@ -4509,3 +4509,21 @@ Stage Summary:
 - GitHub main advanced to the PUSH-2 commit: research materials (11 architecture reference images) + 11 VLM OCR/analysis reports now in the repo; a.zip deliberately excluded as a byte-identical duplicate archive.
 - Local repo resynced to remote (8c6ab22 + PUSH-2 commit) — sandbox preview now serves the same newest code as production.
 - Tokens: used transiently per user authorization (hackathon scope); still recommended to rotate both after the hackathon closes since both appeared in chat transcripts.
+
+---
+Task ID: PUSH-3
+Agent: main (Z.ai Code orchestrator)
+Task: User asked "live in analysis/report-pdf/ was this pushed?" — recover and push the PDF project report.
+
+Work Log:
+- Answer at discovery time: NO. analysis/report-pdf/ did not exist in the repo, in git history, or on the remote. Found the artifacts stranded in /tmp/my-project/ (sandbox snapshot store): PROJECT_REPORT.pdf (574 KB, 12 pages A4, merged cover+body) + analysis/report-pdf/ working dir (cover.pdf, report_body.pdf 11 pages, generate_report_pdf.py 40 KB ReportLab pipeline via the pdf skill, make_charts.py, merge_final.py, shot_diagram.js, chart_*.png, diagram_arch.png+html, cover.html, 6 preview page shots).
+- Root cause (4th sandbox snapshot reset): merge_final.py references /home/z/my-project/analysis/report-pdf/ paths — the report WAS built in the real repo on Sep 2, but the snapshot reset wiped the directory + root PDF before they were ever committed. /tmp survived (separate filesystem), the repo did not. Between-turns reset also rewound local HEAD to 3480a9f again.
+- Recovery: git config core.fileMode false; fetched parkeet main; git reset --hard ba69054 (restored 195 tracked files incl. the PUSH-2 research images — remote was the source of truth, nothing lost).
+- Rescued into the repo (hash-verified identical to /tmp originals): PROJECT_REPORT.pdf at repo root (judge-visible, per merge_final.py's intended output path) + analysis/report-pdf/ with cover.pdf, report_body.pdf, all generator scripts, charts, and diagram assets. preview_*.png page shots skipped (regenerable verification artifacts).
+- Verified PDF integrity: pdfinfo 12 pages A4, pdftotext extracts real content (cover references live deployment rto-trust-layer.vercel.app + repo URL; 50 RTO/decision/COD matches). Secret-scanned all scripts (vcp_/github_pat_/sk_live/whsec_/AKIA/ghp_/xox patterns): zero hits.
+- Committed + pushed to github.com/Neeraj-Parekh/special-parakeet main via PAT inline URL (never persisted to .git/config).
+
+Stage Summary:
+- analysis/report-pdf/ + root PROJECT_REPORT.pdf are now ON GitHub (this commit). The report is the 12-page A4 hackathon submission PDF: cover (title + live links) + TOC + 9 chapters + appendix, built with the pdf-skill ReportLab pipeline, diagrams + cost charts embedded.
+- 4th snapshot-reset incident absorbed; /tmp/my-project identified as the surviving snapshot store where stranded artifacts can be found when resets strike.
+- Repo hygiene: preview page-shots and the duplicate a.zip remain untracked by design.

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+<style>
+  @page { size: 794px 1123px; margin: 0; }
+  :root {
+    /* cascade palette (seed 42) — cover aliases */
+    --c-bg: #f5f5f4;
+    --c-accent: #92761f;
+    --c-text: #151513;
+    --c-muted: #7e7c74;
+    --c-mid: #4e4732;
+    --c-surface: #ebeae8;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    width: 794px; height: 1123px;
+    background: var(--c-bg);
+    font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  }
+  @media screen {
+    html { height: auto; display: flex; justify-content: center; min-height: 100vh; background: var(--c-bg); }
+    body { transform-origin: top center; scale: min(1, calc(100vw / 794), calc(100vh / 1123)); margin: 0 auto; box-shadow: 0 0 60px rgba(0,0,0,0.12); }
+  }
+  .cover {
+    position: relative; width: 794px; height: 1123px;
+    background: var(--c-bg);
+    border: none; outline: none; box-shadow: none;
+  }
+  /* Layer 1 — background grid (clipped) */
+  .cover-layer-1 {
+    position: absolute; inset: 0; overflow: hidden; z-index: 1;
+    background-image:
+      repeating-linear-gradient(to right,  rgba(78,71,50,0.05) 0 1px, transparent 1px 66px),
+      repeating-linear-gradient(to bottom, rgba(78,71,50,0.05) 0 1px, transparent 1px 66px);
+  }
+  /* Layer 2 — structure: ultra-thick left anchor line */
+  .cover-layer-2 { position: absolute; inset: 0; z-index: 2; }
+  .anchor-line {
+    position: absolute; left: 95px; top: 112px; bottom: 112px;
+    width: 8px; background: var(--c-mid);
+  }
+  /* Layer 3 — content */
+  .cover-layer-3 { position: absolute; inset: 0; z-index: 3; }
+  .kicker {
+    position: absolute; left: 150px; top: 168px;
+    font-size: 16pt; font-weight: 400; letter-spacing: 3pt;
+    color: var(--c-text); opacity: 0.6; text-transform: uppercase;
+    max-width: 560px;
+  }
+  .hero {
+    position: absolute; left: 150px; top: 300px;
+    font-size: 54pt; font-weight: 900; line-height: 1.15;
+    color: var(--c-text); max-width: 560px;
+  }
+  .hero .accent-word { color: var(--c-accent); }
+  .summary {
+    position: absolute; left: 150px; top: 562px;
+    font-size: 17px; font-weight: 400; line-height: 1.6;
+    color: var(--c-text); opacity: 0.85; max-width: 476px;
+  }
+  .meta {
+    position: absolute; left: 150px; top: 842px;
+    font-size: 16pt; font-weight: 400; line-height: 1.55;
+    color: var(--c-muted);
+  }
+  .meta b { color: var(--c-text); font-weight: 700; }
+  .footer {
+    position: absolute; left: 150px; top: 1010px;
+    font-size: 16pt; font-weight: 400; letter-spacing: 3pt;
+    color: var(--c-text); opacity: 0.6; text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+  <div class="cover">
+    <div class="cover-layer-1"></div>
+    <div class="cover-layer-2">
+      <div class="anchor-line"></div>
+    </div>
+    <div class="cover-layer-3">
+      <div class="kicker">Project Report &middot; Hackathon Submission</div>
+      <div class="hero">RTO<br>Trust Layer</div>
+      <div class="summary">
+        A fraud-risk decision engine for Indian cash-on-delivery e-commerce.
+        Deterministic rules, calibrated P(RTO), and cost-optimal
+        ACCEPT / REVIEW / REJECT verdicts in merchant rupees &mdash; with a
+        tamper-evident audit trail and a bounded, advisory-only AI copilot.
+      </div>
+      <div class="meta">
+        <b>RTO Trust Layer Team</b><br>
+        Live deployment &middot; rto-trust-layer.vercel.app<br>
+        Repository &middot; github.com/Neeraj-Parekh/special-parakeet
+      </div>
+      <div class="footer">September 2026 &middot; V1</div>
+    </div>
+  </div>
+</body>
+</html>

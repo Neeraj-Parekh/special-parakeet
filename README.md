@@ -14,15 +14,12 @@
 
 ## Live status
 
-| What | Value | Verified |
+| What | Value | Status |
 |---|---|---|
-| **GitHub repo (main branch)** | https://github.com/Neeraj-Parekh/special-parakeet/tree/main | commit `5072fbd` synced to `parkeet/main` |
-| **Vercel deploy** | https://rto-trust-layer.vercel.app | home renders, scope-guard active (auth degraded on serverless SQLite — use local preview for full demo) |
-| **Local preview** (the demo URL for the 10-min video) | port 3000 via the **Preview Panel** on the right of this interface (click "Open in New Tab") | full TIER 1 demo (login → score → case → graph → features) |
-| **Verified endpoints** | 14 (see table below) | all curl-verified live against the dev server |
-| **Build status** | [![Security](https://github.com/Neeraj-Parekh/special-parakeet/actions/workflows/security.yml/badge.svg)](https://github.com/Neeraj-Parekh/special-parakeet/actions/workflows/security.yml) | SEC-1 supply-chain CI (Semgrep + TruffleHog + `bun audit`) |
-| **Last commit** | `5072fbd` | local HEAD = `parkeet/main` HEAD |
-| **Model champion** | `weighted_ens` — PR-AUC **0.1076**, ROC-AUC **0.8934**, Brier **0.0526** | trained, pending deployment (user pushes the model zip separately) |
+| **Live demo** | https://rto-trust-layer.vercel.app | deployed; home renders, scope-guard active (auth degraded on serverless SQLite — run locally for the full demo) |
+| **Verified endpoints** | 14 (see table below) | all curl-verified live |
+| **Security CI** | [![Security](https://github.com/Neeraj-Parekh/special-parakeet/actions/workflows/security.yml/badge.svg)](https://github.com/Neeraj-Parekh/special-parakeet/actions/workflows/security.yml) | SEC-1 supply-chain CI (Semgrep + TruffleHog + `bun audit`) |
+| **Model champion** | `weighted_ens` — PR-AUC **0.1076**, ROC-AUC **0.8934**, Brier **0.0526** | trained, pending deployment (model artifacts pushed separately) |
 
 ---
 
@@ -49,21 +46,20 @@
 
 ---
 
-## Quickstart (in this sandbox)
+## Quickstart (local)
 
-### Console (Next.js 16, port 3000 — the demo URL)
+### Console (Next.js 16, port 3000)
 
 ```bash
-cd /home/z/my-project
+git clone https://github.com/Neeraj-Parekh/special-parakeet.git
+cd special-parakeet
 bun install          # one-time
 bun run db:push      # materializes Case + RefreshToken tables (SQLite)
-bun run dev          # starts on http://localhost:3000 (internal)
+bun run dev          # http://localhost:3000
 ```
 
-The console renders in the **Preview Panel** on the right side of this
-interface (click "Open in New Tab" for a separate browser window). Do NOT
-visit `http://localhost:3000` directly — that address is internal to the
-sandbox and not reachable from your browser.
+The console serves the full Tier-1 flow on `http://localhost:3000`:
+login → score → case → graph → features.
 
 ### Demo credentials
 
@@ -162,10 +158,10 @@ flowchart TD
     MultiAZ -. "committed code,<br/>not deployed (no AWS creds)" .-> SQLite
 ```
 
-**Honest scope of the diagram above:** the Next.js surface (this repo) is what
-judges click and what's verified live. The Python backend in `upload/` is the
-aspirational production target — 5,107 lines of FastAPI scorer + 397 passing
-tests, NOT wired into the deployed Vercel app. The upstream integrations
+**Deployment scope of the diagram above:** the deployed surface is the Next.js
+console in this repo (verified live). The Python backend in `upload/` is the
+production-target implementation — 5,107 lines of FastAPI scorer + 397 passing
+tests, not wired into the deployed app. The upstream integrations
 (Shiprocket/Delhivery/NPCI/Razorpay) respond with `mock:true` when their creds
 are unset (see `docs/INTEGRATIONS.md` for the mock-responders contract).
 
@@ -219,7 +215,7 @@ sequenceDiagram
     end
 ```
 
-**Honest notes:** the access token is verified per-route in the nodejs runtime
+**Implementation notes:** the access token is verified per-route in the nodejs runtime
 (`withScope(req, [...])` in `guard.ts`) — `proxy.ts` runs on the Edge runtime
 and can't import `node:crypto` or Prisma. The rotation-detection logic
 mirrors RFC 6749 §10.4 exactly: replay of a rotated token → mark the whole
@@ -269,7 +265,7 @@ sequenceDiagram
 Round-robin cursor is per-instance (production swap: Redis `INCR`).
 `avg_resolution_time_hours` is computed in JS from fetched rows because Prisma
 SQLite has no `date_diff`. Auto-resolution rate proxy = "resolved within SLA"
-— honest caveat in `service.ts` lines 319-323.
+— caveat documented in `service.ts` lines 319-323.
 
 ---
 
@@ -426,24 +422,25 @@ implementation defects.**
 
 ---
 
-## Model lineage (honest, three generations)
+## Model lineage (three generations)
 
 | Generation | Model | PR-AUC | ROC-AUC | Brier | Status |
 |---|---|---|---|---|---|
-| **v2.1** | Mock scorer (deterministic, in-process) | n/a (mock) | n/a | n/a | ✅ Deployed in `/api/risk/score` (the Next.js console runs in mock-mode; the Python scorer isn't wired in this sandbox) |
+| **v2.1** | Mock scorer (deterministic, in-process) | n/a (mock) | n/a | n/a | ✅ Deployed in `/api/risk/score` (the console runs in mock-mode; the Python scorer is not wired into the deployment) |
 | **Kaggle HistGB champion** | `rto_kaggle_histgb_20260827` | **0.1027** (6.05× baseline on 1.64% RTO rate) | 0.89+ | 0.0179 | Registered in the Python project's model registry; referenced in the Next.js feature-store as `model_version:"v2025.08.29-track-c-v3"`. Model artifacts live in `upload/RTO_Trust_Layer_FULL/models/champion/`. |
-| **weighted_ens** (NEW) | XGB 93.6% + HGB 10.3% + LR 0.2% blend (Optuna-tuned weights) | **0.1076** (+0.0011 / +1.0% relative over HistGB) | **0.8934** | **0.0526** | 🟡 **Trained, PENDING DEPLOYMENT.** User will push the model zip separately. Brier 0.0526 is worse than old 0.0179 — uncalibrated XGB raw probs vs HistGB-calibrated; honest tradeoff, use rank for risk scoring, sigmoid-cal for probabilities. Plateau confirmed: 4 research methods → +0.0011 total, ceiling ~0.11 reached. |
+| **weighted_ens** (NEW) | XGB 93.6% + HGB 10.3% + LR 0.2% blend (Optuna-tuned weights) | **0.1076** (+0.0011 / +1.0% relative over HistGB) | **0.8934** | **0.0526** | 🟡 **Trained, PENDING DEPLOYMENT.** Model artifacts pushed separately. Brier 0.0526 is worse than old 0.0179 — uncalibrated XGB raw probs vs HistGB-calibrated; known tradeoff: use rank for risk scoring, sigmoid-cal for probabilities. Plateau confirmed: 4 research methods → +0.0011 total, ceiling ~0.11 reached. |
 
-**Honest verdict on the new model:** `0.1076` is the max without a new signal (a
-`user_id` feature). Diminishing returns hit hard — refined 200 trials 0.1065
-(flat), seed-avg 5 0.1053 (hurt), stack OOF 0.1050 (hurt), only weighted blend
-won (0.1076). Ship it, or chase calibration (Brier 0.052→0.02) without PR
-change. See [`docs/ARCHITECTURE_OVERVIEW.md`](./docs/ARCHITECTURE_OVERVIEW.md)
+**Model ceiling analysis:** `0.1076` is the maximum without a new signal (a
+`user_id` feature). Diminishing returns are steep — refined 200 trials 0.1065
+(flat), seed-avg 5 0.1053 (worse), stack OOF 0.1050 (worse); only the weighted
+blend improved (0.1076). The practical path is to ship the blend and treat
+calibration (Brier 0.052→0.02) as a follow-up without PR-AUC change. See
+[`docs/ARCHITECTURE_OVERVIEW.md`](./docs/ARCHITECTURE_OVERVIEW.md)
 §4 for the decision-engine flow that consumes the model output.
 
 ---
 
-## The 14 endpoints (all verified live this session)
+## The 14 endpoints (all curl-verified)
 
 | # | Method | Path | Scope | Returns |
 |---|---|---|---|---|
@@ -476,9 +473,9 @@ CODE — production upgrade path"). The docs below are the upgrade contracts.
 
 | Doc | Lines | What it covers | TIER |
 |---|---|---|---|
-| [`docs/LATENCY_ENGINEERING.md`](./docs/LATENCY_ENGINEERING.md) | 498 | Honest 45-75ms p50 ceiling (Python path) / 3-8ms p50 (TS-only path); Phase 5 plan: Go/Rust + io_uring + DPDK kernel bypass; busy-wait explicitly out-of-scope ("HFT-grade, not applicable to us") | 3 |
-| [`docs/ARCHITECTURE_OVERVIEW.md`](./docs/ARCHITECTURE_OVERVIEW.md) | 345 | Canonical 3-min senior-engineer read: problem statement, ASCII system diagram, component table, 3-decision flow, 6-box architecture, honest scope (what runs / committed-not-deployed / documented-only / broken) | 3 |
-| [`docs/SECURITY_HARDENING.md`](./docs/SECURITY_HARDENING.md) | 510 | STRIDE threat model (6-row), RFC 7519/6238/5869/6962 citations, Shostack 1998 + secure-headers.com, 10 honest gaps, production swap | 3 |
+| [`docs/LATENCY_ENGINEERING.md`](./docs/LATENCY_ENGINEERING.md) | 498 | Measured 45-75ms p50 ceiling (Python path) / 3-8ms p50 (TS-only path); Phase 5 plan: Go/Rust + io_uring + DPDK kernel bypass; busy-wait explicitly out-of-scope ("HFT-grade, not applicable to us") | 3 |
+| [`docs/ARCHITECTURE_OVERVIEW.md`](./docs/ARCHITECTURE_OVERVIEW.md) | 345 | Canonical 3-min senior-engineer read: problem statement, ASCII system diagram, component table, 3-decision flow, 6-box architecture, deployment scope (what runs / committed-not-deployed / documented-only / broken) | 3 |
+| [`docs/SECURITY_HARDENING.md`](./docs/SECURITY_HARDENING.md) | 510 | STRIDE threat model (6-row), RFC 7519/6238/5869/6962 citations, Shostack 1998 + secure-headers.com, 10 documented gaps, production swap | 3 |
 | [`docs/STREAMING_ARCHITECTURE.md`](./docs/STREAMING_ARCHITECTURE.md) | 234 | Kafka→Flink→ClickHouse topology, exactly-once semantics, the live TS CEP mirror in `redis-stream.ts` | 2 |
 | [`docs/RULE_DSL.md`](./docs/RULE_DSL.md) | 226 | Grammar + field registry + production swap (the G2 compiler is already real — no `eval`, recursive-descent) | 2 |
 | [`docs/MULTI_AZ.md`](./docs/MULTI_AZ.md) | 251 | AZ-aware pool + read-replica circuit breaker + FNV-1a sharding + K8s manifests + Terraform | 2 |
@@ -487,15 +484,12 @@ CODE — production upgrade path"). The docs below are the upgrade contracts.
 
 **Archived (pre-TIER-1/2/3, kept for provenance):** [`docs/archive/`](./docs/archive/) —
 the 12 `command/` planning docs, 3 `analysis/` deep analyses, `AUDIT_REPORT.md`,
-`UML_COMPREHENSIVE.md`, `agent-ctx/5-a-track-i-dashboard.md`. Superseded by the
+`UML_COMPREHENSIVE.md`, and early working notes. Superseded by the
 canonical docs above.
-
-**Running log:** [`worklog.md`](./worklog.md) — every agent's work record
-(4,300+ lines). Append-only; the source of truth for what was done when.
 
 ---
 
-## Honest ceilings (what we will NOT claim)
+## Known limitations (what is not claimed)
 
 - **Latency:** Python scorer path = 45-75ms p50, ~120ms p99 (warm). TS-only mock
   path = 3-8ms p50, ~25ms p99. Sub-5ms p99 requires the documented Phase 5
@@ -528,15 +522,14 @@ canonical docs above.
 
 ---
 
-## What a judge should click / verify
+## Verification checklist
 
-1. **Repo:** https://github.com/Neeraj-Parekh/special-parakeet/tree/main —
-   branch `main`, commit `5072fbd`.
-2. **Vercel:** https://rto-trust-layer.vercel.app — home renders, scope-guard
+1. **Repo:** https://github.com/Neeraj-Parekh/special-parakeet — branch `main`.
+2. **Live demo:** https://rto-trust-layer.vercel.app — home renders, scope-guard
    active.
-3. **Local preview** (the demo URL): port 3000 via the Preview Panel. Log in
-   as `admin/AdminPass123`, score the default order, watch the REVIEW verdict
-   + case opened + audit trail.
+3. **Local run:** follow the Quickstart, log in as `admin/AdminPass123`,
+   score the default order, watch the REVIEW verdict + case opened +
+   audit trail.
 4. **Gap verification matrix:** [`docs/GAP_VERIFICATION.md`](./docs/GAP_VERIFICATION.md)
    — 18 items with `file:line` evidence + live curl captures.
 5. **SEC-3 refuse-to-start:** delete `JWT_SECRET` from `.env`, restart
@@ -552,7 +545,7 @@ canonical docs above.
    → 401 `compromised` + `family_id`.
 10. **SEC-1 supply-chain CI:** the [![Security](https://github.com/Neeraj-Parekh/special-parakeet/actions/workflows/security.yml/badge.svg)](https://github.com/Neeraj-Parekh/special-parakeet/actions/workflows/security.yml)
     badge — Semgrep + TruffleHog green; `bun audit` surfaces high/critical
-    CVEs to the CI log without blocking (see Honest ceilings §SEC-1).
+    CVEs to the CI log without blocking (see Known limitations §SEC-1).
 
 ---
 

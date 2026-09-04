@@ -271,7 +271,7 @@ Webhooks). The Trust Layer's receiver is
 
 **Mock behavior** — when `RAZORPAY_WEBHOOK_SECRET` is unset, the
 verifier returns `{ valid: true, mock: true, reason: "...mock-accept..." }`
-and the route sets `X-Mock-Mode: true`. A judge can POST any body
+and the route sets `X-Mock-Mode: true`. Any client can POST any body
 and see the dispatcher work without needing a real Razorpay secret.
 
 **Production swap** — set `RAZORPAY_WEBHOOK_SECRET` in the Vercel

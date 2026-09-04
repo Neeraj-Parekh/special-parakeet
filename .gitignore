@@ -76,3 +76,15 @@ upload/RTO_Trust_Layer_FULL.bak-pre-redact/
 
 # Pre-rotated figure caches (generator artifacts, regenerable)
 analysis/report-pdf/_rot_*
+
+# Local operational artifacts (not part of the shipped project)
+/worklog.md
+/.zscripts/
+/Caddyfile
+/verify-*.png
+/risk-console.png
+/download/
+/examples/
+/mini-services/
+/reference/
+/agent-ctx/

@@ -12,9 +12,8 @@
 > Next.js 16 + TypeScript console with a thin proxy + mock fallback.
 > The aspirational Python FastAPI scorer (under
 > `upload/RTO_Trust_Layer_FULL/`) is the production target. The
-> Python scorer is NOT running on Vercel — it runs locally in this
-> sandbox or on the user's own infra when `NEXT_PUBLIC_API_BASE_URL`
-> is configured.
+> Python scorer is not running on Vercel — it runs locally or on
+> your own infra when `NEXT_PUBLIC_API_BASE_URL` is configured.
 
 ---
 
@@ -231,7 +230,7 @@ in mind when reading the codebase:
 
 ---
 
-## 6. Honest scope statement
+## 6. Deployment scope statement
 
 The system has three layers of reality. A senior engineer should
 read this list before any other doc.
@@ -245,7 +244,7 @@ read this list before any other doc.
 - The dashboard pages: score, audit explorer, rules manager, model
   health, copilot (the copilot is wired to the z-ai-web-dev-sdk
   via `src/app/api/copilot/route.ts` with a deterministic server-
-  side refusal classifier — see `frontend-wiring-1` worklog entry).
+  side refusal classifier).
 - The Vercel deployment config (`vercel.json` — 10 lines, no
   secrets, no security headers).
 
@@ -312,9 +311,9 @@ read this list before any other doc.
 
 | Doc | What it covers | When to read it |
 |---|---|---|
-| `docs/LATENCY_ENGINEERING.md` | The honest latency ceiling (~45-75 ms p50 / ~120 ms p99 warm; ~250-400 ms cold start) and the Phase 5 sub-5 ms plan (Go/Rust rewrite, DPDK, `io_uring`, thread-per-core). | When you need the latency numbers or the kernel-bypass plan. |
+| `docs/LATENCY_ENGINEERING.md` | The measured latency ceiling (~45-75 ms p50 / ~120 ms p99 warm; ~250-400 ms cold start) and the Phase 5 sub-5 ms plan (Go/Rust rewrite, DPDK, `io_uring`, thread-per-core). | When you need the latency numbers or the kernel-bypass plan. |
 | `docs/SECURITY_HARDENING.md` | The STRIDE threat model, JWT auth plan (G7), Merkle audit chain integrity, webhook signature verification, secrets handling, supply chain (bun audit / Semgrep), security headers, cold-start DoS protection (RULE-005 / SEC-5). | When you need the security posture or the SEC-1 through SEC-5 / G7 plan labels. |
-| [`docs/GAP_VERIFICATION.md`](./GAP_VERIFICATION.md) | The 18-item TIER 1/2/3 verification matrix with `file:line` evidence + live curl captures (11 real, 4 stub, 3 doc-only, 0 defects). | When a judge asks "is this actually built?" — the canonical answer. |
+| [`docs/GAP_VERIFICATION.md`](./GAP_VERIFICATION.md) | The 18-item TIER 1/2/3 verification matrix with `file:line` evidence + live curl captures (11 real, 4 stub, 3 doc-only, 0 defects). | The canonical answer to "is this actually built?". |
 | `upload/RTO_Trust_Layer_FULL/docs/RBI_MRM_MAPPING.md` | The 7-row compliance table mapping our features to RBI's June 2026 MRM guidance (3 shipped, 3 partial, 1 future). | When you need the regulatory mapping. |
 | `upload/RTO_Trust_Layer_FULL/docs/SECURITY_HARDENING.md` | The Python-side security doc with the 7 attack vectors (model extraction, evasion, replay, feature-starvation, audit-poisoning, cold-start, stream-poisoning). | When you need the deep security analysis. |
 | `upload/RTO_Trust_Layer_FULL/docs/CHAOS_ENGINEERING.md` | The 7 chaos experiments + 5-event auto-remediation map (doc-only, no `chaos-experiments/` directory). | When you need the chaos engineering plan. |
@@ -335,12 +334,12 @@ All four TIER 2 docs are shipped and cross-referenced in section 7 above. They c
 
 ---
 
-## 8. Model lineage (honest, three generations)
+## 8. Model lineage (three generations)
 
 | Generation | Model | PR-AUC | ROC-AUC | Status |
 |---|---|---|---|---|
-| **v2.1** | Mock scorer (deterministic, in-process) | n/a (mock) | n/a | Deployed in `/api/risk/score` (Next.js console runs in mock-mode; Python scorer not wired in this sandbox) |
+| **v2.1** | Mock scorer (deterministic, in-process) | n/a (mock) | n/a | Deployed in `/api/risk/score` (console runs in mock-mode; Python scorer not wired into the deployment) |
 | **Kaggle HistGB** | `rto_kaggle_histgb_20260827` | 0.1027 (6.05× baseline on 1.64% RTO rate) | 0.89+ | Registered in Python project's model registry; referenced as `model_version:"v2025.08.29-track-c-v3"` in the Next.js feature-store. Artifacts in `upload/RTO_Trust_Layer_FULL/models/champion/`. |
-| **weighted_ens** (NEW) | XGB 93.6% + HGB 10.3% + LR 0.2% blend (Optuna-tuned) | 0.1076 (+0.0011 / +1.0% relative) | 0.8934 | Trained, PENDING DEPLOYMENT. Brier 0.0526 (worse than old 0.0179 — uncalibrated XGB raw probs vs HistGB-calibrated; honest tradeoff). Plateau confirmed: 4 research methods → +0.0011 total, ceiling ~0.11 reached. |
+| **weighted_ens** (NEW) | XGB 93.6% + HGB 10.3% + LR 0.2% blend (Optuna-tuned) | 0.1076 (+0.0011 / +1.0% relative) | 0.8934 | Trained, PENDING DEPLOYMENT. Brier 0.0526 (worse than old 0.0179 — uncalibrated XGB raw probs vs HistGB-calibrated; known tradeoff). Plateau confirmed: 4 research methods → +0.0011 total, ceiling ~0.11 reached. |
 
-**Honest verdict on the new model:** 0.1076 is the max without a new signal (`user_id` feature). Diminishing returns hit hard — refined 200 trials 0.1065 (flat), seed-avg 5 0.1053 (hurt), stack OOF 0.1050 (hurt), only weighted blend won (0.1076). The cost-optimizer's Bahnsen Eq.5/6 per-amount FN cost math consumes whatever probability the model emits — the decision layer is model-agnostic.
+**Model ceiling analysis:** 0.1076 is the maximum without a new signal (`user_id` feature). Diminishing returns are steep — refined 200 trials 0.1065 (flat), seed-avg 5 0.1053 (worse), stack OOF 0.1050 (worse); only the weighted blend improved (0.1076). The cost-optimizer's Bahnsen Eq.5/6 per-amount FN cost math consumes whatever probability the model emits — the decision layer is model-agnostic.

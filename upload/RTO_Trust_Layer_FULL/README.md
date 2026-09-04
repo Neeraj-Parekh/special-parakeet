@@ -5,11 +5,10 @@
 > an audit trail regulators can verify, and an agent layer that cannot spend
 > money without a human co-sign.
 
-> **Companion artifacts in the sandbox root (one level up from this `upload/` directory):**
-> - [`../README.md`](../README.md) — sandbox-level README (dual codebase overview, honest status, quickstart for both surfaces).
-> - [`../AUDIT_REPORT.md`](../AUDIT_REPORT.md) — 1-to-1 audit of 37 features against all 16 prompts in `../upload/system design context.txt`, with `file:line` evidence. Verdicts: 25 real / 9 partial / 4 stub / 3 decorative / 5 missing.
-> - [`../UML_COMPREHENSIVE.md`](../UML_COMPREHENSIVE.md) — 12 code-verified Mermaid diagrams (component, sequence, state machine, flowchart). Every box annotated with `%% evidence: file:line`.
-> - [`../worklog.md`](../worklog.md) — every agent's work record (3,700+ lines).
+> **Companion artifacts in the repo root (two levels up from this directory):**
+> - [`../../README.md`](../../README.md) — repo README (dual codebase overview, deployment status, quickstart for both surfaces).
+> - [`../../docs/archive/AUDIT_REPORT.md`](../../docs/archive/AUDIT_REPORT.md) — 1-to-1 audit of 37 features against the original design brief, with `file:line` evidence. Verdicts: 25 real / 9 partial / 4 stub / 3 decorative / 5 missing.
+> - [`../../docs/archive/UML_COMPREHENSIVE.md`](../../docs/archive/UML_COMPREHENSIVE.md) — 12 code-verified Mermaid diagrams (component, sequence, state machine, flowchart). Every box annotated with `%% evidence: file:line`.
 >
 > **Two-part SHAP fix shipped in this push** (commits `cddd200` + `101c2f2`):
 > the prior README claimed SHAP was fixed at `explain_with_shap` level, but
@@ -51,7 +50,7 @@ self-approve a money-moving action.
 
 Six demo moments. Every one is shippable as a 30-second live clip.
 
-| # | Demo moment | What the judge sees | What it proves |
+| # | Demo moment | What it shows | What it proves |
 |---|---|---|---|
 | 1 | **Live Dashboard** | Dark-mode merchant console. Paste an order, click Score, get a decision + score + reason panel in <100ms. | You build products, not notebooks. |
 | 2 | **Explainability** | "73% risk because: COD + ₹12,400 + new customer (PriorOrders=0) + vague address in tier-3 city." Top-5 ranked reason codes per prediction. | You understand black-box ML is useless in finance. |
@@ -63,7 +62,7 @@ Six demo moments. Every one is shippable as a 30-second live clip.
 ### Live dataset switch — `?dataset=amazon|olist`
 
 Every `POST /risk/score` accepts a `dataset` query param that selects which
-champion model answers. A judge can flip datasets mid-demo to watch the
+champion model answers. You can flip datasets mid-demo to watch the
 `user_rto_rate` lift in real time:
 
 | Param | Champion | PR-AUC | Why the lift | Sample request |
@@ -72,11 +71,11 @@ champion model answers. A judge can flip datasets mid-demo to watch the
 | `?dataset=olist` | `rto_olist_histgb_20260828` | **0.3950** | Olist boleto subset has real `customer_unique_id` / `seller_id` history (494 repeat users). The expanding-window `user_id_rto_rate` / `merchant_id_rto_rate` features actually fire — 3.8× the Amazon champion. | `curl -X POST localhost:8000/risk/score?dataset=olist -d '{"order_id":"O-1","amount_inr":120,"category":"beleza_saude","customer_id":"C-1","merchant_id":"S-1","payment_method":"boleto","pincode":"01310","state":"SP","city":"sao_paulo","created_at":"2018-04-15T10:00:00"}'` |
 
 The response payload carries `dataset: "amazon"` or `dataset: "olist"` so the
-judge can verify which model answered. Both paths share the same downstream
+client can verify which model answered. Both paths share the same downstream
 pipeline (calibrate → cost-optimal decision → rules engine → audit hash-chain
 append → Redis Streams publish) — only the feature builder + model + priors
 differ. See [`src/models/olist_feature_builder.py`](src/models/olist_feature_builder.py)
-+ [`data/olist/README.md`](data/olist/README.md) for the honest
++ [`data/olist/README.md`](data/olist/README.md) for the data
 caveats (boleto ≠ Indian COD; order_status canceled/unavailable ≠ true RTO).
 
 ---

@@ -2,16 +2,14 @@
 
 > **G6 — production-credible architecture, in code, not in cloud.**
 >
-> Per the project owner: *"we will add this in the code and not set in
-> cloud as it will be a good point to mention and include even if not
-> wired to everywhere but in code… we have a legitimate claim that yes
-> we had made it but didn't connect cause Amazon costs money, but we
-> made it."*
+> The multi-AZ topology is fully implemented in code and committed to
+> this repo. It is not wired to live AWS infrastructure (three RDS
+> instances across AZs cost ~$1,500/mo — out of scope for this build);
+> every artifact below is real code with a documented wiring path.
 >
 > This doc explains every multi-AZ artifact shipped in this repo, what
-> it does, what it would cost to wire to real AWS, and the failover
-> runbook a judge can use to verify the claim is real architecture, not
-> decoration.
+> it does, what it would cost to wire to real AWS, and the verification
+> runbook for the claim: real architecture, not decoration.
 
 ---
 
@@ -214,7 +212,7 @@ chose to ship the code and document the gap honestly rather than burn
 
 ---
 
-## 8. How a judge verifies the claim
+## 8. Verification runbook
 
 1. **Read `src/lib/db/multi-az.ts`** — the `AzAwarePool.routeRead`
    round-robins among healthy AZs, `routeWrite` pins to the leader,

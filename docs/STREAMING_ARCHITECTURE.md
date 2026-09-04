@@ -13,8 +13,8 @@ The RTO Trust Layer ships two streaming stacks in one repo:
 
 2. **Hackathon transport** (TypeScript, in `src/lib/streaming/`):
    `Redis Streams → TS CEP engine → in-memory ring buffer`.
-   This is the actual code that runs when a judge clicks the
-   dashboard. It implements the same CEP pattern in TS so the demo
+   This is the actual code that runs on the dashboard.
+   It implements the same CEP pattern in TS so the demo
    fires real alerts.
 
 The two are connected by a single seam — `publishDecisionEvent()`
@@ -135,8 +135,8 @@ pipeline via three cooperating mechanisms:
 In the hackathon, the in-memory ring buffer is single-process and
 single-threaded, so EOS is trivially achieved — the dedupe
 `event_id` field exists to demonstrate the production contract is
- honoured (a judge can verify the same event_id is never written
-twice).
+ honoured (the same event_id is never written
+ twice — verifiable via the audit chain).
 
 ---
 
@@ -157,7 +157,7 @@ twice).
 | Single binary | Vercel ships one Node binary — no cluster ops, no Kafka brokers |
 | No cost | MSK ($0.21/hr × 3 brokers = $460/mo) is too much for a hackathon |
 | Same CEP predicate | `detectRapidRejects(customerId, 300000, 3)` is the exact TS mirror of the Flink `Pattern` |
-| Demo-able | A judge can POST a synthetic REJECT to `/api/v1/stream/events` and watch the CEP alert fire in <1s |
+| Demo-able | POST a synthetic REJECT to `/api/v1/stream/events` and watch the CEP alert fire in <1s |
 
 The hackathon's job is to prove the architecture, not the throughput.
 The same CEP predicate, the same event_id dedupe, the same seam —

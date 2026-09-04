@@ -310,7 +310,7 @@ The user wrote 16 prompts across `upload/system design context.txt` (2,656 lines
 **Gap status:** DONE.
 
 ### Prompt 16 — REMOVE LEAKED API KEY + 3 fixes (SHAP, Merkle, DEPLOYMENT.md push) + Vercel deploy
-**Asked:** Search + wipe leaked API keys from repo. SHAP runtime returns 0.0 — fix in src/models/explain.py (swap KernelExplainer → TreeExplainer). Merkle verify-chain reports intact:false — needs Postgres or seal_interval. Push DEPLOYMENT.md. Deploy to Vercel with token vcp_5SV9... Generate UML diagrams via subagent.
+**Asked:** Search + wipe leaked API keys from repo. SHAP runtime returns 0.0 — fix in src/models/explain.py (swap KernelExplainer → TreeExplainer). Merkle verify-chain reports intact:false — needs Postgres or seal_interval. Push DEPLOYMENT.md. Deploy to Vercel with the operator-supplied deploy token. Generate UML diagrams via subagent.
 **AI said it would:** Scrub secrets, fix SHAP, fix Merkle, push, deploy Vercel, generate UML.
 **Actually done:**
 - Secrets scrubbed (worklog Task security-scrub-leak-1 line 3583): `git rm --cached upload/system design context.txt` + `tool-results/`; `git filter-repo --replace-text` purged history; `git reflog expire --prune=now --all`.

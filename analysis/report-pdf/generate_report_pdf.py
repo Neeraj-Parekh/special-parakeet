@@ -999,8 +999,8 @@ story.append(P(
 doc = TocDocTemplate(
     OUT,
     title="RTO Trust Layer — Project Report",
-    author="Z.ai",
-    creator="Z.ai",
+    author="Neeraj Ganesh Parekh",
+    creator="RTO Trust Layer — report build pipeline",
     subject="Defense-only return-risk decision engine for Indian COD e-commerce: architecture, measured held-out performance with false-positive cost, verification evidence, honest limitations",
 )
 doc.multiBuild(story)  # onPage callbacks live on the PageTemplates

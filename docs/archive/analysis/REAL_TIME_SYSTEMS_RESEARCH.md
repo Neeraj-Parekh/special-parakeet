@@ -18,7 +18,7 @@
 > ❓ could-not-verify-via-web-search.
 >
 > **Scope of evidence.** Every paper named below was retrieved via live
-> `z-ai function -n web_search` queries on 2026-08-29 and is cited with
+> web search on 2026-08-29 and is cited with
 > authors + venue + year + URL. Every file:line claim against our repo
 > was inspected via Read/Grep on the same date. No paper is cited from
 > memory — every citation in §9 is one of the 33 URLs actually fetched
@@ -896,7 +896,7 @@ Rust-rewrite tier, and we should not pretend otherwise.
 
 ## 8. Verification log (every URL retrieved 2026-08-29)
 
-Every URL below was returned by a live `z-ai function -n web_search`
+Every URL below was returned by a live web search
 query during this research session. No citation is from memory.
 
 **Real-time scheduling / WCET.**
@@ -990,7 +990,7 @@ achievable in Python; below 5ms p99 requires a Go/Rust rewrite that
 `docs/ARCHITECTURE.md` Phase 5 already names.
 
 **Anti-hallucination note.** Every paper named in this doc was
-retrieved via live `z-ai function -n web_search` on 2026-08-29. The
+retrieved via live web search on 2026-08-29. The
 single "candidate" paper (Crosby-Wallach 2009 USENIX Security) is
 flagged inline per the user's anti-hallucination rule — it was
 cross-referenced from the sibling ADVERSARIAL analysis §k1 rather than

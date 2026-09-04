@@ -1,7 +1,7 @@
 # RTO Trust Layer — prompt-razor.txt Extraction
 ## What's in the original 2102-line prompt that's NOT in the chat messages
 
-> Source: agent 2-knowledge read of `/home/z/my-project/upload/prompt-razor.txt` (2102 lines, 104KB)
+> Source: a 2102-line operator working brief (prompt-razor, since archived out of the repo)
 > The user's latest chat message already contained: North Star, Done state, 4-Question Gate, 5 Missions, 3-Act pitch, architecture diagram, final priority list. This file captures what's NOT in those pasted sections.
 
 ---
@@ -13,7 +13,7 @@
 | `/autoresearch:ship` header | 1-24 | Invokes `opencode-autoresearch` skill package; ship-readiness workflow with subagent pool — the agent harness Neeraj ran locally |
 | "The Honest Gap Analysis" | 39-55 | Diagnostic: "data science notebook dressed as an API… not a system" |
 | "The Pivot" RTO Shield Pro → Trust & Risk Intelligence Layer | 56-62 | Rename moment; positions project against Razorpay RTO Shield |
-| Production Architecture (6-box ASCII) | 64-137 | Earlier simpler 6-box diagram (Client → Kong+Nginx → FastAPI → Rules+Feature Store Redis+SQLite → ML HistGB/SHAP/Evidently/SQLite → Prom+Grafana → Audit JSONL→Parquet). User's chat paste had a more elaborate diagram — V3 expanded this |
+| Production Architecture (6-box ASCII) | 64-137 | Earlier simpler 6-box diagram (Client → Kong+Nginx → FastAPI → Rules+Feature Store Redis+SQLite → ML HistGB/SHAP/Evidently/SQLite → Prom+Grafana → Audit JSONL→Parquet). A later operator brief had a more elaborate diagram — V3 expanded this |
 | **5-Day Build Plan** | 138-191 | Day 1 infra skeleton, Day 2 frontend "Whoa factor", Day 3 backend hardening, Day 4 model+monitoring, Day 5 polish/docs/video |
 | §1 docker-compose.yml | 196-281 | Full YAML with 6 services (nginx, api, redis, postgres, prometheus, grafana, frontend) |
 | §2 Enhanced FastAPI Backend (main.py) | 282-712 | ~430 lines of Python: Pydantic v2 + SQLAlchemy + Redis feature store + circuit breaker + HMAC mandates + rate limiter (fastapi_limiter) + audit hash chain + Prometheus metrics. **The code-template section.** |
@@ -123,7 +123,7 @@ V3 (`docs/ARCHITECTURE_V3.md`, 558 lines, DRAFT-FOR-REVIEW) explicitly supersede
 | 4 | listmonk for notifications (AGPL-3.0) | V3 audit flags AGPL vs Apache 2.0 conflict | Replace listmonk with permissive-license alternative (nodemailer + custom templates, or Postfix+MailHog for dev) |
 | 5 | Feature store: §2 diagram says "PostgreSQL + Feast", §3.3 says "PostgreSQL", §5.1 doesn't mention Feast | Internal inconsistency in V2 | RESOLUTION: use Feast for registry layer only (per `04-TECH-STACK-DECISIONS.md`) |
 | 6 | Track 02 or 05 (undecided) | V3 §22.1 still open | User confirmed Track 02 in chat. Lock it. |
-| 7 | 5 Missions (in user's chat paste) | Not in prompt-razor.txt | The 5 Missions are a V3 framing or a synthesis layer Neeraj added. Not in V2. |
+| 7 | 5 Missions (in a later operator brief) | Not in prompt-razor.txt | The 5 Missions are a V3 framing or a synthesis layer Neeraj added. Not in V2. |
 | 8 | 5-Day Build Plan (Day 1-5) | Not in V3; V3 has 12 code deltas (CD-1…CD-12) | Use V3's CD-1…CD-12 as the authoritative work list. The 5-Day Build Plan is for context. |
 
 ---

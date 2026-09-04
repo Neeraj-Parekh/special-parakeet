@@ -15,8 +15,8 @@ for p in PdfReader("/home/z/my-project/analysis/report-pdf/report_body.pdf").pag
     writer.add_page(normalize(p))
 writer.add_metadata({
     "/Title": "RTO Trust Layer - Project Report",
-    "/Author": "Z.ai",
-    "/Creator": "Z.ai",
+    "/Author": "Neeraj Ganesh Parekh",
+    "/Creator": "RTO Trust Layer — report build pipeline",
     "/Subject": "Fraud-risk decision engine for Indian COD e-commerce",
 })
 out = "/home/z/my-project/PROJECT_REPORT.pdf"

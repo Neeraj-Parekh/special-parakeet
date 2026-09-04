@@ -16,7 +16,7 @@
 > `src/audit/logger.py`, `src/rules/engine.py`, the Pydantic input models,
 > the Next.js `/api/copilot/route.ts`, the 7 alembic migrations, the `.env.example`,
 > the dependabot + CI workflows, the Vercel-deployed route tree). Ran 6 web
-> searches via `z-ai function -n web_search` to ground each attack pattern in
+> searches to ground each attack pattern in
 > the canonical paper/blog (Tramèr USENIX 2016, Goodfellow ICLR 2015, OWASP LLM
 > Top 10 2023/24, OWASP API Security Top 10 2023, Crosby-Wallach USENIX 2009,
 > NPCI OC-201B). The defense posture is cross-checked against the AUDIT_REPORT

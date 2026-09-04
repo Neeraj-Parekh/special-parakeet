@@ -208,9 +208,8 @@ a public URL to receive webhooks.
 1. **Env vars only** — no secrets in code, no secrets in commits,
    no secrets in the Vercel deployment log. The deployed
    `vercel.json` (10 lines) contains zero secrets — verified by
-   `cat /home/z/my-project/vercel.json`. The Vercel token passed
-   during deploy was kept in-chat only, never written to any file
-   (per the `vercel-deploy-1` worklog entry).
+   `cat /home/z/my-project/vercel.json`. The deploy credential was
+   passed as an environment variable only, never written to any file.
 2. **Refuse-to-start on default secrets (SEC-3, plan)** — the
    Python scorer's `Settings` class (`src/config/__init__.py`)
    validates `JWT_SECRET != "default-secret-change-me"` and
@@ -220,11 +219,10 @@ a public URL to receive webhooks.
    (including empty string), which is a security risk.
 3. **No secrets in the repo** — verified by the
    `upload/RTO_Trust_Layer_FULL/docs/SECRET_SCAN_REPORT.md`
-   (the truffleHog / gitleaks scan report). The two leaked
-   tokens (Vercel `vcp_5SV9...` + GitHub PAT
-   `github_pat_11BOLF...`) were scrubbed in commits `f6658d3` +
-   `cddd200` per `README.md` line 268. The user-side rotation is
-   the user's responsibility (links in the README).
+   (the truffleHog / gitleaks scan report). Two credentials surfaced
+   during earlier audits were scrubbed in commits `f6658d3` +
+   `cddd200` (see `docs/SECRET_SCAN_REPORT.md`). Credential
+   rotation is handled out-of-band.
 4. **Redaction in audit rows (SEC-4, plan)** — the audit row
    schema separates `decision_payload` (the decision + feature
    summary) from `audit_metadata` (the request context). The

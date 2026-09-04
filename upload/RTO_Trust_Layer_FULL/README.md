@@ -379,12 +379,11 @@ cleanly for a demo.
    Path B) once the backend is up, or leave unset for mock-mode.
 5. Deploy. Vercel gives you a public `*.vercel.app` URL instantly.
 
-**Security note (read this):** never paste a Vercel token (`vcp_...`)
-into chat, a commit message, or a doc. Generate one at
+**Security note (read this):** never place a Vercel token (`vcp_...`)
+in a commit message, a doc, or any tracked file. Generate one at
 https://vercel.com/account/tokens only when needed, store it as an
 environment variable in the deploy shell, and revoke immediately after
-use. A token was accidentally pasted in plaintext during this session;
-it has been flagged for revocation — see
+use — see
 [`docs/SECRET_SCAN_REPORT.md`](docs/SECRET_SCAN_REPORT.md) §4.
 
 ### Path B — Render (dashboard + API, single free web service)

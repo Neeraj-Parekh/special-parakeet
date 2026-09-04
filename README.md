@@ -556,18 +556,3 @@ canonical docs above.
 
 ---
 
-## Standing reminders
-
-- **Rotate credentials.** Both the Vercel token (`vcp_5SV9...`) and the GitHub
-  PAT (`github_pat_11BOLF...`) were pasted in chat (per user instruction — the
-  sandbox has no `.env` option). They're now in chat history. Revoke at
-  https://vercel.com/account/tokens + https://github.com/settings/tokens after
-  the competition, reissue fresh, store in `.env` (gitignored — already
-  configured).
-- **No "production-ready" claims.** This is a "production-credible architecture
-  with a clear migration path" per the user's prompt-13 narrative. The README
-  reflects that honestly — every claim is verifiable from the repo or
-  explicitly marked as a plan/stub.
-- **The Python backend is the production target, not the deployed surface.**
-  The Next.js console is what judges click; the Python scorer is what runs the
-  real RTO math when wired.

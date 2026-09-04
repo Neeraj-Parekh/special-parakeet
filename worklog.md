@@ -4527,3 +4527,21 @@ Stage Summary:
 - analysis/report-pdf/ + root PROJECT_REPORT.pdf are now ON GitHub (this commit). The report is the 12-page A4 hackathon submission PDF: cover (title + live links) + TOC + 9 chapters + appendix, built with the pdf-skill ReportLab pipeline, diagrams + cost charts embedded.
 - 4th snapshot-reset incident absorbed; /tmp/my-project identified as the surviving snapshot store where stranded artifacts can be found when resets strike.
 - Repo hygiene: preview page-shots and the duplicate a.zip remain untracked by design.
+
+---
+Task ID: SUBMISSION-1
+Agent: main (Z.ai Code orchestrator)
+Task: User is filling the Razorpay AI Builder Internship 2026 Google Form; asked for a ready-to-upload Drive folder as a zip (placeholders where the YouTube video goes, everything else filled from repo assets).
+
+Work Log:
+- 5th snapshot reset absorbed before build: local HEAD had rewound to a container checkpoint (419baa8, worklog 4208 lines < remote 4529 — verified no unique content) with PROJECT_REPORT.pdf/analysis-report-pdf wiped from tree; /tmp/my-project still held the PDF. Resynced: fetch + reset --hard parkeet/main (724e7b6) restored everything.
+- Built /home/z/drive-staging/RTO-Trust-Layer-Submission/: 0_START_HERE.txt (guided tour + key links + 60-second judge path), 1_PITCH_VIDEO/PUT_VIDEO_HERE.txt (placeholder + 3-step link-paste checklist + suggested 5-min video outline with timestamps), 2_PROJECT_REPORT.pdf (copy of repo root PDF), 3_ARCHITECTURE_IMAGES/ (11 original PNGs), 4_RESEARCH_ANALYSIS/ (r1-r11.json VLM OCR reports), 5_LINKS_AND_FORM_ANSWERS.txt (copy-paste answers for every form field: title, objectives, GitHub URL, video placeholder, 4 build challenges grounded in worklog history — PR-AUC 0.55 retrain, SEC-5 60x throttle prod bug, TreeSHAP latency fix, mock-badged dual-mode integrations — plus a Drive sharing checklist).
+- Zipped via zip CLI: RTO-Trust-Layer-Drive-Submission.zip (74,037,550 bytes, 30 entries); python zipfile testzip + structure assertions all pass (0_START_HERE present, PDF present, 11 pngs, 11 jsons).
+- Deployed for download: copied to public/RTO-Trust-Layer-Drive-Submission.zip (Next dev serves it at /RTO-Trust-Layer-Drive-Submission.zip — user downloads via the preview panel's Open-in-New-Tab). Added .gitignore entry for the exact path so the 74MB asset never enters git.
+- Durable backup: uploaded the zip as a GitHub release asset (tag submission-assets) so a snapshot reset can never strand it — download URL survives independent of the sandbox.
+- Committed .gitignore + this worklog entry; pushed to GitHub main via PAT inline URL (never persisted).
+
+Stage Summary:
+- Deliverable: RTO-Trust-Layer-Drive-Submission.zip — the complete Drive folder (video slot + report + images + analysis + links/form-answers), unzip, drop video in, paste YouTube link in 2 marked spots, share folder as anyone-with-link.
+- Download paths: preview panel /RTO-Trust-Layer-Drive-Submission.zip + GitHub release asset (durable).
+- Form answers drafted for every Google Form field the user listed; all claims verifiable from repo/worklog history.

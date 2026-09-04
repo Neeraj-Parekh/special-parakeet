@@ -70,3 +70,6 @@ upload/RTO_Trust_Layer_FULL.bak-pre-redact/
 # Runtime PID/sandbox artifacts
 .zscripts/
 *.pid
+
+# Drive submission zip (served from public/ for download, never committed — 74MB)
+/public/RTO-Trust-Layer-Drive-Submission.zip

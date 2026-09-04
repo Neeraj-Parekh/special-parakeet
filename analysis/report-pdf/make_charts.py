@@ -59,12 +59,13 @@ for rect, v in zip(bars, costs):
             ha="center", va="bottom", fontsize=11, color=TEXT, zorder=4)
 # Highlight the chosen decision (argmin) with an annotation
 ax.annotate("engine decision: REVIEW\n(lowest expected loss)",
-            xy=(1, 95), xytext=(-0.38, 500),
+            xy=(1.06, 95), xytext=(0.44, 545),
             fontsize=9.5, color=HEADER,
             arrowprops=dict(arrowstyle="->", color=HEADER, lw=1.0,
                             connectionstyle="arc3,rad=-0.18"))
 ax.set_ylabel("Expected loss per order (INR)", fontsize=10, color=MUTED)
-ax.set_ylim(0, 560)
+ax.set_ylim(0, 640)
+ax.set_xlim(-0.55, 2.55)
 ax.yaxis.grid(True, linestyle="--", alpha=0.20, color=HEADER, zorder=0)
 ax.set_axisbelow(True)
 for s in ("top", "right"):

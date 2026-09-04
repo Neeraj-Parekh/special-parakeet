@@ -73,3 +73,6 @@ upload/RTO_Trust_Layer_FULL.bak-pre-redact/
 
 # Drive submission zip (served from public/ for download, never committed — 74MB)
 /public/RTO-Trust-Layer-Drive-Submission.zip
+
+# Pre-rotated figure caches (generator artifacts, regenerable)
+analysis/report-pdf/_rot_*

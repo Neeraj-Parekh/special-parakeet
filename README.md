@@ -1,5 +1,8 @@
 # RTO Trust Layer — merchant-facing RTO risk command center
 
+> Built for the **Paytm Build for India AI Hackathon — Track 1: Merchant
+> Growth AI** ("autonomous AI business partners for Paytm merchants").
+>
 > A **production-credible architecture** with a clear migration path, not a
 > "production-ready" claim. We built the trust layer that makes a
 > next-generation COD trust shield possible on India's payment rails —
@@ -12,13 +15,46 @@ This repo is a **dual codebase**:
 
 | Surface | Location | Tech | What it is |
 |---|---|---|---|
-| **Public dashboard** (this `/` route) | `src/` (Next.js 16 App Router) | TypeScript · shadcn/ui · Tailwind 4 | The "fake Vercel website" judges click. Renders the merchant console, talks to the Python backend via Next.js API routes, and falls back to **mock mode** (`X-Mock-Mode: true`) when the backend is unreachable so the demo never dies. |
+| **Public site** (the `/` route) | `src/` (Next.js 16 App Router) | TypeScript · shadcn/ui · Tailwind 4 | The "fake Vercel website" judges click. `/` is the vendor landing (navy chrome, stats strip, product tour, developer panel); `/dashboard`, `/score`, `/checkout`, `/audit`, `/cases`, … are the merchant console. Talks to the Python backend via Next.js API routes, and falls back to **mock mode** (`X-Mock-Mode: true`) when the backend is unreachable so the demo never dies. |
 | **Real backend** (RTO Trust Layer) | `upload/RTO_Trust_Layer_FULL/` | Python 3.12 · FastAPI · ONNX Runtime · Redis Streams · PostgreSQL · shap | The actual RTO scorer. 5,107-line FastAPI app, 397 passing tests, Merkle audit trail, OC-201B UPI mandate caps, dual-control HMAC override, 7-action bounded agent, TreeSHAP explainability. |
 
 Both are pushed together to `github.com/Neeraj-Parekh/special-parakeet` on
 the `main` branch. The Next.js surface is what's deployed to Vercel (live);
 the Python backend runs locally in this sandbox or on the user's own system
 for the final video.
+
+---
+
+## The economics in one page (why this is a product, not a model)
+
+Full grounding with sources: [`analysis/ECONOMICS_OF_COD_TRUST.md`](./analysis/ECONOMICS_OF_COD_TRUST.md).
+All market numbers below were verified by live web search on 2026-11-06.
+
+- **COD is informal credit.** Shipping a COD order extends a stranger a
+  3–7 day uncollateralized loan (the goods). Average RTO ~**23%** (GoKwik,
+  180M+ shoppers); festive-quarter COD returns hit **58% vs <15%** prepaid;
+  a ₹1,000 RTO order costs **₹200–250** with zero revenue.
+- **"Money is memory" — and cash at the doorstep has none**
+  (Kocherlakota, JET 1998). That is the economic core of the product: our
+  79-dim per-customer feature store, Merkle-sealed audit trail, and OC-201B
+  bounded mandates are the *memory layer* that makes COD credit
+  underwritable. Payment platforms are where that memory lives.
+- **RTO risk is cyclical.** Seasonal: returns spike **2–4 weeks after
+  Diwali** (Nov 2025 blended RTO ~39%). Macro: Kiyotaki–Moore-style
+  amplification through thin merchant balance sheets — inventory + cash
+  locked 60–180 days at 2–3 turns/year. Hence: cost-optimal thresholds
+  (Drummond-Holte sweep), DDM/ADWIN drift monitors, and a human-in-the-loop
+  REVIEW band — never a static pincode blocklist.
+- **Platform economics points at merchant risk services.** Zero-MDR UPI
+  (>96% of consumer payments < ₹2,000) makes payment margin ~zero — so
+  merchant-side value comes from services (Paytm's own pivot: 13.7M device
+  subscriptions, merchant lending, agentic AI). The Payments Council of
+  India estimates ₹5,500 crore/year lost on the zero-MDR subsidy.
+- **Regulatory timing is real.** RBI's draft *Model Risk Management*
+  guidance (24 June 2026, press release 2026-2027/528) and NPCI's OC-201B
+  (8 Oct 2025) turn tiering, validation, monitoring, bounded autonomy, and
+  tamper-evident audit into product requirements — the exact surface this
+  repo demonstrates.
 
 ---
 
@@ -169,12 +205,20 @@ open http://localhost:8000/dashboard/
 ├── UML_COMPREHENSIVE.md             ← 12 code-verified Mermaid diagrams
 ├── worklog.md                       ← every agent's work record (3,685+ lines)
 │
-├── src/                             ← Next.js 16 dashboard (the "fake Vercel website")
+├── analysis/                        ← grounded research
+│   ├── ECONOMICS_OF_COD_TRUST.md    ← the economics synthesis (cycles, memory, money)
+│   ├── PRODUCTION_GAP_ANALYSIS.md   ← vs real production risk platforms
+│   ├── REAL_TIME_SYSTEMS_RESEARCH.md
+│   └── ADVERSARIAL_SECURITY_ANALYSIS.md
+│
+├── src/                             ← Next.js 16 public site (the "fake Vercel website")
 │   ├── app/
-│   │   ├── page.tsx                 ← merchant console (Score / SHAP / Cost / Agent)
-│   │   ├── audit/page.tsx           ← audit trail + Merkle proof viewer
-│   │   ├── model-health/page.tsx    ← drift + model registry dashboard
-│   │   ├── rules/page.tsx           ← rules engine CRUD
+│   │   ├── (marketing)/page.tsx     ← vendor landing at / (navy chrome, hero, dev panel)
+│   │   ├── (console)/dashboard/…    ← merchant console (Dashboard / Score / SHAP / Cost)
+│   │   ├── (console)/audit/…        ← audit trail + Merkle proof viewer
+│   │   ├── (console)/model-health/… ← drift + model registry dashboard
+│   │   ├── (console)/rules/…        ← rules engine CRUD
+│   │   ├── story/                   ← "one order, three views" product demo
 │   │   └── api/                     ← Next.js API routes (proxy to Python backend)
 │   │       ├── risk/score/route.ts
 │   │       ├── v1/rules/[id]/route.ts
@@ -234,14 +278,16 @@ open http://localhost:8000/dashboard/
 
 ## What a judge should click / verify
 
-1. **Vercel live URL**: `https://web-rose-ten-o8lm7pih3t.vercel.app/` — renders the merchant console in mock-mode (no backend configured).
-2. **Local backend** (in this sandbox): `curl http://localhost:8000/health` → `{"status":"ok",...}`.
-3. **Score an order** (real backend): see the curl examples in [`upload/RTO_Trust_Layer_FULL/README.md`](./upload/RTO_Trust_Layer_FULL/README.md) §"Live dataset switch".
-4. **Verify SHAP is non-zero** (post-fix): `curl -X POST http://localhost:8000/risk/score -d '{...}' | jq .explanation` — each `delta_prob` should be ≠ 0 (was all 0.0 before commits `cddd200` + `101c2f2`).
-5. **Audit trail + Merkle**: `curl http://localhost:8000/v1/audit/verify-chain -H "Authorization: Bearer admin-demo-key"` — note `intact:false` in file-mode (the honest gap; fix is `DATABASE_URL=postgres://...`).
-6. **397 tests**: `cd upload/RTO_Trust_Layer_FULL && python3 -m pytest tests/ -q` → `411 collected, 397 passed, 14 skipped, 0 failed`.
-7. **UML diagrams**: [`UML_COMPREHENSIVE.md`](./UML_COMPREHENSIVE.md) — 12 Mermaid diagrams, every box annotated with `%% evidence: file:line`.
-8. **Audit report**: [`AUDIT_REPORT.md`](./AUDIT_REPORT.md) — 37 features 1-to-1 mapped against all 16 prompts.
+1. **Vercel live URL**: `https://rto-trust-layer.vercel.app/` — the vendor landing at `/`, console at `/dashboard` (mock-mode, no backend configured). A second deployment exists at `https://web-rose-ten-o8lm7pih3t.vercel.app/`.
+2. **Product demo**: `/story` — one COD order seen from shopper, merchant, and platform panes.
+3. **Local backend** (in this sandbox): `curl http://localhost:8000/health` → `{"status":"ok",...}`.
+4. **Score an order** (real backend): see the curl examples in [`upload/RTO_Trust_Layer_FULL/README.md`](./upload/RTO_Trust_Layer_FULL/README.md) §"Live dataset switch".
+5. **Verify SHAP is non-zero** (post-fix): `curl -X POST http://localhost:8000/risk/score -d '{...}' | jq .explanation` — each `delta_prob` should be ≠ 0 (was all 0.0 before commits `cddd200` + `101c2f2`).
+6. **Audit trail + Merkle**: `curl http://localhost:8000/v1/audit/verify-chain -H "Authorization: Bearer admin-demo-key"` — note `intact:false` in file-mode (the honest gap; fix is `DATABASE_URL=postgres://...`).
+7. **397 tests**: `cd upload/RTO_Trust_Layer_FULL && python3 -m pytest tests/ -q` → `411 collected, 397 passed, 14 skipped, 0 failed`.
+8. **UML diagrams**: [`UML_COMPREHENSIVE.md`](./UML_COMPREHENSIVE.md) — 12 Mermaid diagrams, every box annotated with `%% evidence: file:line`.
+9. **Audit report**: [`AUDIT_REPORT.md`](./AUDIT_REPORT.md) — 37 features 1-to-1 mapped against all 16 prompts.
+10. **The economics case**: [`analysis/ECONOMICS_OF_COD_TRUST.md`](./analysis/ECONOMICS_OF_COD_TRUST.md) — every market number sourced, every design choice tied to the literature (Kocherlakota, Minsky, Kiyotaki–Moore, Rochet–Tirole, CECL) and to `file:line` in this repo.
 
 ---
 
@@ -266,6 +312,7 @@ open http://localhost:8000/dashboard/
 
 ## Standing reminders
 
-- **Rotate credentials**: Both the Vercel token (`vcp_5SV9...`) and the GitHub PAT (`github_pat_11BOLF...`) were leaked into the chat log. The repo-side leak was scrubbed (commits `f6658d3` + `cddd200`); the chat-side leak is on the user to rotate at https://vercel.com/account/tokens and https://github.com/settings/tokens.
-- **Push to `Neeraj-Parekh/special-parakeet`**: The PAT was revoked (`401 Bad credentials`); a fresh PAT is needed to push the latest commits (`cddd200`, `101c2f2`, plus this README). The local repo has the `parkeet` remote configured with the public HTTPS URL (no token stored in `.git/config`).
+- **Rotate credentials**: Both the Vercel token and the GitHub PAT were leaked into a previous chat log. The repo-side leak was scrubbed (commits `f6658d3` + `cddd200`); the chat-side leak is on the user to rotate at https://vercel.com/account/tokens and https://github.com/settings/tokens. The current PAT (Nov 6) works and was used to push — rotate it after submission day.
+- **Repo reconciliation (2026-11-06)**: local `main` was verified a strict superset of remote `main` (6 ahead, 0 behind — clean fast-forward push). The stale `rto-trust-layer` remote branch holds only two `.push-test-marker` test commits on top of a base already merged; safe to delete. The `submission-assets` tag points at a commit already in history. Also fixed this pass: a Nov-6 lineage merge had resurrected a duplicate root `src/app/page.tsx` (parallel-page collision with the `(marketing)` landing) and dropped the light brand design tokens from `globals.css` — both restored; every route re-verified (single header/footer, navy topbar, brand CTAs).
+- **Vercel deploy**: `rto-trust-layer.vercel.app` serves the repo via git-connected auto-deploy (no token stored in this sandbox). If it still shows Razorpay-era code after a push, the project needs a dashboard-side reconnect or a fresh token.
 - **No "production-ready" claims**: per the user's prompt 13, this is a "production-credible architecture with a clear migration path". The README reflects that honestly.

@@ -197,13 +197,13 @@ const ENDPOINTS: EndpointDoc[] = [
   },
   {
     method: "POST",
-    path: "/api/v1/webhooks/razorpay",
+    path: "/api/v1/webhooks/paytm",
     auth: "HMAC sig",
     description:
-      "Razorpay webhook receiver — HMAC-SHA256 over the raw body bytes with a timing-safe compare. payment.captured flips the order to prepaid and closes the RTO window. Missing or tampered signatures are rejected with 400; while RAZORPAY_WEBHOOK_SECRET is unset the verifier mock-accepts and flags it.",
-    requestCurl: `curl -s -X POST ${BASE_URL}/api/v1/webhooks/razorpay \\
+      "Paytm webhook receiver — HMAC-SHA256 over the raw body bytes with a timing-safe compare. payment.captured flips the order to prepaid and closes the RTO window. Missing or tampered signatures are rejected with 400; while PAYTM_WEBHOOK_SECRET is unset the verifier mock-accepts and flags it.",
+    requestCurl: `curl -s -X POST ${BASE_URL}/api/v1/webhooks/paytm \\
   -H "Content-Type: application/json" \\
-  -H "X-Razorpay-Signature: 8f14e45fceea167a5a36dedd4bea25438f14e45fceea167a5a36dedd4bea2543" \\
+  -H "X-Paytm-Signature: 8f14e45fceea167a5a36dedd4bea25438f14e45fceea167a5a36dedd4bea2543" \\
   -d '{
     "event": "payment.captured",
     "payload": {

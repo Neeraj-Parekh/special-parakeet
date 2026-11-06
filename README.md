@@ -1,11 +1,12 @@
 # RTO Trust Layer — merchant-facing RTO risk command center
 
 > A **production-credible architecture** with a clear migration path, not a
-> "production-ready" claim. We built the trust layer that makes Razorpay's
-> next-generation RTO Shield possible — Merkle audit trails for RBI
-> compliance, bounded agents for safe AI commerce, and a cost-optimal
-> decision engine that minimizes merchant loss. On real cross-border data,
-> we validated that per-customer history is the signal that matters.
+> "production-ready" claim. We built the trust layer that makes a
+> next-generation COD trust shield possible on India's payment rails —
+> Merkle audit trails for RBI compliance, bounded agents for safe AI
+> commerce, and a cost-optimal decision engine that minimizes merchant
+> loss. On real cross-border data, we validated that per-customer
+> history is the signal that matters.
 
 This repo is a **dual codebase**:
 
@@ -108,13 +109,13 @@ risk scorer". It is:
 > "RBI's June 2026 Model Risk Management guidance mandates tamper-evident
 > audit trails, human-in-the-loop overrides, red-teaming, and kill switches
 > for every AI model in Indian finance. We built the RTO Trust Layer to
-> exceed those mandates before they become law. While Razorpay's current
-> RTO Shield is pincode-level and black-box, we proved that address-level
+> exceed those mandates before they become law. While today's incumbent
+> RTO shields are pincode-level and black-box, we proved that address-level
 > scoring with per-customer history achieves 32× baseline lift. We built
 > cryptographic audit trails with Merkle proofs. We built dual-control HMAC
 > overrides that no single compromised admin can bypass. We built bounded
 > agent guardrails with OC-201B UPI Circle mandate caps — the exact spec
-> Razorpay will implement next year. And we did it with 397 tests, 7-stage
+> NPCI's UPI Circle rollout demands. And we did it with 397 tests, 7-stage
 > MLOps, and adversarial defenses that map to RBI's red-teaming requirements."
 
 This is honest. It acknowledges the gap (no live Render URL, Merkle breaks

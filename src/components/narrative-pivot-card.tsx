@@ -10,11 +10,11 @@
 //   — 99K orders WITH real customer IDs. Same model. Same hyperparameters.
 //   PR-AUC jumped to 0.40 — a 32× baseline lift. This proves our thesis:
 //   the real signal in RTO prediction is per-merchant and per-customer
-//   behaviour history, not pincode averages. Razorpay has this data. We
+//   behaviour history, not pincode averages. Paytm has this data. We
 //   built the platform to use it."
 //
 // This card renders that narrative visually — a before/after split showing
-// the 0.10 → 0.40 jump, the 32× baseline lift, and the "Razorpay has this
+// the 0.10 → 0.40 jump, the 32× baseline lift, and the "Paytm has this
 // data" call-to-action. It's the single most important slide on the
 // dashboard for a judge who scans for "is this honest + does it work?"
 
@@ -77,7 +77,7 @@ export function NarrativePivotCard() {
         <CardDescription>
           We don&apos;t hide the 0.10 — we use it as proof. The signal in RTO
           prediction is <span className="font-semibold">per-customer history</span>,
-          not pincode averages. Razorpay has this data; we built the platform
+          not pincode averages. Paytm has this data; we built the platform
           to use it.
         </CardDescription>
       </CardHeader>
@@ -152,7 +152,7 @@ export function NarrativePivotCard() {
             <span className="font-semibold">same model</span> hits{" "}
             <span className="font-mono font-semibold text-success">0.40</span>{" "}
             — <span className="font-semibold">32× the baseline lift</span>.
-            Razorpay&apos;s merchant graph has this signal natively. Our
+            Paytm&apos;s merchant graph has this signal natively. Our
             inference path already consumes it via{" "}
             <code className="rounded bg-muted px-1 font-mono text-[11px]">
               ?dataset=olist

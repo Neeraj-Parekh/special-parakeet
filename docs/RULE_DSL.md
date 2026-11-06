@@ -4,8 +4,8 @@ The Rule DSL is the declarative authoring layer for RTO rules. A
 merchant's risk analyst writes a JSON rule spec, the DSL compiler
 parses the condition expression and produces a TypeScript predicate
 `(ctx: RuleContext) => boolean` that the score path evaluates against
-every order. This is the layer Razorpay AdaDSL calls "the compiled rule":
-a stored JSON spec + a runtime function pointer.
+every order. This is the layer production rule DSLs call "the compiled
+rule": a stored JSON spec + a runtime function pointer.
 
 This is **REAL** code (not a stub). The compiler is fully implemented
 in TypeScript, validated against the test cases below, and wired into
@@ -17,7 +17,7 @@ the live request path via `POST /api/v1/rules/dsl`.
 
 The existing `/api/v1/rules` endpoint accepts a single-field rule:
 `{field, op, value, action}`. That covers 80% of cases. The remaining
-20% — the rules a real Razorpay risk analyst actually writes — combine
+20% — the rules a real payments risk analyst actually writes — combine
 multiple fields with boolean operators:
 
 - "Block high-value COD from new customers in tier_3 cities"

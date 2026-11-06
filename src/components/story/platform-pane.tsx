@@ -1,6 +1,6 @@
 "use client";
 
-// PlatformPane — the payment network's control room (the "Razorpay view").
+// PlatformPane — the payment network's control room (the "Paytm view").
 // Dark ops-room identity, always dark regardless of theme — it reads as a
 // different world from the store. Aggregates + trust signals only; order
 // detail stays LOCKED until the merchant shares the audit key (the

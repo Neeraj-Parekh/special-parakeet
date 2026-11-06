@@ -7,7 +7,7 @@ The RTO Trust Layer ships two streaming stacks in one repo:
 1. **Production transport** (Python, in `src/stream/`):
    `Kafka (MSK) → Flink (CEP) → ClickHouse (materialized view)`.
    This is the architecture-reference code that runs in a real
-   Razorpay deploy. It is NOT executed in the hackathon Vercel
+   Paytm deploy. It is NOT executed in the hackathon Vercel
    runtime — Vercel is a single-binary serverless platform that
    cannot host Kafka/Flink clients.
 
@@ -26,7 +26,7 @@ CEP predicate, different transport.
 ## 1. ASCII diagram — production vs current
 
 ```
-PRODUCTION (Razorpay-grade, Phase H)
+PRODUCTION (Paytm-grade, Phase H)
 ════════════════════════════════════
                                               ┌──────────────────────────────┐
 /risk/score  ───produce───►  Kafka (MSK)      │  Flink CEP (PyFlink)         │

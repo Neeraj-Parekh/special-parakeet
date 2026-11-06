@@ -2,8 +2,8 @@
 //
 // Walks the AST produced by grammar.ts and emits a TypeScript predicate
 // `(ctx: RuleContext) => boolean` that evaluates the condition against a
-// merchant order at scoring time. This is the layer Razorpay AdaDSL calls
-// "the compiled rule" — it stores a JSON spec at write-time, then
+// merchant order at scoring time. This is the layer production rule
+// DSLs call "the compiled rule" — it stores a JSON spec at write-time, then
 // materializes a function pointer at runtime.
 //
 // Two compile-time validations:

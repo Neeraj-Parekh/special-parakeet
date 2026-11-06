@@ -32,7 +32,7 @@ export const CONSOLE_NAV: NavItem[] = [
   { href: "/audit", label: "Audit Trail", icon: ScrollText, description: "Merkle-sealed decision ledger + proof" },
   { href: "/copilot", label: "AI Copilot", icon: Bot, description: "Policy-bounded operator assistant" },
   { href: "/api-docs", label: "API Docs", icon: BookOpen, description: "REST reference with copyable cURL" },
-  { href: "/integrations", label: "Integrations", icon: Blocks, description: "NPCI, Shiprocket, Delhivery, Razorpay" },
+  { href: "/integrations", label: "Integrations", icon: Blocks, description: "NPCI, Shiprocket, Delhivery, Paytm" },
 ];
 
 /** Internal platform tools (kept one click deep, below the primary nav). */

@@ -39,11 +39,11 @@
 | Vercel-only path (TS proxy → mock scorer) | ~3-8 ms | ~25 ms | `src/lib/api-proxy.ts:153-177` (`proxyJson` with 4 s `AbortController` timeout; mock fallback is an in-process function call). The mock scorer itself is deterministic — no model `session.run`. |
 | TS proxy → Python scorer (warm) | ~45-75 ms | ~120 ms | Aspirational Python backend: FastAPI + Pydantic parse + `feature_builder.transform` + ONNX `session.run` + `cost_optimizer.optimal_decision` + audit log + stream publish. See the per-stage breakdown in `upload/RTO_Trust_Layer_FULL/docs/LATENCY_ENGINEERING.md:48-61`. |
 | TS proxy → Python scorer (cold) | ~250-400 ms | ~600 ms | Vercel serverless function cold start (~250 ms first hit per AWS Lambda / Vercel published numbers) plus the Python scorer's own cold path (model load is amortised at startup, not per request). |
-| Razorpay's stated production target | < 10 ms p99 | < 10 ms | Industry benchmark cited in `upload/RTO_Trust_Layer_FULL/docs/LATENCY_ENGINEERING.md:27`. |
+| Top-tier Indian PG p99 target | < 10 ms p99 | < 10 ms | Industry benchmark cited in `upload/RTO_Trust_Layer_FULL/docs/LATENCY_ENGINEERING.md:27`. |
 
 **Headline honest ceiling: the hackathon-deployed system runs at
 ~45-75 ms p50 / ~120 ms p99 on the warm path when the Python scorer
-is wired in. That is 5-12x slower than the Razorpay < 10 ms p99
+is wired in. That is 5-12x slower than the < 10 ms p99 gateway
 target. We do not claim sub-5 ms. We do not claim sub-10 ms. The
 current ceiling is the Python + uvicorn + GIL + syscall-per-request
 ceiling. The rest of this document is the plan that closes the gap,

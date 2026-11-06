@@ -20,7 +20,7 @@ export const metadata: Metadata = {
     "Pre-dispatch COD return-risk gating with Bahnsen Bayes Minimum Risk decisions, tamper-evident Merkle audit, OC-201B UPI Circle mandates, DDM/ADWIN drift detection, and Drummond-Holte cost curves.",
   keywords: [
     "RTO",
-    "Razorpay",
+    "Paytm",
     "AI Risk Manager",
     "Bahnsen Bayes Minimum Risk",
     "Drummond-Holte",

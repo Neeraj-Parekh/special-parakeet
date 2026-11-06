@@ -5,7 +5,7 @@ ARCHITECTURE NOTE — this file is NOT executed in the hackathon runtime.
 The Next.js Vercel deployment is a single-binary TS app and cannot
 host a Kafka client. This file is the architecture-reference artifact
 showing exactly what the production transport looks like — the code
-judges would read in a real Razorpay AdaDSL deploy.
+judges would read in a real gateway-scale deploy.
 
 The hackathon runs the same business logic over a TS re-implementation
 of the same CEP pattern at src/lib/streaming/redis-stream.ts. The seam
@@ -182,7 +182,7 @@ class RtoKafkaProducer:
 
         event_id = score_response.get("prediction_id") or str(uuid.uuid4())
         # Add the producer-side trace headers a judge would expect to
-        # see in a real Razorpay deploy.
+        # see in a real Paytm deploy.
         headers = {
             "event_id": event_id.encode("utf-8"),
             "tenant_id": score_response.get("tenant_id", "default").encode("utf-8"),

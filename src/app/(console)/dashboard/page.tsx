@@ -1,6 +1,6 @@
 "use client";
 
-// Dashboard — the merchant home. Razorpay-style metric cards at the top,
+// Dashboard — the merchant home. Paytm-style metric cards at the top,
 // a "how it works" strip, and a LIVE OPERATIONS demo: a simulated day of
 // COD orders streamed one-by-one through the real /api/risk/score API.
 //

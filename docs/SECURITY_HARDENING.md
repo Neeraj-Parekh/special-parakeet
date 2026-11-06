@@ -41,7 +41,7 @@ defense, the status, the file:line where the defense IS or WILL BE.
 | STRIDE | Threat | Attack vector | Defense | Status | File / plan |
 |---|---|---|---|---|---|
 | **S**poofing | Attacker impersonates a merchant by replaying a leaked long-lived bearer token. | A scorer-scope API key leaks (e.g. committed to git, extracted from a mobile app binary, phished from a merchant). The attacker uses the raw `Authorization: Bearer <key>` header to score orders under the victim's merchant. | (a) Short-lived JWT access tokens (15-minute expiry) + 7-day refresh token rotation; (b) scope-based RBAC (`score` / `admin` / `audit:read` / `cases:write`); (c) middleware enforcement at the FastAPI layer. | plan (G7) | Today: `upload/RTO_Trust_Layer_FULL/src/api/security.py:46` — long-lived env-var bearer. Plan: G7 closes this. See section 2 below. |
-| **T**ampering | Attacker tampers with a captured `/risk/score` request in flight (modify amount, swap customer_id). | MitM on a misconfigured merchant integration; SSRF on a compromised gateway; rogue WiFi at a coffee shop. | (a) HMAC-SHA256 request signing (RFC 5869 HKDF) — opt-in today (`REQUIRE_HMAC=false`); (b) signed webhooks (Razorpay `X-Razorpay-Signature`); (c) Merkle audit chain makes any post-hoc row modification detectable. | partial (HMAC signed-webhook shipped; HMAC request-signing opt-in only) | `upload/RTO_Trust_Layer_FULL/src/api/security.py:475` (HMAC verify — opt-in); `upload/RTO_Trust_Layer_FULL/src/api/keys.py:92` (RFC 5869 HKDF-Extract+Expand for the dual-control override path — always-on); `upload/RTO_Trust_Layer_FULL/src/audit/logger.py:60` (Merkle). See sections 3 and 4 below. |
+| **T**ampering | Attacker tampers with a captured `/risk/score` request in flight (modify amount, swap customer_id). | MitM on a misconfigured merchant integration; SSRF on a compromised gateway; rogue WiFi at a coffee shop. | (a) HMAC-SHA256 request signing (RFC 5869 HKDF) — opt-in today (`REQUIRE_HMAC=false`); (b) signed webhooks (Paytm `X-Paytm-Signature`); (c) Merkle audit chain makes any post-hoc row modification detectable. | partial (HMAC signed-webhook shipped; HMAC request-signing opt-in only) | `upload/RTO_Trust_Layer_FULL/src/api/security.py:475` (HMAC verify — opt-in); `upload/RTO_Trust_Layer_FULL/src/api/keys.py:92` (RFC 5869 HKDF-Extract+Expand for the dual-control override path — always-on); `upload/RTO_Trust_Layer_FULL/src/audit/logger.py:60` (Merkle). See sections 3 and 4 below. |
 | **R**epudiation | A merchant disputes a COD-REJECT decision ("we never scored this order REJECT, the audit row was forged"). | The merchant argues the audit trail was modified post-hoc to frame them. | Merkle audit chain with hash-pointer linkage; every audit row's `prev_hash` is the SHA-256 of the prior row's content; tampering with row N breaks rows N+1 through the head. | partial (Merkle shipped but breaks in file-mode — see `AUDIT_REPORT.md` gap 2). Postgres-backed mode is the production path. | `upload/RTO_Trust_Layer_FULL/src/audit/logger.py:60` (`MerkleSealer`); `routes.py:2821` (`GET /v1/audit/verify-chain`); `routes.py:3346` (`GET /v1/audit/:id/proof` — RFC 6962 §2.1.1 inclusion proof). See section 3 below. |
 | **I**nformation disclosure | Attacker extracts PII (customer_id, address, phone) from audit rows or logs. | (a) Logs that include the raw request body; (b) the audit chain containing full order context. | (a) SEC-4 redaction: strip PII fields from audit rows before write (the audit row stores the decision + a hashed feature summary, NOT the raw order); (b) no `console.log` / `print` on the request body; (c) `X-Content-Type-Options: nosniff` + `X-Frame-Options: DENY` headers (SEC-2). | plan (redaction); plan (headers) | Plan: SEC-4 (redaction) — `upload/RTO_Trust_Layer_FULL/src/audit/logger.py:_log_postgres` would gain a redaction filter (15 minutes; the schema already separates `decision_payload` from `audit_metadata`). Plan: SEC-2 (headers) — `next.config.ts` today has zero security headers (verified — see section 7). |
 | **D**enial of service | Attacker floods `/risk/score` with cold-start-triggering requests to exhaust Vercel function concurrency. | Burst of 1000 requests to a freshly-scaled-to-zero function. Vercel spawns ~10-50 concurrent cold instances, each ~250 ms cold start; the user pays the bill. | (a) Per-IP rate limit sliding window (`IPRateLimiter` — shipped in Python, NOT on the Vercel TS path); (b) SEC-5 / RULE-005 cold-start throttle: first 60 s after boot, the score endpoint caps at 10 req/s and returns 429 on overflow. | plan (SEC-5 / RULE-005); partial (per-IP rate limit shipped in Python) | Plan: SEC-5 / RULE-005 — the worklog (line 4023) names this as the one attack that survives all current patches: "§17 — the cold-start feature-poisoning attack. A fraud ring rotates customer_ids; the per-customer rate lookup MISSES; the order is ₹49,999 COD (under RULE-001's ₹50K threshold + the ±₹500 jitter); 50 unique customer_ids × ₹49,999 = ₹2.5M COD/weekend with zero historical signal." The fix is manual and not auto-patchable — see section 8 below. |
@@ -157,42 +157,50 @@ backend is not wired, the page shows mock data labelled
 
 ---
 
-## 4. Webhook security (Razorpay)
+## 4. Webhook security (Paytm)
 
-**What it is:** Razorpay (the payment gateway) fires signed
+**What it is:** Paytm (the payment gateway) fires signed
 webhooks on payment events. The RTO Trust Layer consumes these
 to gate the COD release / refuse decision.
+
+**Adapter honesty:** the shipped verifier implements the
+industry-standard HMAC-SHA256 + timing-safe-compare convention.
+Paytm's live webhook spec verifies via its own checksum scheme —
+swapping the verifier function is a single seam; the route,
+dispatcher, and idempotency handling are gateway-agnostic.
 
 **Defense (shipped in the Python scorer):**
 
 1. **Signature verification with `timingSafeEqual`**: the
-   `X-Razorpay-Signature` header is an HMAC-SHA256 of the raw
-   request body with the Razorpay webhook secret. The verifier
+   `X-Paytm-Signature` header is an HMAC-SHA256 of the raw
+   request body with the Paytm webhook secret. The verifier
    recomputes the HMAC and compares it to the header using a
    constant-time comparison (Python's `hmac.compare_digest` /
    Node's `crypto.timingSafeEqual`) — NOT `==`, which is
    vulnerable to timing side-channels (the verifier leaks the
    signature byte-by-byte via response time).
 2. **Idempotent handlers**: every webhook carries an
-   `X-Razorpay-Event-Id`. The handler stores the event_id in the
+   `X-Paytm-Event-Id`. The handler stores the event_id in the
    Postgres `idempotency_keys` table (24-hour TTL) and short-
    circuits if it has already processed the event. Replay of a
    captured webhook returns the cached response without
    double-processing.
 
-**File:line:** the Razorpay webhook handler lives in
-`upload/RTO_Trust_Layer_FULL/src/api/routes.py` (search for
-`razorpay_signature` or `webhook` — the handler is wired when
-`RAZORPAY_WEBHOOK_SECRET` env var is set).
+**File:line:** the live Next.js receiver is
+`src/app/api/v1/webhooks/paytm/route.ts` (verify + dispatch) with
+the verifier in `src/lib/integrations/paytm-webhook.ts`. The
+Python scorer's equivalent handler lives in
+`upload/RTO_Trust_Layer_FULL/src/api/routes.py` (search `webhook`).
 
-**On the Vercel-only deploy:** the webhook handler is NOT
-exposed. The Next.js app does not register a `/api/webhook/
-razorpay` route — the user must deploy the Python backend with
-a public URL to receive webhooks.
+**On the Vercel-only deploy:** the Next.js app ships the receiver
+at `POST /api/v1/webhooks/paytm` — signature verify, event
+dispatch, 200-ack semantics. Without `PAYTM_WEBHOOK_SECRET` set it
+mock-accepts and flags `X-Mock-Mode: true`; with the secret set,
+the HMAC is enforced and tampered signatures get 400.
 
 **References:**
-- Razorpay API documentation, "Webhooks — Verify the Signature,"
-  https://razorpay.com/docs/webhooks/verify/
+- Paytm Developer Platform documentation — Webhooks & signature
+  verification, https://developer.paytm.com/
 - RFC 2104 (Krawczyk, Bellare, Canetti, 1997, "HMAC: Keyed-
   Hashing for Message Authentication").
 - Dual, R., "Timing Attacks on Cryptographic APIs," CCS 1996 —
@@ -214,7 +222,7 @@ a public URL to receive webhooks.
 2. **Refuse-to-start on default secrets (SEC-3, plan)** — the
    Python scorer's `Settings` class (`src/config/__init__.py`)
    validates `JWT_SECRET != "default-secret-change-me"` and
-   `RAZORPAY_WEBHOOK_SECRET != "default"` at startup; if either
+   `PAYTM_WEBHOOK_SECRET != "default"` at startup; if either
    check fails, the process exits non-zero with a clear error.
    Status: `plan` — today the scorer starts with any value
    (including empty string), which is a security risk.

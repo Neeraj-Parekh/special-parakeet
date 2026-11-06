@@ -43,7 +43,7 @@ a flash sale (the canonical RTO spike scenario — Diwali, Big Billion
 Days) would either:
 
 1. Reject every order during the outage window → merchant revenue
-   loss → the merchant churns to Razorpay's old pincode-only product.
+   loss → the merchant churns to a competitor's pincode-only product.
 2. Fail-open and ACCEPT every order during the outage → the merchant
    takes the RTO loss on every fraudulent order placed during the
    window.

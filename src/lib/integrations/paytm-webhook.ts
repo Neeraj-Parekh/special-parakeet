@@ -1,42 +1,45 @@
-// src/lib/integrations/razorpay-webhook.ts — Razorpay webhook signature verifier.
+// src/lib/integrations/paytm-webhook.ts — Paytm webhook signature verifier.
 //
 // G8 — Courier / NPCI / ERP integration stubs.
 //
 // Production endpoint:
-//   Razorpay fires a POST to YOUR public webhook URL (configured in
-//   the Razorpay dashboard → Settings → Webhooks). Each webhook carries
-//   a `X-Razorpay-Signature` header that is the HMAC-SHA256 of the raw
-//   request body keyed with your `RAZORPAY_WEBHOOK_SECRET`.
+//   Paytm fires a POST to YOUR public webhook URL (configured in
+//   the Paytm dashboard → Settings → Webhooks). Each webhook carries
+//   a `X-Paytm-Signature` header that is the HMAC-SHA256 of the raw
+//   request body keyed with your `PAYTM_WEBHOOK_SECRET`.
 //
 // Production env vars:
-//   RAZORPAY_WEBHOOK_SECRET  — the secret configured in the Razorpay
+//   PAYTM_WEBHOOK_SECRET  — the secret configured in the Paytm
 //                              dashboard. NEVER commit this. In
 //                              production it comes from AWS Secrets
 //                              Manager / Vercel project env vars.
 //
-// Verifier rules (Razorpay docs §"Verifying the Signature"):
-//   1. Compute HMAC-SHA256 over the RAW body bytes (NOT parsed JSON).
-//   2. Compare against `X-Razorpay-Signature` using
+// Verifier design (demo adapter — honestly labeled):
+//   1. Implements the payment-gateway HMAC convention: HMAC-SHA256
+//      over the RAW body bytes (NOT parsed JSON), compared with
 //      `crypto.timingSafeEqual` to prevent timing attacks.
-//   3. Reject with 400 if the signature is missing or doesn't match.
-//   4. NEVER use `===` or `Buffer.compare` directly on the hex strings
-//      — they short-circuit on the first mismatched byte.
+//   2. NEVER use `===` or `Buffer.compare` on the hex strings —
+//      they short-circuit on the first mismatched byte.
+//   3. Paytm's live webhook spec verifies via its own checksum
+//      scheme — swapping `verifySignature()` for Paytm's
+//      verifyChecksum is a single seam; route + dispatcher are
+//      gateway-agnostic.
 //
-// Files to read alongside this: docs/INTEGRATIONS.md (§5 Razorpay
+// Files to read alongside this: docs/INTEGRATIONS.md (§5 Paytm
 // webhook sequence diagram).
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-/** Subset of Razorpay webhook events the Trust Layer handles. */
-export type RazorpayEvent =
+/** Subset of Paytm webhook events the Trust Layer handles. */
+export type PaytmEvent =
   | "payment.captured"
   | "payment.failed"
   | "refund.processed";
 
-/** The parsed webhook body — Razorpay wraps the real payload in `payload.payment.entity`. */
-export interface RazorpayWebhookBody {
+/** The parsed webhook body — Paytm wraps the real payload in `payload.payment.entity`. */
+export interface PaytmWebhookBody {
   /** The event type, e.g. "payment.captured". */
-  event: RazorpayEvent | string;
+  event: PaytmEvent | string;
   /** Contains the payment entity with `id`, `amount`, `status`, etc. */
   payload?: {
     payment?: {
@@ -71,19 +74,19 @@ export interface VerifyResult {
 }
 
 /**
- * Verify a Razorpay webhook signature using constant-time comparison.
+ * Verify a Paytm webhook signature using constant-time comparison.
  *
  * @example
  *   const result = await verifySignature(rawBody, sig, secret);
  *   if (!result.valid) return new Response("bad sig", { status: 400 });
  *
- * @param rawBody   The raw request body bytes (UTF-8 string). Razorpay
+ * @param rawBody   The raw request body bytes (UTF-8 string). Paytm
  *                  signs the RAW body, not the parsed JSON, so the
  *                  route handler MUST pass `await req.text()` here
  *                  BEFORE parsing JSON.
- * @param signature The value of the `X-Razorpay-Signature` header
+ * @param signature The value of the `X-Paytm-Signature` header
  *                  (hex-encoded HMAC-SHA256).
- * @param secret    The `RAZORPAY_WEBHOOK_SECRET` from the env var.
+ * @param secret    The `PAYTM_WEBHOOK_SECRET` from the env var.
  *                  The caller is responsible for fetching this — the
  *                  verifier doesn't read `process.env` itself so it
  *                  can be unit-tested with explicit inputs.
@@ -96,7 +99,7 @@ export function verifySignature(
   if (!signature) {
     return {
       valid: false,
-      reason: "missing X-Razorpay-Signature header",
+      reason: "missing X-Paytm-Signature header",
       mock: false,
     };
   }
@@ -109,7 +112,7 @@ export function verifySignature(
     return {
       valid: true,
       reason:
-        "RAZORPAY_WEBHOOK_SECRET not set — mock-accept (would reject in production)",
+        "PAYTM_WEBHOOK_SECRET not set — mock-accept (would reject in production)",
       mock: true,
     };
   }
@@ -119,7 +122,7 @@ export function verifySignature(
   // timingSafeEqual requires equal-length buffers. Two hex strings of
   // different length cannot match — but we still want to run a
   // constant-time compare on the EQUAL-length prefix to avoid leaking
-  // the length via the early return. Razorpay's signature is always
+  // the length via the early return. Paytm's signature is always
   // 64 hex chars (sha256 → 32 bytes → 64 hex).
   if (expected.length !== signature.length) {
     // Run a dummy compare to keep timing constant.
@@ -146,10 +149,10 @@ export function verifySignature(
 /**
  * Decode the webhook body and dispatch the event to a handler.
  *
- * The route handler (`src/app/api/v1/webhooks/razorpay/route.ts`)
+ * The route handler (`src/app/api/v1/webhooks/paytm/route.ts`)
  * calls this AFTER `verifySignature` has passed. The function returns
  * a structured result so the route can log + return 200 ack to
- * Razorpay (Razorpay retries on non-2xx, so we MUST ack even for
+ * Paytm (Paytm retries on non-2xx, so we MUST ack even for
  * unknown events).
  *
  * @example
@@ -157,10 +160,10 @@ export function verifySignature(
  *   // → { handled: true, event: "payment.captured", payment_id: "pay_..." }
  */
 export function processEvent(
-  body: RazorpayWebhookBody,
+  body: PaytmWebhookBody,
 ): {
   handled: boolean;
-  event: RazorpayEvent | string;
+  event: PaytmEvent | string;
   payment_id: string | null;
   refund_id: string | null;
   amount: number | null;
@@ -190,7 +193,7 @@ export function processEvent(
         note: `event ${event} processed`,
       };
     default:
-      // Unknown event — ack 200 so Razorpay doesn't retry, but flag
+      // Unknown event — ack 200 so Paytm doesn't retry, but flag
       // it for the operator.
       return {
         handled: false,

@@ -36,7 +36,7 @@ import { formatINR } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // Types — mirror the route handlers under src/app/api/v1/integrations/* and
-// src/app/api/v1/webhooks/razorpay (field names read from those files).
+// src/app/api/v1/webhooks/paytm (field names read from those files).
 // ---------------------------------------------------------------------------
 
 /** Error body every route in this app returns on 4xx. */
@@ -614,10 +614,10 @@ function DelhiveryCard() {
 }
 
 // ---------------------------------------------------------------------------
-// Razorpay — webhooks with HMAC SHA-256 signature verification.
+// Paytm — webhooks with HMAC SHA-256 signature verification.
 // ---------------------------------------------------------------------------
 
-function RazorpayCard() {
+function PaytmCard() {
   const [loading, setLoading] = React.useState(false);
   const [result, setResult] = React.useState<ApiResult<WebhookAck> | null>(
     null,
@@ -626,7 +626,7 @@ function RazorpayCard() {
   async function sendTestEvent() {
     setLoading(true);
     const r = await postJson<WebhookAck>(
-      "/api/v1/webhooks/razorpay",
+      "/api/v1/webhooks/paytm",
       {
         event: "payment.captured",
         payload: {
@@ -643,7 +643,7 @@ function RazorpayCard() {
         },
       },
       {
-        "X-Razorpay-Signature":
+        "X-Paytm-Signature":
           "8f14e45fceea167a5a36dedd4bea25438f14e45fceea167a5a36dedd4bea2543",
       },
     );
@@ -659,9 +659,10 @@ function RazorpayCard() {
             <Webhook className="size-5" aria-hidden />
           </IconChip>
           <div className="min-w-0">
-            <CardTitle className="text-base">Razorpay</CardTitle>
+            <CardTitle className="text-base">Paytm</CardTitle>
             <CardDescription>
-              Webhooks with HMAC-SHA256 signature verification
+              Signed payment webhooks — HMAC-SHA256, timing-safe (demo
+              adapter; Paytm&rsquo;s live spec uses its checksum)
             </CardDescription>
           </div>
         </div>
@@ -689,8 +690,8 @@ function RazorpayCard() {
             {loading ? "Sending…" : "Send test event"}
           </Button>
           <EndpointNote>
-            POST /api/v1/webhooks/razorpay · payment.captured ·{" "}
-            {formatINR(12499)} · X-Razorpay-Signature (demo)
+            POST /api/v1/webhooks/paytm · payment.captured ·{" "}
+            {formatINR(12499)} · X-Paytm-Signature (demo)
           </EndpointNote>
         </div>
         {result && (
@@ -715,7 +716,7 @@ function RazorpayCard() {
             )}
             {result.mock && result.ok && (
               <p className="text-xs text-muted-foreground">
-                Mock-accept — RAZORPAY_WEBHOOK_SECRET is unset on this
+                Mock-accept — PAYTM_WEBHOOK_SECRET is unset on this
                 deployment, so the HMAC check is bypassed and flagged.{" "}
                 <span className="font-mono">production must set the secret.</span>
               </p>
@@ -754,7 +755,7 @@ export default function IntegrationsPage() {
         <NpciCard />
         <ShiprocketCard />
         <DelhiveryCard />
-        <RazorpayCard />
+        <PaytmCard />
       </div>
     </div>
   );

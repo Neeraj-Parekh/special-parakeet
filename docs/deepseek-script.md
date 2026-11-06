@@ -39,7 +39,7 @@
 **VOICE:**
 > A naive version of this is one model behind one API—and at real volume it breaks three specific ways: attackers probe the threshold until they find it, one write race corrupts a mandate counter, and a regulator asks for proof of a decision that only ever existed as a log line. So here's what actually holds up.
 
-> Here's the production system, left to right. This is the target architecture—the one a Razorpay-scale deploy would run.
+> Here's the production system, left to right. This is the target architecture—the one a Paytm-scale deploy would run.
 
 > A scoring request hits the gateway. First: per-IP sliding-window rate limiting, then the deterministic rule engine—four pre-screens with every monetary threshold randomized plus-or-minus five hundred rupees. That's model-extraction defense; attackers probing the boundary get noise.
 

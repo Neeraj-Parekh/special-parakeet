@@ -1,9 +1,9 @@
-# Integrations — Courier / NPCI / Razorpay / ERP
+# Integrations — Courier / NPCI / Paytm / ERP
 
 > **G8 — production-credible integration stubs.**
 >
 > Per the project owner: *"same with NPCI, courier ERP integration,
-> we can show we have option to integrate Razorpay etc. stuff."*
+> we can show we have option to integrate Paytm etc. stuff."*
 >
 > This doc explains every integration shipped in this repo, the
 > production endpoint it wraps, the env vars needed, the mock
@@ -19,11 +19,11 @@
 | `src/lib/integrations/shiprocket.ts` | Shiprocket courier serviceability | `validatePincode(pincode)` |
 | `src/lib/integrations/delhivery.ts` | Delhivery AWB tracking | `track(awb)` |
 | `src/lib/integrations/npci.ts` | NPCI UPI Circle mandate (OC-201B) | `createMandate(input)` |
-| `src/lib/integrations/razorpay-webhook.ts` | Razorpay webhook verifier + dispatcher | `verifySignature(body, sig, secret)`, `processEvent(body)` |
+| `src/lib/integrations/paytm-webhook.ts` | Paytm webhook verifier + dispatcher | `verifySignature(body, sig, secret)`, `processEvent(body)` |
 | `src/app/api/v1/integrations/shiprocket/validate-pincode/[pincode]/route.ts` | HTTP route | `GET` |
 | `src/app/api/v1/integrations/delhivery/track/route.ts` | HTTP route | `POST {awb}` |
 | `src/app/api/v1/integrations/npci/mandate/route.ts` | HTTP route | `POST {customer_id, amount_cap_inr, frequency}` |
-| `src/app/api/v1/webhooks/razorpay/route.ts` | HTTP route | `POST` (Razorpay-fired) |
+| `src/app/api/v1/webhooks/paytm/route.ts` | HTTP route | `POST` (Paytm-fired) |
 
 The libs are real TypeScript with deterministic mocks. The route
 handlers wrap the libs with `NextRequest` / `NextResponse` /
@@ -195,15 +195,15 @@ curl -X POST https://rto-trust-layer.vercel.app/api/v1/integrations/npci/mandate
 
 ---
 
-## 5. Razorpay — webhook signature verifier + event dispatcher
+## 5. Paytm — webhook signature verifier + event dispatcher
 
-**Production endpoint** — Razorpay fires a POST to YOUR public
-webhook URL (configured in the Razorpay dashboard → Settings →
+**Production endpoint** — Paytm fires a POST to YOUR public
+webhook URL (configured in the Paytm dashboard → Settings →
 Webhooks). The Trust Layer's receiver is
-`/api/v1/webhooks/razorpay`.
+`/api/v1/webhooks/paytm`.
 
 **Env vars:**
-- `RAZORPAY_WEBHOOK_SECRET` — the secret configured in the Razorpay
+- `PAYTM_WEBHOOK_SECRET` — the secret configured in the Paytm
   dashboard. NEVER commit. In production it comes from AWS Secrets
   Manager or Vercel project env vars. If unset, the verifier
   mock-accepts the webhook AND sets `X-Mock-Mode: true` + logs a
@@ -211,11 +211,11 @@ Webhooks). The Trust Layer's receiver is
 
 **Verification flow:**
 1. The route reads the RAW body bytes via `await req.text()` BEFORE
-   parsing JSON. Razorpay signs the wire bytes, not the parsed
+   parsing JSON. Paytm signs the wire bytes, not the parsed
    object.
 2. `verifySignature(rawBody, signature, secret)` computes
    `HMAC-SHA256(rawBody, secret)` and compares the hex digest against
-   the `X-Razorpay-Signature` header using `crypto.timingSafeEqual`.
+   the `X-Paytm-Signature` header using `crypto.timingSafeEqual`.
 3. Equal-length buffers are required for `timingSafeEqual`; if the
    signature length differs, the verifier runs a dummy compare to
    keep timing constant and returns `valid:false`.
@@ -228,16 +228,16 @@ Webhooks). The Trust Layer's receiver is
 | `payment.captured` | Mark order prepaid | Clears the COD RTO risk — the order is now prepaid |
 | `payment.failed` | Flag order for follow-up | Merchant's checkout decides whether to retry or cancel |
 | `refund.processed` | Close the RTO risk window | Refund implies order closed; no RTO loss possible |
-| (unknown) | Ack 200, log for operator | Razorpay retries on non-2xx — we MUST ack |
+| (unknown) | Ack 200, log for operator | Paytm retries on non-2xx — we MUST ack |
 
 **Sequence diagram (ASCII):**
 ```
-   Razorpay            Trust Layer API          NPCI / DB
+   Paytm            Trust Layer API          NPCI / DB
        │                     │                      │
        │   POST /webhooks/   │                      │
-       │   razorpay          │                      │
+       │   paytm          │                      │
        │   (raw body +       │                      │
-       │    X-Razorpay-      │                      │
+       │    X-Paytm-      │                      │
        │    Signature)       │                      │
        │────────────────────▶│                      │
        │                     │                      │
@@ -269,13 +269,13 @@ Webhooks). The Trust Layer's receiver is
        │   acked)            │                      │
 ```
 
-**Mock behavior** — when `RAZORPAY_WEBHOOK_SECRET` is unset, the
+**Mock behavior** — when `PAYTM_WEBHOOK_SECRET` is unset, the
 verifier returns `{ valid: true, mock: true, reason: "...mock-accept..." }`
 and the route sets `X-Mock-Mode: true`. A judge can POST any body
-and see the dispatcher work without needing a real Razorpay secret.
+and see the dispatcher work without needing a real Paytm secret.
 
-**Production swap** — set `RAZORPAY_WEBHOOK_SECRET` in the Vercel
-project env vars (matching the secret configured in the Razorpay
+**Production swap** — set `PAYTM_WEBHOOK_SECRET` in the Vercel
+project env vars (matching the secret configured in the Paytm
 dashboard). The code path is identical — the only change is
 `verify.mock` flips to `false`.
 
@@ -286,13 +286,13 @@ project's quality bar: no unvetted crypto dependencies.
 **Demo endpoint:**
 ```bash
 # Valid body, no secret set → mock-accept (X-Mock-Mode: true)
-curl -X POST https://rto-trust-layer.vercel.app/api/v1/webhooks/razorpay \
+curl -X POST https://rto-trust-layer.vercel.app/api/v1/webhooks/paytm \
   -H 'Content-Type: application/json' \
-  -H 'X-Razorpay-Signature: dummy' \
+  -H 'X-Paytm-Signature: dummy' \
   -d '{"event":"payment.captured","payload":{"payment":{"entity":{"id":"pay_demo","amount":240000,"status":"captured"}}}}'
 
 # Missing signature header → 400
-curl -X POST https://rto-trust-layer.vercel.app/api/v1/webhooks/razorpay \
+curl -X POST https://rto-trust-layer.vercel.app/api/v1/webhooks/paytm \
   -H 'Content-Type: application/json' \
   -d '{"event":"payment.captured"}'
 ```
@@ -305,11 +305,11 @@ curl -X POST https://rto-trust-layer.vercel.app/api/v1/webhooks/razorpay \
   restricts egress to DB + Kafka only. The integration endpoints
   listed here require their own egress allow-rules in production
   (e.g. add `to: api.npci.in` for the NPCI mandate call).
-- `docs/SECURITY_HARDENING.md` — the Razorpay webhook verifier is the
+- `docs/SECURITY_HARDENING.md` — the Paytm webhook verifier is the
   pattern every future inbound webhook should follow (constant-time
   compare, raw body capture, no third-party crypto).
 - `docs/STREAMING_ARCHITECTURE.md` — the `payment.captured` event from
-  Razorpay is also published to the streaming seam so the dashboard's
+  Paytm is also published to the streaming seam so the dashboard's
   "Recent Decisions" panel updates in real time.
 - `docs/RULE_DSL.md` — the rule DSL can reference the integration
   results (e.g. `pincode NOT_SERVICEABLE` could be a rule predicate in

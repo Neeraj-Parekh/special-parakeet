@@ -16,7 +16,7 @@ const SECRET_KEY_PATTERNS = [
   /^secret$/i,
   /^api[_-]?key$/i,
   /^jwt[_-]?secret$/i,
-  /^razorpay[_-]?webhook[_-]?secret$/i,
+  /^paytm[_-]?webhook[_-]?secret$/i,
   /^refresh[_-]?token$/i,
   /^access[_-]?token$/i,
 ];
@@ -26,7 +26,7 @@ const SECRET_VALUE_PATTERNS = [
   /^Bearer\s+\S+$/i,
   // JWTs (3 base64 segments).
   /^eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/,
-  // Razorpay keys.
+  // Paytm keys.
   /^rzp_(test|live)_[A-Za-z0-9]{16,}$/,
   // AWS keys.
   /^AKIA[0-9A-Z]{16}$/,

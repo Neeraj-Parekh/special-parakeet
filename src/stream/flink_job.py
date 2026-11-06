@@ -4,7 +4,7 @@ RTO Trust Layer — PyFlink CEP topology (production transport).
 ARCHITECTURE NOTE — this file is NOT executed in the hackathon runtime.
 The Next.js Vercel deployment is a single-binary TS app. This file is
 the architecture-reference artifact showing exactly what the production
-real-time fraud detection topology looks like in a Razorpay-grade deploy.
+real-time fraud detection topology looks like in a Paytm-grade deploy.
 
 The hackathon runs the SAME CEP pattern in TS at
 src/lib/streaming/redis-stream.ts::detectRapidRejects — same predicate

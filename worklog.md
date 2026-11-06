@@ -4206,3 +4206,24 @@ Stage Summary:
 - TIER 3 (docs only): tier3-C LATENCY_ENGINEERING.md (honest 40-70ms p50 ceiling + Phase 5 Go/Rust+io_uring+DPDK plan, busy-wait explicitly out-of-scope) + ARCHITECTURE_OVERVIEW.md + SECURITY_HARDENING.md (STRIDE threat model + 10-item honest gap list).
 - The deployed Vercel app (https://rto-trust-layer.vercel.app) needs redeploy to pick up these changes + JWT_SECRET env var set. The honest story for the 10-min video: TIER 1 is fully working (login→JWT→score→case→graph→features all live), TIER 2 endpoints respond 200 with committed code + architecture docs, TIER 3 is the documented post-funding latency sprint.
 - No blockers. All endpoints verified live. Lint clean on src/.
+
+---
+Task ID: paytm-rebrand-1
+Agent: main (Z.ai Code)
+Task: Rebrand the gateway-integration surface from Razorpay to Paytm for the Paytm Build for India AI Hackathon (Track 1: Merchant Growth AI), make the repo pushable, ship to production if possible.
+
+Work Log:
+- Token status: BOTH credentials dead as of Nov 6 — Vercel token (worked Sep 7) now returns 403 invalidToken:true; GitHub PAT still 401. No stored credentials anywhere in the sandbox (.env has only DATABASE_URL). No deploy/push possible from sandbox until fresh tokens.
+- Discovered the branch had been moved to a diverged lineage (parkeet/main objects even GC'd locally): user's local agent committed b61d049 (Nov 6 06:02: PROJECT_REPORT.pdf 12.7MB, agent-verify screenshots, chmod) on the pre-reset 3480a9f lineage. Verified via fetch + git diff that local is a CONTENT SUPERSET of remote (zero deletions, no credential leaks in additions — the TIER 1+2+3 work, research docs, and PDFs were never pushed). Fixed with `git merge -s ours parkeet/main` (4d702a8) — push is now a clean fast-forward.
+- Found and fixed a broken dev server: stray duplicate top-level route dirs (src/app/audit, /rules, /model-health — tracked, identical to (console) versions, leftovers of the Aug-27 route-group restructure) made turbopack dev 500 every page ("two parallel pages"). Removed in fb26d26. All pages 200 again.
+- Paytm rebrand (346b3c0) — 22 files, zero Razorpay/AdaDSL mentions left in src/README/docs (excl. archive):
+  * git mv: razorpay-webhook.ts -> paytm-webhook.ts; api/v1/webhooks/razorpay -> api/v1/webhooks/paytm. Headers X-Paytm-Signature, env PAYTM_WEBHOOK_SECRET, types PaytmEvent/PaytmWebhookBody.
+  * Case-consistent swap (RAZORPAY/Razorpay/razorpay -> PAYTM/Paytm/paytm) across src (13 files) + README + 8 top-level docs, then 9 hand-fixes where naive swap read wrong: README narrative de-Razorpay'd (no digs at host), MULTI_AZ "churns to a competitor's product", LATENCY "Top-tier Indian PG p99 target", AdaDSL attributions removed, SECURITY_HARDENING §4 citation -> developer.paytm.com + adapter-honesty note, webhook lib header relabeled "demo adapter — honestly labeled" (HMAC-SHA256 convention vs Paytm's checksum spec; single-seam swap).
+  * Integrations card now "Paytm — Signed payment webhooks — HMAC-SHA256, timing-safe (demo adapter)". narrative-pivot-card keeps the deliberate pitch line "Paytm has this data; we built the platform to use it."
+- Sandbox junk untracked: .zscripts/, Caddyfile (git rm --cached + .gitignore); .zscripts/dev.pid was being committed. vercel.json git.deploymentEnabled:false REMOVED again (it had returned via the old lineage) — 9450a20.
+- Verification (local dev): all pages 200; POST /api/v1/webhooks/paytm missing-sig -> 400, fake-sig -> 200 mock-accept (X-Mock-Mode), old /razorpay route -> 404; lint clean for changed files (5 pre-existing problems are in upload/ + design-kit/ only).
+- NOT deployed: rto-trust-layer.vercel.app still serves b1b5d0c (Razorpay era) until a push (auto-deploy now enabled) or a fresh Vercel token deploy.
+
+Stage Summary:
+- Repo state: main = remote + 4d702a8 (ours-merge) + fb26d26 (route fix) + 346b3c0 (Paytm rebrand) + 9450a20 (tooling/vercel.json). Clean fast-forward push pending credentials. Local dev fully Paytm-branded and verified.
+- To go live: (a) fresh GitHub PAT -> git push parkeet main (auto-deploy fires), or (b) fresh Vercel token -> vercel deploy --prod. Live site still shows Razorpay until then.

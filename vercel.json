@@ -3,8 +3,5 @@
   "framework": "nextjs",
   "buildCommand": "next build",
   "devCommand": "next dev",
-  "installCommand": "bun install",
-  "git": {
-    "deploymentEnabled": false
-  }
+  "installCommand": "bun install"
 }

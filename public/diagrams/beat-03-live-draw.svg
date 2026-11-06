@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="780" viewBox="0 0 1180 780" role="img" aria-label="BEAT 3 live-draw storyboard">
+  <rect x="0" y="0" width="1180" height="780" fill="#F6F8FC"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#02042B"/>
+  <text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">BEAT 3</text>
+  <text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#1A2233">Act 1 — the production architecture, live-drawn</text>
+  <rect x="1016" y="43" width="116" height="20" rx="10" fill="#5B6478" fill-opacity="0.08"/><text x="1074" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#5B6478" text-anchor="middle">BYTEBYTEGO + ARPIT</text>
+  <rect x="942" y="43" width="66" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="975" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">0:45–2:25</text>
+<rect x="48" y="120" width="1084" height="56" rx="8" fill="#E5484D" fill-opacity="0.04" stroke="#E5484D" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="64" y="154" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#E5484D">WHY THE NAIVE VERSION BREAKS</text>
+<rect x="330" y="138" width="111" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="385.5" y="151.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#E5484D" text-anchor="middle">THRESHOLD PROBING</text>
+<rect x="496" y="138" width="144" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="568" y="151.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#E5484D" text-anchor="middle">WRITE RACES ON COUNTERS</text>
+<rect x="700" y="138" width="161" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="780.5" y="151.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#E5484D" text-anchor="middle">NO PROOF FOR THE REGULATOR</text>
+<text x="48" y="212" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Draw with the narration — one box per sentence:</text>
+<rect x="48" y="240" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="262" r="10" fill="#02042B"/><text x="76" y="266" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">1</text>
+<text x="100" y="267" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Gateway</text>
+<text x="380" y="267" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">per-IP sliding-window rate limiting</text>
+<rect x="48" y="292" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="314" r="10" fill="#02042B"/><text x="76" y="318" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">2</text>
+<text x="100" y="319" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Rule engine</text>
+<text x="380" y="319" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">4 pre-screens · thresholds ±₹500 — probes get noise</text>
+<rect x="48" y="344" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="366" r="10" fill="#02042B"/><text x="76" y="370" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">3</text>
+<text x="100" y="371" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Mandate check</text>
+<text x="380" y="371" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">OC-201B: ₹5k/txn · ₹15k/mo · 24h cooling · 6-mo revoke</text>
+<rect x="48" y="396" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="418" r="10" fill="#02042B"/><text x="76" y="422" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">4</text>
+<text x="100" y="423" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Inference</text>
+<text x="380" y="423" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">79 leak-safe features · ONNX 1.6 µs/row · XGBoost 94%</text>
+<rect x="48" y="448" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="470" r="10" fill="#02042B"/><text x="76" y="474" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">5</text>
+<text x="100" y="475" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Decision</text>
+<text x="380" y="475" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">Bahnsen costs — accept ₹248 · review ₹99 · reject ₹980</text>
+<rect x="48" y="500" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="522" r="10" fill="#02042B"/><text x="76" y="526" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">6</text>
+<text x="100" y="527" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Platform</text>
+<text x="380" y="527" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">Go/Rust hot path · multi-AZ leader/replicas</text>
+<rect x="48" y="552" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="574" r="10" fill="#02042B"/><text x="76" y="578" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">7</text>
+<text x="100" y="579" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Streaming</text>
+<text x="380" y="579" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">Kafka 24p Avro · Flink CEP · ClickHouse MVs</text>
+<rect x="48" y="604" width="1084" height="44" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<circle cx="76" cy="626" r="10" fill="#02042B"/><text x="76" y="630" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">8</text>
+<text x="100" y="631" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Trust</text>
+<text x="380" y="631" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">every decision is a Merkle leaf</text>
+<rect x="835" y="672" width="297" height="20" rx="10" fill="#02042B" fill-opacity="0.08"/><text x="983.5" y="685.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">NUMBERS ARE PRINTED ON FIG.02 — DRAW IN THIS ORDER</text>
+<rect x="48" y="700" width="27" height="18" rx="9" fill="#02042B" fill-opacity="0.08"/><text x="61.5" y="712.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">VO</text>
+  <text x="94" y="713" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">A naive version of this is one model behind one API—and at real volume it breaks three specific ways: attackers probe the threshold until they find it, one write race corrupts a mandate counter, and a</text>
+  <text x="94" y="727" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">regulator asks for proof of a decision that only ever existed as a log line. So here&apos;s what actually holds up.</text>
+<text x="48" y="756" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">was: vision_production_stack.excalidraw · live-draw · full narration maps 1:1 onto FIG.02</text>
+</svg>

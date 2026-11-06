@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="560" viewBox="0 0 1180 560" role="img" aria-label="Beat 8 — Close">
+  <rect x="0" y="0" width="1180" height="560" fill="#F6F8FC"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#02042B"/>
+  <text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">BEAT 8</text>
+  <text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#1A2233">Close</text>
+  <rect x="1071" y="43" width="61" height="20" rx="10" fill="#5B6478" fill-opacity="0.08"/><text x="1101.5" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#5B6478" text-anchor="middle">FIRESHIP</text>
+  <rect x="997" y="43" width="66" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="1030" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">4:48–5:00</text>
+  <rect x="140" y="132" width="900" height="300" rx="16" fill="#02042B"/>
+  <text x="590" y="200" font-family="Inter, Roboto, sans-serif" font-size="34" font-weight="700" fill="#FFFFFF" text-anchor="middle" letter-spacing="2">RTO TRUST LAYER</text>
+  <text x="590" y="250" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="13" font-weight="400" fill="#FFFFFF" text-anchor="middle">github.com/Neeraj-Parekh/special-parakeet</text>
+  <text x="590" y="276" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="13" font-weight="400" fill="#FFFFFF" text-anchor="middle">rto-trust-layer.vercel.app</text>
+  <rect x="456" y="304" width="268" height="20" rx="10" fill="#00B878"/><text x="590" y="317.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#FFFFFF" text-anchor="middle">repo public · console live · tests green</text>
+  <text x="590" y="368" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="400" fill="#FFFFFF" text-anchor="middle">Try it, break it, check the audit trail.</text>
+  <rect x="48" y="520" width="59" height="20" rx="10" fill="#5B6478" fill-opacity="0.08"/><text x="77.5" y="533.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#5B6478" text-anchor="middle">NO FADE</text>
+  <rect x="1067" y="520" width="65" height="20" rx="10" fill="#5B6478" fill-opacity="0.08"/><text x="1099.5" y="533.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#5B6478" text-anchor="middle">HARD CUT</text>
+  <rect x="48" y="470" width="27" height="18" rx="9" fill="#02042B" fill-opacity="0.08"/><text x="61.5" y="482.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">VO</text>
+  <text x="94" y="483" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">We didn&apos;t just design the production system. We built the part that matters most—the trust core, the working detector, the audit trail—and we know</text>
+  <text x="94" y="497" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">exactly how to take it to production. Repo&apos;s public, console is live, tests are green. Try it, break it, check the audit trail.</text>
+</svg>

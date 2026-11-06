@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="660" viewBox="0 0 1180 660" role="img" aria-label="Beat 2 — Problem, framed like a design review">
+  <rect x="0" y="0" width="1180" height="660" fill="#F6F8FC"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#02042B"/>
+  <text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">BEAT 2</text>
+  <text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#1A2233">Problem — framed like a design review</text>
+  <rect x="1060" y="43" width="72" height="20" rx="10" fill="#5B6478" fill-opacity="0.08"/><text x="1096" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#5B6478" text-anchor="middle">GAURAV SEN</text>
+  <rect x="986" y="43" width="66" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="1019" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">0:15–0:45</text>
+  <rect x="48" y="120" width="1084" height="72" rx="8" fill="#FFFFFF" stroke="#02042B" stroke-width="1.5"/>
+  <text x="64" y="146" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">The goal is not &quot;reduce returns&quot; — nobody can.</text>
+  <text x="64" y="167" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="400" fill="#5B6478">The goal: at checkout, in ≤75 ms, decide whether this order is worth shipping —</text>
+  <text x="64" y="184" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="400" fill="#5B6478">with a cost-optimal decision, an explanation the merchant can act on, and a receipt a regulator can verify.</text>
+  <rect x="48" y="232" width="520" height="280" rx="12" fill="#E5484D" fill-opacity="0.04" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="64" y="256" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#E5484D" letter-spacing="1">TODAY — SHIP FIRST, DISCOVER LATER</text>
+  <rect x="612" y="232" width="520" height="280" rx="12" fill="#00B878" fill-opacity="0.04" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="628" y="256" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#00B878" letter-spacing="1">TARGET — SCORE AT PLACEMENT</text>
+  <rect x="64" y="296" width="148" height="64" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(72,310)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#E5484D" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#E5484D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17h4V5H2v12h3"/><path d="M20 17h2v-3.3a4 4 0 0 0-1.2-2.8L19 9h-5v8h2"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></g></g>
+  <text x="116" y="322.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">Merchant ships</text>
+  <text x="116" y="336.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">everything</text>
+  <rect x="234" y="296" width="148" height="64" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(242,310)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#E5484D" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#E5484D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="M3 8l9 5 9-5"/><path d="M12 13v8"/></g></g>
+  <text x="286" y="322.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">Courier</text>
+  <text x="286" y="336.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">attempts COD</text>
+  <rect x="404" y="296" width="148" height="64" rx="8" fill="#FFFFFF" stroke="#E5484D" stroke-width="1.5"/>
+  <g transform="translate(412,310)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#E5484D" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#E5484D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 21h20L12 3z"/><path d="M12 10v4"/><path d="M12 17.5h.01"/></g></g>
+  <text x="456" y="322.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">Bounce found</text>
+  <text x="456" y="336.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">t+14 days</text>
+  <path d="M212 328 L234 328" fill="none" stroke="#E5484D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M227.5 331.9 L234 328 L227.5 324.1 Z" fill="#E5484D"/>
+  <path d="M382 328 L404 328" fill="none" stroke="#E5484D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M397.5 331.9 L404 328 L397.5 324.1 Z" fill="#E5484D"/>
+  <rect x="208" y="388" width="113" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="264.5" y="401.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#E5484D" text-anchor="middle">double shipping</text>
+  <rect x="333" y="388" width="76" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="371" y="401.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#E5484D" text-anchor="middle">lost sale</text>
+  <rect x="198" y="416" width="94" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="245" y="429.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#E5484D" text-anchor="middle">refund fight</text>
+  <rect x="304" y="416" width="113" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="360.5" y="429.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#E5484D" text-anchor="middle">no proof of why</text>
+  <path d="M138 360 L138 484" fill="none" stroke="#E5484D" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M478 360 L478 484" fill="none" stroke="#E5484D" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M138 484 L478 484" fill="none" stroke="#E5484D" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="308" y="478" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#E5484D" text-anchor="middle">14 blind days</text>
+  <rect x="628" y="296" width="210" height="64" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(636,310)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></g></g>
+  <text x="680" y="316.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">Checkout scores</text>
+  <text x="680" y="330.58" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#1A2233">every order</text>
+  <text x="680" y="344.58" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">≤75 ms at placement</text>
+  <path d="M838 328 L920 328" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="1000" y="276" width="96" height="44" rx="8" fill="#FFFFFF" stroke="#00B878" stroke-width="1.5"/>
+  <text x="1048" y="303" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#00B878" text-anchor="middle">ACCEPT</text>
+  <path d="M920 328 L920 298 L1000 298" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M993 302.2 L1000 298 L993 293.8 Z" fill="#00B878"/>
+  <rect x="1000" y="330" width="96" height="44" rx="8" fill="#FFFFFF" stroke="#F5A623" stroke-width="1.5"/>
+  <text x="1048" y="357" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#F5A623" text-anchor="middle">REVIEW + OTP</text>
+  <path d="M920 328 L920 352 L1000 352" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M993 356.2 L1000 352 L993 347.8 Z" fill="#F5A623"/>
+  <rect x="1000" y="384" width="96" height="44" rx="8" fill="#FFFFFF" stroke="#E5484D" stroke-width="1.5"/>
+  <text x="1048" y="411" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="600" fill="#E5484D" text-anchor="middle">REJECT</text>
+  <path d="M920 328 L920 406 L1000 406" fill="none" stroke="#E5484D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M993 410.2 L1000 406 L993 401.8 Z" fill="#E5484D"/>
+  <rect x="628" y="460" width="113" height="20" rx="10" fill="#00B878" fill-opacity="0.08"/><text x="684.5" y="473.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#00B878" text-anchor="middle">cost math shown</text>
+  <rect x="747" y="460" width="150" height="20" rx="10" fill="#00B878" fill-opacity="0.08"/><text x="822" y="473.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#00B878" text-anchor="middle">explanation to act on</text>
+  <rect x="909" y="460" width="194" height="20" rx="10" fill="#00B878" fill-opacity="0.08"/><text x="1006" y="473.6" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#00B878" text-anchor="middle">regulator-verifiable receipt</text>
+  <rect x="48" y="556" width="27" height="18" rx="9" fill="#02042B" fill-opacity="0.08"/><text x="61.5" y="568.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">VO</text>
+  <text x="94" y="569" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">Let me frame the problem the way we&apos;d frame it in a design review. The goal is not &quot;reduce returns&quot;—nobody can. The goal: at checkout time, in under</text>
+  <text x="94" y="583" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">seventy-five milliseconds, decide whether this order is worth shipping—and attach three things: a cost-optimal decision, an explanation the merchant can act on,</text>
+  <text x="94" y="597" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">and a receipt a regulator can verify.</text>
+  <text x="48" y="644" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">was: beat2_problem.excalidraw · two columns</text>
+</svg>

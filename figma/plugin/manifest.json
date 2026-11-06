@@ -1,0 +1,8 @@
+{
+  "name": "RTO Trust Layer — Board Builder",
+  "id": "rto-trust-layer-board-builder",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page"
+}

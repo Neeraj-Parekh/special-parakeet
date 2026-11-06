@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="700" viewBox="0 0 1180 700" role="img" aria-label="Beat 6 — The pivot: target vs shipped">
+  <rect x="0" y="0" width="1180" height="700" fill="#F6F8FC"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#02042B"/>
+  <text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">BEAT 6</text>
+  <text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#1A2233">The pivot — what we actually built</text>
+  <rect x="1066" y="43" width="66" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="1099" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">3:30–4:02</text>
+  <rect x="48" y="120" width="470" height="410" rx="12" fill="#02042B" fill-opacity="0.04" stroke="#B9C2D0" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="64" y="144" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#02042B" letter-spacing="1">TARGET — RAZORPAY-SCALE DEPLOY</text>
+  <rect x="646" y="120" width="486" height="410" rx="12" fill="#00B878" fill-opacity="0.04" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="662" y="144" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#00B878" letter-spacing="1">SHIPPED — EVERYTHING CLICKABLE</text>
+  <rect x="64" y="164" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="78" y="195" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Kafka · 24 partitions, Avro</text>
+  <rect x="370" y="181" width="100" height="18" rx="9" fill="#F5A623" fill-opacity="0.08"/><text x="420" y="193.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">documented plan</text>
+  <rect x="64" y="238" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="78" y="269" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Flink CEP · pattern watch</text>
+  <rect x="370" y="255" width="100" height="18" rx="9" fill="#F5A623" fill-opacity="0.08"/><text x="420" y="267.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">documented plan</text>
+  <rect x="64" y="312" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="78" y="343" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Multi-AZ · leader writes, replica reads</text>
+  <rect x="370" y="329" width="100" height="18" rx="9" fill="#F5A623" fill-opacity="0.08"/><text x="420" y="341.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">documented plan</text>
+  <rect x="64" y="386" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="78" y="417" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Go/Rust hot path · compiled</text>
+  <rect x="370" y="403" width="100" height="18" rx="9" fill="#F5A623" fill-opacity="0.08"/><text x="420" y="415.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">documented plan</text>
+  <rect x="64" y="460" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="78" y="491" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">kernel-bypass networking · &lt;10 ms</text>
+  <rect x="370" y="477" width="100" height="18" rx="9" fill="#F5A623" fill-opacity="0.08"/><text x="420" y="489.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">documented plan</text>
+  <rect x="662" y="164" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(676,172)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+  <text x="724" y="195" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Merkle audit chain — live, tested</text>
+  <rect x="662" y="238" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(676,246)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+  <text x="724" y="269" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Bounded agent — 7 actions, enforced</text>
+  <rect x="662" y="312" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(676,320)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+  <text x="724" y="343" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Dual-control override — two keys</text>
+  <rect x="662" y="386" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(676,394)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+  <text x="724" y="417" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Mandate caps — OC-201B fences</text>
+  <rect x="662" y="460" width="420" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <g transform="translate(676,468)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+  <text x="724" y="491" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">In-process CEP — demo detection</text>
+  <rect x="48" y="546" width="1084" height="72" rx="12" fill="#F5A623" fill-opacity="0.04" stroke="#B9C2D0" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="64" y="570" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#F5A623" letter-spacing="1">ONE DELIBERATE SEAM</text>
+  <text x="64" y="588" font-family="Inter, Roboto, sans-serif" font-size="11" font-weight="400" fill="#5B6478">Production runs Kafka + Flink. The demo runs the same detection logic on an in-process engine — Vercel can&apos;t host Kafka. Same alert, different transport.</text>
+  <rect x="48" y="636" width="27" height="18" rx="9" fill="#02042B" fill-opacity="0.08"/><text x="61.5" y="648.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">VO</text>
+  <text x="94" y="649" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">So that&apos;s the target architecture. Here&apos;s what we actually built—and every piece of it is clickable. The trust core is real: the Merkle chain, the bounded agent,</text>
+  <text x="94" y="663" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">dual-control override, the mandate caps—all live, all tested. The streaming has one deliberate seam: production runs Kafka and Flink; the demo runs the same detection</text>
+  <text x="94" y="677" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">logic on an in-process engine, because Vercel can&apos;t host Kafka. Same alert, different transport. Everything else on screen right now is running, not mocked.</text>
+</svg>

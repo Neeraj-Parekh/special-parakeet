@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-label="RTO Trust Layer — board cover">
+  <rect x="0" y="0" width="1280" height="640" fill="#F6F8FC"/>
+  <rect x="48" y="48" width="48" height="48" rx="12" fill="#02042B"/>
+<text x="72" y="76" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="12" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">RTO</text>
+<text x="116" y="84" font-family="Inter, Roboto, sans-serif" font-size="40" font-weight="700" fill="#1A2233">RTO Trust Layer</text>
+<text x="116" y="110" font-family="Inter, Roboto, sans-serif" font-size="15" font-weight="400" fill="#5B6478">COD return-risk platform · architecture &amp; pitch kit</text>
+<rect x="48" y="140" width="152" height="20" rx="10" fill="#2B84EB" fill-opacity="0.08"/><text x="124" y="153.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#2B84EB" text-anchor="middle">FIG.01–04 · ARCHITECTURE</text>
+<rect x="210" y="140" width="135" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="277.5" y="153.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">BEAT 1–8 · STORYBOARD</text>
+<rect x="355" y="140" width="124" height="20" rx="10" fill="#00B878" fill-opacity="0.08"/><text x="417" y="153.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#00B878" text-anchor="middle">5:00 PITCH · LOCKED</text>
+<rect x="489" y="140" width="146" height="20" rx="10" fill="#5B6478" fill-opacity="0.08"/><text x="562" y="153.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#5B6478" text-anchor="middle">INTER · 8PT GRID · FLAT</text>
+<text x="48" y="192" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">TOKENS — ONE SOURCE OF TRUTH (matches the console · globals.css)</text>
+<rect x="48" y="204" width="24" height="24" rx="6" fill="#02042B" stroke="#E3E8F0" stroke-width="1"/>
+<text x="60" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">navy-950</text>
+<rect x="84" y="204" width="24" height="24" rx="6" fill="#2B84EB" stroke="#E3E8F0" stroke-width="1"/>
+<text x="96" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">blue-500</text>
+<rect x="120" y="204" width="24" height="24" rx="6" fill="#528FF0" stroke="#E3E8F0" stroke-width="1"/>
+<text x="132" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">blue-400</text>
+<rect x="156" y="204" width="24" height="24" rx="6" fill="#00B878" stroke="#E3E8F0" stroke-width="1"/>
+<text x="168" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">mint-500</text>
+<rect x="192" y="204" width="24" height="24" rx="6" fill="#F5A623" stroke="#E3E8F0" stroke-width="1"/>
+<text x="204" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">amber-500</text>
+<rect x="228" y="204" width="24" height="24" rx="6" fill="#E5484D" stroke="#E3E8F0" stroke-width="1"/>
+<text x="240" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">red-500</text>
+<rect x="264" y="204" width="24" height="24" rx="6" fill="#F6F8FC" stroke="#E3E8F0" stroke-width="1"/>
+<text x="276" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">bg</text>
+<rect x="300" y="204" width="24" height="24" rx="6" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+<text x="312" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">card</text>
+<rect x="336" y="204" width="24" height="24" rx="6" fill="#E3E8F0" stroke="#E3E8F0" stroke-width="1"/>
+<text x="348" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">border</text>
+<rect x="372" y="204" width="24" height="24" rx="6" fill="#1A2233" stroke="#E3E8F0" stroke-width="1"/>
+<text x="384" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">text</text>
+<rect x="408" y="204" width="24" height="24" rx="6" fill="#5B6478" stroke="#E3E8F0" stroke-width="1"/>
+<text x="420" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">text-2</text>
+<rect x="444" y="204" width="24" height="24" rx="6" fill="#B9C2D0" stroke="#E3E8F0" stroke-width="1"/>
+<text x="456" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">dashed</text>
+<rect x="480" y="204" width="24" height="24" rx="6" fill="#94A3B8" stroke="#E3E8F0" stroke-width="1"/>
+<text x="492" y="242" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="8" font-weight="400" fill="#5B6478" text-anchor="middle">async</text>
+<text x="48" y="288" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">THE BOARD</text>
+<rect x="48" y="306" width="8" height="8" rx="2" fill="#02042B"/>
+<text x="68" y="314" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">00 COVER</text>
+<rect x="48" y="330" width="8" height="8" rx="2" fill="#02042B"/>
+<text x="68" y="338" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">01 TOKENS &amp; KIT</text>
+<rect x="48" y="354" width="8" height="8" rx="2" fill="#02042B"/>
+<text x="68" y="362" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">02 FIGURES · FIG.01–04</text>
+<rect x="48" y="378" width="8" height="8" rx="2" fill="#02042B"/>
+<text x="68" y="386" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">03 STORYBOARDS · BEATS 1–8</text>
+<rect x="48" y="402" width="8" height="8" rx="2" fill="#02042B"/>
+<text x="68" y="410" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">04 SCRIPT · 5:00 LOCKED</text>
+<rect x="48" y="426" width="8" height="8" rx="2" fill="#02042B"/>
+<text x="68" y="434" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">05 HOW TO IMPORT</text>
+<text x="860" y="268" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">THE 75-MS DECISION</text>
+<rect x="860" y="280" width="120" height="64" rx="8" fill="#FFFFFF" stroke="#00B878" stroke-width="1.5"/>
+  <text x="920" y="309" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">ACCEPT</text>
+  <text x="920" y="324" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">expected ₹248</text>
+  <g transform="translate(872,294)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+<rect x="990" y="280" width="120" height="64" rx="8" fill="#FFFFFF" stroke="#F5A623" stroke-width="1.5"/>
+  <text x="1050" y="309" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">REVIEW</text>
+  <text x="1050" y="324" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">₹99 · OTP gate</text>
+  <g transform="translate(1002,294)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></g></g>
+<rect x="1120" y="280" width="120" height="64" rx="8" fill="#FFFFFF" stroke="#E5484D" stroke-width="1.5"/>
+  <text x="1180" y="309" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">REJECT</text>
+  <text x="1180" y="324" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">expected ₹980</text>
+  <g transform="translate(1132,294)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#E5484D" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#E5484D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></g></g>
+<rect x="860" y="364" width="135" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="927.5" y="377.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">P50 45–75 MS · PYTHON</text>
+<rect x="860" y="392" width="152" height="20" rx="10" fill="#02042B" fill-opacity="0.08"/><text x="936" y="405.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">TARGET &lt;10 MS · COMPILED</text>
+<path d="M48 566 L1232 566" fill="none" stroke="#E3E8F0" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="48" y="600" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="400" fill="#5B6478">github.com/Neeraj-Parekh/special-parakeet</text>
+<text x="1232" y="600" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="400" fill="#5B6478" text-anchor="end">rto-trust-layer.vercel.app</text>
+</svg>

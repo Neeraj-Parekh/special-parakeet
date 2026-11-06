@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="620" viewBox="0 0 1180 620" role="img" aria-label="Beat 5 — Operational backbone">
+  <rect x="0" y="0" width="1180" height="620" fill="#F6F8FC"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#02042B"/>
+  <text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">BEAT 5</text>
+  <text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#1A2233">Operational backbone</text>
+  <rect x="1060" y="43" width="72" height="20" rx="10" fill="#5B6478" fill-opacity="0.08"/><text x="1096" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#5B6478" text-anchor="middle">BYTEBYTEGO</text>
+  <rect x="986" y="43" width="66" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="1019" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">3:05–3:30</text>
+  <rect x="48" y="120" width="340" height="110" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="108" y="172" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">JWT auth + replay detection</text>
+  <text x="108" y="187" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">every token single-use</text>
+  <g transform="translate(60,157)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M11 12 21 2"/><path d="M17 6l3 3"/></g></g>
+  <rect x="412" y="120" width="340" height="110" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="472" y="172" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Case management + SLA clocks</text>
+  <text x="472" y="187" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">verdicts become cases with deadlines</text>
+  <g transform="translate(424,157)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 13V9"/><path d="M10 2h4"/></g></g>
+  <rect x="776" y="120" width="340" height="110" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="836" y="172" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Fraud-ring graph detector</text>
+  <text x="836" y="187" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">linked customers, shared devices</text>
+  <g transform="translate(788,157)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.5 15.4 6.5"/><path d="M8.6 13.5l6.8 4"/></g></g>
+  <rect x="48" y="254" width="340" height="110" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="108" y="298" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Courier + payment integrations</text>
+  <text x="108" y="313" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">each with documented</text>
+  <text x="108" y="325" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">mock → production swap</text>
+  <g transform="translate(60,291)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></g></g>
+  <rect x="412" y="254" width="340" height="110" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="472" y="298" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Circuit breaker</text>
+  <text x="472" y="313" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">degrades to rules-only</text>
+  <text x="472" y="325" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">never fails open</text>
+  <g transform="translate(424,291)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></g></g>
+  <rect x="776" y="254" width="340" height="110" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="836" y="298" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Test suite</text>
+  <text x="836" y="313" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">security · validation · money</text>
+  <text x="836" y="325" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">ML · platform</text>
+  <g transform="translate(788,291)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+  <rect x="836" y="370" width="222" height="18" rx="9" fill="#00B878" fill-opacity="0.08"/><text x="947" y="382.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#00B878" text-anchor="middle">~400 tests · 5 dimensions — all green</text>
+  <rect x="48" y="556" width="27" height="18" rx="9" fill="#02042B" fill-opacity="0.08"/><text x="61.5" y="568.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">VO</text>
+  <text x="94" y="569" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">Around that core: JWT auth with replay detection, case management with SLA clocks, a fraud-ring graph detector, and courier and payment integrations—each with a</text>
+  <text x="94" y="583" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">documented mock-to-production swap. A circuit breaker that degrades to rules-only, never fails open. And what holds it together: nearly four hundred tests</text>
+  <text x="94" y="597" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">across five dimensions—security, validation, money paths, ML, and platform. All green.</text>
+</svg>

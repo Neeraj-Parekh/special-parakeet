@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="860" viewBox="0 0 1440 860" role="img" aria-label="FIG.02 scoring pipeline">
+  <rect x="0" y="0" width="1440" height="860" fill="#F6F8FC"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#02042B"/>
+  <text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">FIG.02</text>
+  <text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#1A2233">Scoring pipeline — the 75-millisecond decision</text>
+  <text x="48" y="88" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="400" fill="#5B6478">left to right: the hot path · below: what happens after the verdict · numbers = live-draw order (Beat 3)</text>
+<rect x="1257" y="40" width="135" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="1324.5" y="53.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">P50 45–75 MS · PYTHON</text>
+<rect x="1240" y="66" width="152" height="20" rx="10" fill="#02042B" fill-opacity="0.08"/><text x="1316" y="79.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">TARGET &lt;10 MS · COMPILED</text>
+<rect x="48" y="158" width="130" height="88" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="108" y="191" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Scoring request</text>
+  <text x="108" y="206" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">checkout</text>
+  <text x="108" y="218" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">order · ₹ value</text>
+  <g transform="translate(60,184)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></g></g>
+<rect x="210" y="120" width="1070" height="200" rx="12" fill="#2B84EB" fill-opacity="0.04" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="226" y="144" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#2B84EB" letter-spacing="1">GATEWAY · HOT PATH</text>
+<circle cx="210" cy="120" r="10" fill="#02042B"/><text x="210" y="124" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">1</text>
+<rect x="240" y="160" width="158" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <circle cx="252" cy="150" r="10" fill="#02042B"/><text x="252" y="154" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">2</text>
+  <text x="300" y="191" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Rate limit</text>
+  <text x="300" y="206" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">per-IP sliding</text>
+  <text x="300" y="218" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">window</text>
+  <g transform="translate(252,184)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V6l-8-4-8 4v6c0 6 8 10 8 10z"/></g></g>
+<rect x="410" y="160" width="158" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <circle cx="422" cy="150" r="10" fill="#02042B"/><text x="422" y="154" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">3</text>
+  <text x="470" y="191" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Rule engine</text>
+  <text x="470" y="206" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">4 pre-screens</text>
+  <text x="470" y="218" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">±₹500 jitter</text>
+  <g transform="translate(422,184)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/><path d="M2 17l10 5 10-5"/></g></g>
+<rect x="580" y="160" width="158" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <circle cx="592" cy="150" r="10" fill="#02042B"/><text x="592" y="154" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">4</text>
+  <text x="640" y="191" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Mandate check</text>
+  <text x="640" y="206" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">OC-201B caps</text>
+  <text x="640" y="218" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">₹5k · ₹15k/mo</text>
+  <g transform="translate(592,184)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7h18L12 2z"/><path d="M5 7v11M9.5 7v11M14.5 7v11M19 7v11"/><path d="M3 21h18"/></g></g>
+<rect x="750" y="160" width="158" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <circle cx="762" cy="150" r="10" fill="#02042B"/><text x="762" y="154" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">5</text>
+  <text x="810" y="191" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Feature builder</text>
+  <text x="810" y="206" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">79 leak-safe</text>
+  <text x="810" y="218" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">shift-1 · m-est</text>
+  <g transform="translate(762,184)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6l-6 9a2 2 0 0 0 1.7 3h12.6a2 2 0 0 0 1.7-3l-6-9V3"/><path d="M7 15h10"/></g></g>
+<rect x="920" y="160" width="158" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <circle cx="932" cy="150" r="10" fill="#02042B"/><text x="932" y="154" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">6</text>
+  <text x="980" y="191" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">ONNX runtime</text>
+  <text x="980" y="206" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">1.6 µs / row</text>
+  <text x="980" y="218" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">Optuna-weighted</text>
+  <g transform="translate(932,184)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></g></g>
+<rect x="1090" y="160" width="158" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="1150" y="191" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Ensemble</text>
+  <text x="1150" y="206" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">XGBoost 94%</text>
+  <text x="1150" y="218" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">weighted blend</text>
+  <g transform="translate(1102,184)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="6" r="2.5"/><path d="M6 8.5v7"/><path d="M18 8.5a9 9 0 0 1-9 9"/></g></g>
+<path d="M398 202 L410 202" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M403.5 205.9 L410 202 L403.5 198.1 Z" fill="#5B6478"/>
+<path d="M568 202 L580 202" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M573.5 205.9 L580 202 L573.5 198.1 Z" fill="#5B6478"/>
+<path d="M738 202 L750 202" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M743.5 205.9 L750 202 L743.5 198.1 Z" fill="#5B6478"/>
+<path d="M908 202 L920 202" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M913.5 205.9 L920 202 L913.5 198.1 Z" fill="#5B6478"/>
+<path d="M1078 202 L1090 202" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M1083.5 205.9 L1090 202 L1083.5 198.1 Z" fill="#5B6478"/>
+<path d="M178 202 L240 202" fill="none" stroke="#2B84EB" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M233.5 205.9 L240 202 L233.5 198.1 Z" fill="#2B84EB"/>
+<rect x="240" y="344" width="342" height="20" rx="10" fill="#E5484D" fill-opacity="0.08"/><text x="411" y="357.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#E5484D" text-anchor="middle">±₹500 JITTER → PROBES GET NOISE (MODEL-EXTRACTION DEFENSE)</text>
+<rect x="560" y="390" width="320" height="76" rx="8" fill="#FFFFFF" stroke="#02042B" stroke-width="1.5"/>
+  <circle cx="572" cy="380" r="10" fill="#02042B"/><text x="572" y="384" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">7</text>
+  <text x="620" y="417" font-family="Inter, Roboto, sans-serif" font-size="13" font-weight="600" fill="#1A2233">Bahnsen cost decision</text>
+  <text x="620" y="432" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">expected cost: accept · review · reject</text>
+  <text x="620" y="444" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">cheapest wins — breakdown in response</text>
+  <g transform="translate(572,410)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#02042B" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#02042B" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M7 21h10"/><path d="M5 7h14"/><path d="m5 7-3 7h6l-3-7z"/><path d="m19 7-3 7h6l-3-7z"/></g></g>
+<path d="M1169 244 L1169 340 L720 340 L720 390" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M716.1 383.5 L720 390 L723.9 383.5 Z" fill="#5B6478"/>
+<rect x="1120" y="390" width="260" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="1180" y="417" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Response + explanation</text>
+  <text x="1180" y="432" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">cost breakdown</text>
+  <text x="1180" y="444" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">receipt for the auditor</text>
+  <g transform="translate(1132,410)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h8"/></g></g>
+<path d="M880 428 L1120 428" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M1113.5 431.9 L1120 428 L1113.5 424.1 Z" fill="#5B6478"/>
+<path d="M1250 390 L1250 96 L113 96 L113 158" fill="none" stroke="#2B84EB" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M109.25 151.75 L113 158 L116.75 151.75 Z" fill="#2B84EB"/>
+  <text x="1029.45" y="88" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#2B84EB">VERDICT + RECEIPT · ≤75 MS</text>
+<path d="M720 466 L720 486" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M720 486 L400 486 L400 510" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M395.8 503 L400 510 L404.2 503 Z" fill="#00B878"/>
+<path d="M720 486 L720 510" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M715.8 503 L720 510 L724.2 503 Z" fill="#F5A623"/>
+<path d="M720 486 L1040 486 L1040 510" fill="none" stroke="#E5484D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M1035.8 503 L1040 510 L1044.2 503 Z" fill="#E5484D"/>
+<rect x="300" y="510" width="200" height="64" rx="8" fill="#FFFFFF" stroke="#00B878" stroke-width="1.5"/>
+  <text x="360" y="539" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">ACCEPT</text>
+  <text x="360" y="554" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">expected cost ₹248</text>
+  <g transform="translate(312,524)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></g></g>
+<rect x="620" y="510" width="200" height="64" rx="8" fill="#FFFFFF" stroke="#F5A623" stroke-width="1.5"/>
+  <text x="680" y="539" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">REVIEW + OTP</text>
+  <text x="680" y="554" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">expected cost ₹99</text>
+  <g transform="translate(632,524)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></g></g>
+<rect x="940" y="510" width="200" height="64" rx="8" fill="#FFFFFF" stroke="#E5484D" stroke-width="1.5"/>
+  <text x="1000" y="539" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">REJECT</text>
+  <text x="1000" y="554" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">expected cost ₹980</text>
+  <g transform="translate(952,524)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#E5484D" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#E5484D" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="M6 6l12 12"/></g></g>
+<rect x="210" y="620" width="1070" height="150" rx="12" fill="#94A3B8" fill-opacity="0.04" stroke="#B9C2D0" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="226" y="644" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#94A3B8" letter-spacing="1">STREAMING · AFTER THE VERDICT</text>
+<circle cx="210" cy="620" r="10" fill="#02042B"/><text x="210" y="624" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="500" fill="#FFFFFF" text-anchor="middle">8</text>
+<rect x="240" y="660" width="200" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="300" y="695" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Kafka</text>
+  <text x="300" y="710" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">24 partitions · Avro</text>
+  <g transform="translate(252,680)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#94A3B8" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#94A3B8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></g></g>
+<rect x="470" y="660" width="200" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="530" y="687" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Flink CEP</text>
+  <text x="530" y="702" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">3 rejects / 5 min</text>
+  <text x="530" y="714" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">per customer</text>
+  <g transform="translate(482,680)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#94A3B8" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#94A3B8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></g></g>
+<rect x="700" y="660" width="200" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="760" y="695" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">ClickHouse</text>
+  <text x="760" y="710" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">materialized views</text>
+  <g transform="translate(712,680)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#94A3B8" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#94A3B8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></g></g>
+<rect x="930" y="660" width="200" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="990" y="695" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Fraud dashboard</text>
+  <text x="990" y="710" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">rings · patterns</text>
+  <g transform="translate(942,680)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#94A3B8" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#94A3B8" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></g></g>
+<path d="M440 698 L470 698" fill="none" stroke="#94A3B8" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M463.75 701.75 L470 698 L463.75 694.25 Z" fill="#94A3B8"/>
+<path d="M670 698 L700 698" fill="none" stroke="#94A3B8" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M693.75 701.75 L700 698 L693.75 694.25 Z" fill="#94A3B8"/>
+<path d="M900 698 L930 698" fill="none" stroke="#94A3B8" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M923.75 701.75 L930 698 L923.75 694.25 Z" fill="#94A3B8"/>
+<path d="M720 574 L720 600 L340 600 L340 656" fill="none" stroke="#94A3B8" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M336.25 649.75 L340 656 L343.75 649.75 Z" fill="#94A3B8"/>
+  <text x="407.5" y="592" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#94A3B8">DECISION EVENTS</text>
+<rect x="48" y="806" width="219" height="20" rx="10" fill="#02042B" fill-opacity="0.08"/><text x="157.5" y="819.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#02042B" text-anchor="middle">GO/RUST HOT PATH + MULTI-AZ → FIG.04</text>
+<rect x="500" y="806" width="236" height="20" rx="10" fill="#00B878" fill-opacity="0.08"/><text x="618" y="819.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#00B878" text-anchor="middle">EVERY DECISION = A MERKLE LEAF → FIG.03</text>
+</svg>

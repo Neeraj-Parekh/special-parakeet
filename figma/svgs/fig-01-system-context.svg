@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="940" viewBox="0 0 1280 940" role="img" aria-label="FIG.01 system context">
+  <rect x="0" y="0" width="1280" height="940" fill="#F6F8FC"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#02042B"/>
+  <text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#FFFFFF" text-anchor="middle" letter-spacing="1">FIG.01</text>
+  <text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#1A2233">System context — who talks to the trust layer</text>
+  <text x="48" y="88" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="400" fill="#5B6478">everything outside the dashed line is untrusted · every arrow crossing the boundary is a contract</text>
+<rect x="48" y="160" width="170" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="108" y="195" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Customer</text>
+  <text x="108" y="210" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">checkout · order</text>
+  <g transform="translate(60,180)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><circle cx="17.5" cy="9.5" r="2.5"/><path d="M16 15.5a6 6 0 0 1 5.5 4.5"/></g></g>
+<rect x="48" y="270" width="170" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="108" y="305" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Merchant</text>
+  <text x="108" y="320" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">dashboard · cases</text>
+  <g transform="translate(60,290)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></g></g>
+<rect x="48" y="380" width="170" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="108" y="415" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">NPCI UPI Circle</text>
+  <text x="108" y="430" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">mandate caps</text>
+  <g transform="translate(60,400)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7h18L12 2z"/><path d="M5 7v11M9.5 7v11M14.5 7v11M19 7v11"/><path d="M3 21h18"/></g></g>
+<rect x="1060" y="160" width="170" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="1120" y="195" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Courier API</text>
+  <text x="1120" y="210" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">delivery status</text>
+  <g transform="translate(1072,180)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 17h4V5H2v12h3"/><path d="M20 17h2v-3.3a4 4 0 0 0-1.2-2.8L19 9h-5v8h2"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></g></g>
+<rect x="1060" y="270" width="170" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="1120" y="305" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Auditor / RBI</text>
+  <text x="1120" y="320" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">proof, on demand</text>
+  <g transform="translate(1072,290)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#02042B" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#02042B" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M7 21h10"/><path d="M5 7h14"/><path d="m5 7-3 7h6l-3-7z"/><path d="m19 7-3 7h6l-3-7z"/></g></g>
+<rect x="250" y="120" width="780" height="650" rx="12" fill="#02042B" fill-opacity="0.04" stroke="#B9C2D0" stroke-width="1" stroke-dasharray="5 4"/>
+  <text x="266" y="144" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#02042B" letter-spacing="1">RTO TRUST LAYER — TRUST BOUNDARY</text>
+<rect x="278" y="168" width="724" height="150" rx="12" fill="#2B84EB" fill-opacity="0.04" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="294" y="192" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#2B84EB" letter-spacing="1">SCORING PLANE</text>
+<rect x="302" y="210" width="170" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="362" y="241" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Scoring gateway</text>
+  <text x="362" y="256" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">rate limit · rules</text>
+  <text x="362" y="268" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">mandate ±₹500</text>
+  <g transform="translate(314,234)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V6l-8-4-8 4v6c0 6 8 10 8 10z"/></g></g>
+<rect x="496" y="210" width="170" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="556" y="241" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Inference</text>
+  <text x="556" y="256" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">79 features</text>
+  <text x="556" y="268" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">ONNX 1.6 µs/row</text>
+  <g transform="translate(508,234)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></g></g>
+<rect x="690" y="210" width="170" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="750" y="241" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Cost decision</text>
+  <text x="750" y="256" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">Bahnsen · 3</text>
+  <text x="750" y="268" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">verdicts + receipt</text>
+  <g transform="translate(702,234)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#2B84EB" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#2B84EB" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M7 21h10"/><path d="M5 7h14"/><path d="m5 7-3 7h6l-3-7z"/><path d="m19 7-3 7h6l-3-7z"/></g></g>
+<path d="M472 252 L496 252" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M489.5 255.9 L496 252 L489.5 248.1 Z" fill="#5B6478"/>
+<path d="M666 252 L690 252" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M683.5 255.9 L690 252 L683.5 248.1 Z" fill="#5B6478"/>
+<rect x="278" y="360" width="340" height="230" rx="12" fill="#00B878" fill-opacity="0.04" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="294" y="384" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#00B878" letter-spacing="1">TRUST CORE</text>
+<rect x="294" y="396" width="290" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="354" y="419" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Merkle audit chain</text>
+  <text x="354" y="434" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">tamper-evident decision leaves</text>
+  <g transform="translate(306,404)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></g></g>
+<rect x="294" y="462" width="290" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="354" y="485" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Dual-control override</text>
+  <text x="354" y="500" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">two keys · one-shot nonces</text>
+  <g transform="translate(306,470)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M11 12 21 2"/><path d="M17 6l3 3"/></g></g>
+<rect x="294" y="528" width="290" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="354" y="551" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Bounded copilot</text>
+  <text x="354" y="566" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">7 actions, enforced as code</text>
+  <g transform="translate(306,536)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#00B878" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#00B878" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></g></g>
+<rect x="646" y="360" width="356" height="230" rx="12" fill="#F5A623" fill-opacity="0.04" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="662" y="384" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="500" fill="#F5A623" letter-spacing="1">OPS PLANE</text>
+<rect x="662" y="396" width="160" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="722" y="419" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Case mgmt + SLA</text>
+  <text x="722" y="434" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">clocks, deadlines</text>
+  <g transform="translate(674,404)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="13" r="8"/><path d="M12 13V9"/><path d="M10 2h4"/></g></g>
+<rect x="838" y="396" width="160" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="898" y="419" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Fraud-ring graph</text>
+  <text x="898" y="434" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">linked customers</text>
+  <g transform="translate(850,404)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.5 15.4 6.5"/><path d="M8.6 13.5l6.8 4"/></g></g>
+<rect x="662" y="462" width="160" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="722" y="485" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Integrations</text>
+  <text x="722" y="500" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">courier · payment</text>
+  <g transform="translate(674,470)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a13.5 13.5 0 0 1 4 9 13.5 13.5 0 0 1-4 9 13.5 13.5 0 0 1-4-9 13.5 13.5 0 0 1 4-9z"/></g></g>
+<rect x="838" y="462" width="160" height="52" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="898" y="485" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Circuit breaker</text>
+  <text x="898" y="500" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">rules-only, never open</text>
+  <g transform="translate(850,470)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#F5A623" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#F5A623" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></g></g>
+<rect x="430" y="800" width="180" height="64" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="490" y="829" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Admin A</text>
+  <text x="490" y="844" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">signature 1</text>
+  <g transform="translate(442,814)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#02042B" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#02042B" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M11 12 21 2"/><path d="M17 6l3 3"/></g></g>
+<rect x="660" y="800" width="180" height="64" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1"/>
+  <text x="720" y="829" font-family="Inter, Roboto, sans-serif" font-size="12" font-weight="600" fill="#1A2233">Admin B</text>
+  <text x="720" y="844" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#5B6478">signature 2</text>
+  <g transform="translate(672,814)"><rect x="0" y="0" width="36" height="36" rx="8" fill="#02042B" fill-opacity="0.12"/><g transform="translate(6,6) scale(0.75)" fill="none" stroke="#02042B" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="15.5" r="4"/><path d="M11 12 21 2"/><path d="M17 6l3 3"/></g></g>
+<path d="M218 198 L240 198 L240 222 L302 222" fill="none" stroke="#2B84EB" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M295.5 225.9 L302 222 L295.5 218.1 Z" fill="#2B84EB"/>
+  <text x="256" y="214" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#2B84EB">SCORE REQUEST · ≤75 MS</text>
+<path d="M218 308 L240 308 L240 290 L302 290" fill="none" stroke="#2B84EB" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M295.75 293.75 L302 290 L295.75 286.25 Z" fill="#2B84EB"/>
+  <text x="259" y="282" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#2B84EB">CONSOLE · EXPLANATIONS</text>
+<path d="M218 418 L240 418 L240 330 L400 330 L400 318" fill="none" stroke="#00B878" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M403.75 324.25 L400 318 L396.25 324.25 Z" fill="#00B878"/>
+  <text x="279" y="322" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#00B878">OC-201B CAPS</text>
+<path d="M775 294 L775 340 L448 340 L448 396" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M444.1 389.5 L448 396 L451.9 389.5 Z" fill="#5B6478"/>
+  <text x="614.5" y="332" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#5B6478">EVERY DECISION = A MERKLE LEAF</text>
+<path d="M860 252 L940 252 L940 360" fill="none" stroke="#94A3B8" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M936.25 353.75 L940 360 L943.75 353.75 Z" fill="#94A3B8"/>
+  <text x="948" y="256" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#94A3B8">EVENTS</text>
+<path d="M448 580 L448 620 L1038 620 L1038 308 L1060 308" fill="none" stroke="#02042B" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M1053.75 311.75 L1060 308 L1053.75 304.25 Z" fill="#02042B"/>
+  <text x="705.2" y="612" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#02042B">INCLUSION PROOF · LOG N</text>
+<path d="M1060 198 L1020 198 L1020 422 L1002 422" fill="none" stroke="#F5A623" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M1008.25 418.25 L1002 422 L1008.25 425.75 Z" fill="#F5A623"/>
+  <text x="1030" y="307.1" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#F5A623">DELIVERY STATUS</text>
+<circle cx="560" cy="680" r="12" fill="#02042B"/>
+<text x="560" y="684" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="600" fill="#FFFFFF" text-anchor="middle">2×</text>
+<path d="M520 800 L520 680 L546 680" fill="none" stroke="#02042B" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M539.75 683.75 L546 680 L539.75 676.25 Z" fill="#02042B"/>
+<path d="M750 800 L750 680 L574 680" fill="none" stroke="#02042B" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M580.25 676.25 L574 680 L580.25 683.75 Z" fill="#02042B"/>
+<path d="M560 668 L560 594" fill="none" stroke="#02042B" stroke-width="1.25" stroke-dasharray="4 4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M563.75 600.25 L560 594 L556.25 600.25 Z" fill="#02042B"/>
+  <text x="572" y="643.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#02042B">DUAL-CONTROL — 2 SIGNATURES</text>
+<text x="48" y="906" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">external actors sit outside the trust boundary · nothing inside is reachable without crossing a stated contract</text>
+</svg>

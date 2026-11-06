@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<!-- RTO Trust Layer diagram kit · tokens: navy #02042B blue #2B84EB mint #00B878 amber #F5A623 red #E5484D bg #F6F8FC border #E3E8F0 -->
+<defs><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#02042B" flood-opacity="0.08"/></filter></defs>
+<rect width="1600" height="1000" fill="#FFFFFF"/>
+<rect x="48" y="40" width="74" height="26" rx="13" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="85" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.6">FIG 04</text>
+<text x="48" y="102" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="20" font-weight="700" fill="#02042B" text-anchor="start">Deployment — edge region, two AZs, one truth</text>
+<text x="48" y="126" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#5B6478" text-anchor="start">Scoring runs close to the merchant; every AZ reads a replica; writes seal once. Latency budget on the bottom rail.</text>
+<rect x="1416.4" y="40" width="135.6" height="26" rx="13" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="1484.2" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.3">SEC-5 · 10 req/s</text>
+<circle cx="122" cy="300" r="26" fill="#FFFFFF" stroke="#E3E8F0" filter="url(#ds)"/>
+<g transform="translate(111 289) scale(0.9167)" fill="none" stroke="#5B6478" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3.5h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M4.5 14h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M6.2 6.75h.01"/><path d="M6.2 17.25h.01"/></g>
+<text x="122" y="344" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="middle">merchant backend</text>
+<text x="122" y="359" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="middle">scorer key</text>
+<rect x="250" y="180" width="1030" height="560" rx="12" fill="rgba(43,132,235,0.03)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<text x="266" y="206" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#2B84EB" text-anchor="start" letter-spacing="0.9">EDGE REGION · ap-south-1</text>
+<text x="1264" y="206" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="500" fill="#5B6478" text-anchor="end" letter-spacing="0.4">Vercel</text>
+<rect x="270" y="228" width="990" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="284" y="241" width="34" height="34" rx="8" fill="rgba(229,72,77,0.12)" stroke="rgba(229,72,77,0.3)" stroke-width="1"/>
+<g transform="translate(292.5 249.5) scale(0.7083)" fill="none" stroke="#E5484D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l7.5 3v5c0 4.8-3.2 8.9-7.5 10.7-4.3-1.8-7.5-5.9-7.5-10.7v-5l7.5-3z"/><path d="M9 11.5l2.2 2.2 4-4.4"/></g>
+<text x="330" y="254" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Edge WAF + rate limit</text>
+<text x="330" y="272" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">scorer auth · 10 req/s · 429 + Retry-After</text>
+<path d="M 148 300 L 193 300 Q 200 300 200 293 L 200 265 Q 200 258 207 258 L 259.5 258" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="266,258 258,261.4 258,254.6" fill="#5B6478"/>
+<text x="152" y="320" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="start">HTTPS + scorer key</text>
+<path d="M 500 288 L 500 361.5" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="500,368 496.6,360 503.4,360" fill="#5B6478"/>
+<path d="M 900 288 L 900 361.5" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="900,368 896.6,360 903.4,360" fill="#5B6478"/>
+<text x="700" y="336" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle">load-balanced · any AZ</text>
+<rect x="270" y="320" width="470" height="390" rx="12" fill="#F6F8FC" stroke="#E3E8F0" stroke-width="1"/>
+<text x="286" y="346" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">AVAILABILITY ZONE 1</text>
+<rect x="770" y="320" width="470" height="390" rx="12" fill="#F6F8FC" stroke="#E3E8F0" stroke-width="1"/>
+<text x="786" y="346" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">AVAILABILITY ZONE 2</text>
+<rect x="300" y="372" width="400" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="314" y="396" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(323 405) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3.5h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M4.5 14h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M6.2 6.75h.01"/><path d="M6.2 17.25h.01"/></g>
+<text x="362" y="410" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">API route</text>
+<text x="362" y="428" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">/api/risk/score · stateless</text>
+<rect x="300" y="472" width="190" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="310" y="508" width="28" height="28" rx="6" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.28)" stroke-width="1"/>
+<g transform="translate(316 514) scale(0.6667)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 5h11a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1 -1.5 1.5h-11a1.5 1.5 0 0 1 -1.5 -1.5v-11a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M10.5 9.5h3a1 1 0 0 1 1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1z"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></g>
+<text x="348" y="519" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#1A2233" text-anchor="start">ONNX runtime</text>
+<text x="348" y="535" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">1.6 µs / row</text>
+<rect x="510" y="472" width="190" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="520" y="508" width="28" height="28" rx="6" fill="rgba(245,166,35,0.1)" stroke="rgba(245,166,35,0.28)" stroke-width="1"/>
+<g transform="translate(526 514) scale(0.6667)" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L5 13.2h5.4L10 22l8-11.2h-5.4L13 2z"/></g>
+<text x="558" y="519" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#1A2233" text-anchor="start">Session cache</text>
+<text x="558" y="535" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">warm 6 ms</text>
+<path d="M 395 456 L 395 461.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="395,468 391.6,460 398.4,460" fill="#5B6478"/>
+<path d="M 605 456 L 605 461.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="605,468 601.6,460 608.4,460" fill="#5B6478"/>
+<rect x="800" y="372" width="400" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="814" y="396" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(823 405) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3.5h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M4.5 14h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M6.2 6.75h.01"/><path d="M6.2 17.25h.01"/></g>
+<text x="862" y="410" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">API route</text>
+<text x="862" y="428" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">/api/risk/score · stateless</text>
+<rect x="800" y="472" width="190" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="810" y="508" width="28" height="28" rx="6" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.28)" stroke-width="1"/>
+<g transform="translate(816 514) scale(0.6667)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 5h11a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1 -1.5 1.5h-11a1.5 1.5 0 0 1 -1.5 -1.5v-11a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M10.5 9.5h3a1 1 0 0 1 1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1z"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></g>
+<text x="848" y="519" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#1A2233" text-anchor="start">ONNX runtime</text>
+<text x="848" y="535" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">1.6 µs / row</text>
+<rect x="1010" y="472" width="190" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1020" y="508" width="28" height="28" rx="6" fill="rgba(82,143,240,0.1)" stroke="rgba(82,143,240,0.28)" stroke-width="1"/>
+<g transform="translate(1026 514) scale(0.6667)" fill="none" stroke="#528FF0" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5.5a7 2.8 0 1 0 14 0a7 2.8 0 1 0 -14 0"/><path d="M5 5.5v13a7 2.8 0 0 0 14 0v-13"/><path d="M5 12a7 2.8 0 0 0 14 0"/></g>
+<text x="1058" y="519" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12.5" font-weight="600" fill="#1A2233" text-anchor="start">SQLite replica</text>
+<text x="1058" y="535" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">local reads · ms</text>
+<path d="M 895 456 L 895 461.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="895,468 891.6,460 898.4,460" fill="#5B6478"/>
+<path d="M 1105 456 L 1105 461.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="1105,468 1101.6,460 1108.4,460" fill="#5B6478"/>
+<rect x="1310" y="180" width="242" height="560" rx="12" fill="rgba(0,184,120,0.04)" stroke="rgba(0,184,120,0.4)" stroke-width="1"/>
+<text x="1326" y="206" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#00B878" text-anchor="start" letter-spacing="0.9">DATA TIER</text>
+<rect x="1330" y="260" width="202" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1344" y="284" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(1353 293) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="M9.2 14.6l1.9 1.9 3.7-3.9"/></g>
+<text x="1392" y="298" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Sealed log</text>
+<text x="1392" y="316" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">append-only</text>
+<rect x="1330" y="380" width="202" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1344" y="404" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(1353 413) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5.5a7 2.8 0 1 0 14 0a7 2.8 0 1 0 -14 0"/><path d="M5 5.5v13a7 2.8 0 0 0 14 0v-13"/><path d="M5 12a7 2.8 0 0 0 14 0"/></g>
+<text x="1392" y="418" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">SQLite primary</text>
+<text x="1392" y="436" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">single writer</text>
+<rect x="1330" y="500" width="202" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1344" y="524" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(1353 533) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.2 13.8a4.6 4.6 0 0 0 6.5 0l2.6-2.6a4.6 4.6 0 0 0-6.5-6.5l-1.5 1.5"/><path d="M13.8 10.2a4.6 4.6 0 0 0-6.5 0l-2.6 2.6a4.6 4.6 0 0 0 6.5 6.5l1.5-1.5"/></g>
+<text x="1392" y="538" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Merkle roots</text>
+<text x="1392" y="556" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">anchored daily</text>
+<path d="M 1330 422 L 1265 422 Q 1258 422 1258 429 L 1258 457 Q 1258 464 1251 464 L 1151.25 464 Q 1150 464 1150 462.75 L 1150 461.5" fill="none" stroke="#98A2B3" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="6 5"/>
+<polygon points="1150,468 1146.6,460 1153.4,460" fill="#98A2B3"/>
+<text x="1262" y="446" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="start">sync</text>
+<rect x="250" y="770" width="1030" height="180" rx="12" fill="#F6F8FC" stroke="#E3E8F0" stroke-width="1"/>
+<text x="266" y="796" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">LATENCY BUDGET · PER ORDER</text>
+<rect x="274" y="816" width="187" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<text x="367.5" y="852" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle" letter-spacing="0.8">EDGE AUTH</text>
+<text x="367.5" y="884" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="600" fill="#02042B" text-anchor="middle">3 ms</text>
+<rect x="473" y="816" width="187" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<text x="566.5" y="852" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle" letter-spacing="0.8">FEATURES</text>
+<text x="566.5" y="884" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="600" fill="#02042B" text-anchor="middle">6 ms</text>
+<rect x="672" y="816" width="187" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<text x="765.5" y="852" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle" letter-spacing="0.8">INFERENCE</text>
+<text x="765.5" y="884" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="600" fill="#02042B" text-anchor="middle">1.6 µs/row</text>
+<rect x="871" y="816" width="187" height="100" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<text x="964.5" y="852" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle" letter-spacing="0.8">SEAL</text>
+<text x="964.5" y="884" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="600" fill="#02042B" text-anchor="middle">4 ms</text>
+<rect x="1070" y="816" width="187" height="100" rx="8" fill="rgba(0,184,120,0.06)" stroke="rgba(0,184,120,0.35)" stroke-width="1"/>
+<text x="1163.5" y="852" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle" letter-spacing="0.8">E2E · P50</text>
+<text x="1163.5" y="884" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="19" font-weight="600" fill="#00B878" text-anchor="middle">29 ms</text>
+<path d="M 48 958 L 74 958" fill="none" stroke="#5B6478" stroke-width="1.5"/>
+<text x="80" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">solid — request path</text>
+<path d="M 234 958 L 260 958" fill="none" stroke="#98A2B3" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="266" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">dashed — replication</text>
+<text x="1552" y="986" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#5B6478" text-anchor="end" opacity="0.65">RTO Trust Layer · generated by design-kit/generate.ts · tokens = fintech-console-v2 · Inter / JetBrains Mono</text>
+</svg>

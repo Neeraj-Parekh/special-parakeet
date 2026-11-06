@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="560" viewBox="0 0 1180 560" role="img" aria-label="BEAT 1 hook storyboard">
+  <rect x="0" y="0" width="1180" height="560" fill="#02042B"/>
+  <rect x="48" y="40" width="65" height="26" rx="13" fill="#FFFFFF"/>
+<text x="80.5" y="57.5" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="11" font-weight="600" fill="#02042B" text-anchor="middle" letter-spacing="1">BEAT 1</text>
+<text x="127" y="58.5" font-family="Inter, Roboto, sans-serif" font-size="18" font-weight="600" fill="#FFFFFF">Hook — the number</text>
+<rect x="1066" y="43" width="66" height="20" rx="10" fill="#F5A623" fill-opacity="0.08"/><text x="1099" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">0:00–0:15</text>
+<rect x="997" y="43" width="61" height="20" rx="10" fill="#B9C2D0" fill-opacity="0.08"/><text x="1027.5" y="56.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#B9C2D0" text-anchor="middle">FIRESHIP</text>
+<text x="48" y="170" font-family="Inter, Roboto, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF">₹50,000 crore.</text>
+<text x="1132" y="170" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#94A3B8" text-anchor="end">0:00.0</text>
+<text x="48" y="225" font-family="Inter, Roboto, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF">lost every year to COD returns.</text>
+<text x="1132" y="225" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#94A3B8" text-anchor="end">0:04.8</text>
+<text x="48" y="280" font-family="Inter, Roboto, sans-serif" font-size="30" font-weight="700" fill="#FFFFFF">3 in 10 parcels bounce.</text>
+<text x="1132" y="280" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#94A3B8" text-anchor="end">0:09.6</text>
+<text x="48" y="330" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="400" fill="#94A3B8">white text stamps in — one per 1.2 s · snap-zoom · hard cut</text>
+<rect x="48" y="360" width="480" height="110" rx="12" fill="#FFFFFF"/>
+<text x="76" y="412" font-family="Inter, Roboto, sans-serif" font-size="26" font-weight="700" fill="#02042B">RTO TRUST LAYER</text>
+<text x="76" y="436" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="10" font-weight="400" fill="#5B6478">snap-zoom to title · then cut</text>
+<rect x="76" y="446" width="55" height="18" rx="9" fill="#F5A623" fill-opacity="0.08"/><text x="103.5" y="458.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#F5A623" text-anchor="middle">NO FADE</text>
+<rect x="48" y="500" width="27" height="18" rx="9" fill="#FFFFFF" fill-opacity="0.08"/><text x="61.5" y="512.24" font-family="JetBrains Mono, Roboto Mono, monospace" font-size="9" font-weight="500" fill="#FFFFFF" text-anchor="middle">VO</text>
+<text x="96" y="513" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#B9C2D0">Indian e-commerce loses fifty thousand crore a year to cash-on-delivery returns. Three in ten COD parcels</text>
+  <text x="96" y="527" font-family="Inter, Roboto, sans-serif" font-size="10" font-weight="400" fill="#B9C2D0">never find a home. This is how you stop them—before the courier leaves.</text>
+</svg>

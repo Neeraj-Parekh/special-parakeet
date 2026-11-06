@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<!-- RTO Trust Layer diagram kit · tokens: navy #02042B blue #2B84EB mint #00B878 amber #F5A623 red #E5484D bg #F6F8FC border #E3E8F0 -->
+<defs><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#02042B" flood-opacity="0.08"/></filter></defs>
+<rect width="1600" height="1000" fill="#FFFFFF"/>
+<rect x="48" y="40" width="74" height="26" rx="13" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="85" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.6">FIG 02</text>
+<text x="48" y="102" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="20" font-weight="700" fill="#02042B" text-anchor="start">Scoring Pipeline — event to verdict in 29 ms</text>
+<text x="48" y="126" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#5B6478" text-anchor="start">Left to right: every COD order is scored on the edge before it is accepted. Latency chips show per-stage budgets.</text>
+<rect x="1376.8" y="40" width="175.2" height="26" rx="13" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="1464.4" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.3">1.6 µs / row inference</text>
+<text x="48" y="196" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">EVENT</text>
+<text x="348" y="196" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">INGRESS</text>
+<text x="632" y="196" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">FEATURE ASSEMBLY</text>
+<text x="952" y="196" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">MODEL</text>
+<text x="1256" y="196" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">DECISION</text>
+<rect x="48" y="220" width="240" height="96" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="62" y="250" width="36" height="36" rx="8" fill="rgba(245,166,35,0.12)" stroke="rgba(245,166,35,0.3)" stroke-width="1"/>
+<g transform="translate(71 259) scale(0.7500)" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L5 13.2h5.4L10 22l8-11.2h-5.4L13 2z"/></g>
+<text x="110" y="264" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">order.created</text>
+<text x="110" y="282" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">COD ₹1,899 · pin 560103</text>
+<rect x="348" y="220" width="240" height="96" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="362" y="250" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(371 259) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l7.5 3v5c0 4.8-3.2 8.9-7.5 10.7-4.3-1.8-7.5-5.9-7.5-10.7v-5l7.5-3z"/><path d="M9 11.5l2.2 2.2 4-4.4"/></g>
+<text x="410" y="264" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Edge API</text>
+<text x="410" y="282" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">scorer auth · 10 r/s</text>
+<rect x="348" y="330" width="75.6" height="24" rx="12" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="385.8" y="345.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.3">p50 8 ms</text>
+<rect x="632" y="220" width="280" height="380" rx="12" fill="rgba(43,132,235,0.04)" stroke="rgba(43,132,235,0.4)" stroke-width="1"/>
+<text x="648" y="246" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#2B84EB" text-anchor="start" letter-spacing="0.9">60 FEATURES</text>
+<rect x="652" y="262" width="240" height="56" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="662" y="276" width="28" height="28" rx="6" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.28)" stroke-width="1"/>
+<g transform="translate(668 282) scale(0.6667)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.9 6.5a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0"/><path d="M14.9 6.5a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0"/><path d="M3.9 17.5a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0"/><path d="M14.9 17.5a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0"/><path d="M6.5 9.1v5.8"/><path d="M17.5 9.1v5.8"/><path d="M9.1 6.5h5.8"/><path d="M9.1 17.5h5.8"/></g>
+<text x="700" y="287" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="start">Fraud-ring velocity</text>
+<text x="700" y="303" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">co-buyer graph · 30 d</text>
+<rect x="652" y="328" width="240" height="56" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="662" y="342" width="28" height="28" rx="6" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.28)" stroke-width="1"/>
+<g transform="translate(668 348) scale(0.6667)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7.5a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0 -7 0"/><path d="M4 20.5c0-4.2 3.6-6.5 8-6.5s8 2.3 8 6.5"/></g>
+<text x="700" y="353" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="start">Shopper RTO history</text>
+<text x="700" y="369" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">orders · returns · RTO %</text>
+<rect x="652" y="394" width="240" height="56" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="662" y="408" width="28" height="28" rx="6" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.28)" stroke-width="1"/>
+<g transform="translate(668 414) scale(0.6667)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12z"/><path d="M9.2 12a2.8 2.8 0 1 0 5.6 0a2.8 2.8 0 1 0 -5.6 0"/></g>
+<text x="700" y="419" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="start">Device fingerprint</text>
+<text x="700" y="435" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">hw + session signals</text>
+<rect x="652" y="460" width="240" height="56" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="662" y="474" width="28" height="28" rx="6" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.28)" stroke-width="1"/>
+<g transform="translate(668 480) scale(0.6667)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 17 0a8.5 8.5 0 1 0 -17 0"/><path d="M3.5 12h17"/><path d="M12 3.5c-3.2 2.6-3.2 14.4 0 17"/><path d="M12 3.5c3.2 2.6 3.2 14.4 0 17"/></g>
+<text x="700" y="485" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="start">Geo velocity</text>
+<text x="700" y="501" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">addr ↔ pin distance</text>
+<rect x="652" y="526" width="240" height="56" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="662" y="540" width="28" height="28" rx="6" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.28)" stroke-width="1"/>
+<g transform="translate(668 546) scale(0.6667)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.8 21 7.7v8.6l-9 4.9-9-4.9V7.7l9-4.9z"/><path d="M3 7.7l9 4.9 9-4.9"/><path d="M12 12.6v8.6"/></g>
+<text x="700" y="551" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="start">Basket profile</text>
+<text x="700" y="567" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">value · category mix</text>
+<rect x="952" y="220" width="240" height="96" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="966" y="250" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(975 259) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 5h11a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1 -1.5 1.5h-11a1.5 1.5 0 0 1 -1.5 -1.5v-11a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M10.5 9.5h3a1 1 0 0 1 1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1z"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></g>
+<text x="1014" y="264" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">ONNX GBDT</text>
+<text x="1014" y="282" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">60 features · quantised</text>
+<rect x="952" y="330" width="100.4" height="24" rx="12" fill="rgba(0,184,120,0.1)" stroke="rgba(0,184,120,0.32)" stroke-width="1"/>
+<text x="1002.2" y="345.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#00B878" text-anchor="middle" letter-spacing="0.3">1.6 µs / row</text>
+<rect x="1256" y="220" width="296" height="96" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1270" y="250" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(1279 259) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 15a8.5 8.5 0 0 1 17 0"/><path d="M12 15l4.6-4.6"/><path d="M10.8 15a1.2 1.2 0 1 0 2.4 0a1.2 1.2 0 1 0 -2.4 0"/></g>
+<text x="1318" y="264" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Score 0–100</text>
+<text x="1318" y="282" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">RTO risk probability</text>
+<rect x="1256" y="380" width="296" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1270" y="404" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(1279 413) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5L19.5 6.5"/></g>
+<text x="1318" y="418" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#00B878" text-anchor="start">ACCEPT</text>
+<text x="1318" y="436" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">score &lt; 35 · auto-approve</text>
+<rect x="1256" y="524" width="296" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1270" y="548" width="36" height="36" rx="8" fill="rgba(245,166,35,0.12)" stroke="rgba(245,166,35,0.3)" stroke-width="1"/>
+<g transform="translate(1279 557) scale(0.7500)" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2h5a2.5 2.5 0 0 1 2.5 2.5v15a2.5 2.5 0 0 1 -2.5 2.5h-5a2.5 2.5 0 0 1 -2.5 -2.5v-15a2.5 2.5 0 0 1 2.5 -2.5z"/><path d="M11 18.5h2"/></g>
+<text x="1318" y="562" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#F5A623" text-anchor="start">REVIEW · OTP</text>
+<text x="1318" y="580" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">35–70 · verify via SMS</text>
+<rect x="1256" y="668" width="296" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1270" y="692" width="36" height="36" rx="8" fill="rgba(229,72,77,0.12)" stroke="rgba(229,72,77,0.3)" stroke-width="1"/>
+<g transform="translate(1279 701) scale(0.7500)" fill="none" stroke="#E5484D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></g>
+<text x="1318" y="706" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#E5484D" text-anchor="start">REJECT</text>
+<text x="1318" y="724" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">score &gt; 70 · offer prepaid</text>
+<path d="M 290 268 L 337.5 268" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="344,268 336,271.4 336,264.6" fill="#5B6478"/>
+<path d="M 590 268 L 621.5 268" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="628,268 620,271.4 620,264.6" fill="#5B6478"/>
+<path d="M 914 268 L 941.5 268" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="948,268 940,271.4 940,264.6" fill="#5B6478"/>
+<path d="M 1194 268 L 1245.5 268" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="1252,268 1244,271.4 1244,264.6" fill="#5B6478"/>
+<text x="610" y="258" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle">vector</text>
+<text x="1223" y="258" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle">score</text>
+<path d="M 1404 316 L 1404 344 L 1218 344 L 1218 700" fill="none" stroke="#5B6478" stroke-width="1.5"/>
+<circle cx="1218" cy="344" r="3.5" fill="#5B6478"/>
+<path d="M 1218 422 L 1245.5 422" fill="none" stroke="#00B878" stroke-width="1.75" stroke-linecap="round"/>
+<polygon points="1252,422 1244,425.4 1244,418.6" fill="#00B878"/>
+<path d="M 1218 566 L 1245.5 566" fill="none" stroke="#F5A623" stroke-width="1.75" stroke-linecap="round"/>
+<polygon points="1252,566 1244,569.4 1244,562.6" fill="#F5A623"/>
+<path d="M 1218 710 L 1245.5 710" fill="none" stroke="#E5484D" stroke-width="1.75" stroke-linecap="round"/>
+<polygon points="1252,710 1244,713.4 1244,706.6" fill="#E5484D"/>
+<circle cx="1218" cy="422" r="3" fill="#00B878"/>
+<circle cx="1218" cy="566" r="3" fill="#F5A623"/>
+<circle cx="1218" cy="710" r="3" fill="#E5484D"/>
+<rect x="632" y="848" width="920" height="104" rx="12" fill="#F6F8FC" stroke="#E3E8F0" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="648" y="874" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">SEALED — EVERY DECISION IS AN AUDIT RECORD</text>
+<g transform="translate(664 880) scale(1.2500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="M9.2 14.6l1.9 1.9 3.7-3.9"/></g>
+<text x="712" y="894" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11.5" font-weight="400" fill="#5B6478" text-anchor="start">append-only audit log · Merkle root per batch · verify any time</text>
+<rect x="1350" y="890" width="81.8" height="22" rx="11" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="1390.9" y="904.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.3">seal 4 ms</text>
+<path d="M 1404 752 L 1404 837.5" fill="none" stroke="#98A2B3" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="6 5"/>
+<polygon points="1404,844 1400.6,836 1407.4,836" fill="#98A2B3"/>
+<text x="1420" y="800" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#5B6478" text-anchor="start">→ FIG. 03</text>
+<path d="M 48 958 L 74 958" fill="none" stroke="#5B6478" stroke-width="1.5"/>
+<text x="80" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">solid — sync</text>
+<path d="M 182.8 958 L 208.8 958" fill="none" stroke="#98A2B3" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="214.8" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">dashed — async / sealing</text>
+<text x="1552" y="986" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#5B6478" text-anchor="end" opacity="0.65">RTO Trust Layer · generated by design-kit/generate.ts · tokens = fintech-console-v2 · Inter / JetBrains Mono</text>
+</svg>

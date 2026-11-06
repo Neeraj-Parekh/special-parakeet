@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<!-- RTO Trust Layer diagram kit · tokens: navy #02042B blue #2B84EB mint #00B878 amber #F5A623 red #E5484D bg #F6F8FC border #E3E8F0 -->
+<defs><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#02042B" flood-opacity="0.08"/></filter></defs>
+<rect width="1600" height="1000" fill="#FFFFFF"/>
+<rect x="48" y="40" width="74" height="26" rx="13" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="85" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.6">FIG 03</text>
+<text x="48" y="102" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="20" font-weight="700" fill="#02042B" text-anchor="start">Trust Chain — Merkle-sealed audit trail</text>
+<text x="48" y="126" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#5B6478" text-anchor="start">Every scored decision becomes a tamper-evident record. Anyone can re-verify the chain — no trust in us required.</text>
+<rect x="1449.4" y="40" width="102.6" height="26" rx="13" fill="rgba(0,184,120,0.1)" stroke="rgba(0,184,120,0.32)" stroke-width="1"/>
+<text x="1500.7" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#00B878" text-anchor="middle" letter-spacing="0.3">100% sealed</text>
+<text x="48" y="196" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">DECISION RECORDS · BATCH #47</text>
+<rect x="48" y="214" width="320" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="62" y="234" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(71 243) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="M9.2 14.6l1.9 1.9 3.7-3.9"/></g>
+<text x="110" y="242" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">D-1001 · ACCEPT</text>
+<text x="110" y="261" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">COD ₹1,299 · 14:02:11 IST</text>
+<text x="110" y="278" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9.5" font-weight="400" fill="#5B6478" text-anchor="start" opacity="0.85">record_source: order-api</text>
+<rect x="48" y="306" width="320" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="62" y="326" width="36" height="36" rx="8" fill="rgba(245,166,35,0.12)" stroke="rgba(245,166,35,0.3)" stroke-width="1"/>
+<g transform="translate(71 335) scale(0.7500)" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="M9.2 14.6l1.9 1.9 3.7-3.9"/></g>
+<text x="110" y="334" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">D-1002 · REVIEW</text>
+<text x="110" y="353" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">COD ₹899 · 14:02:11 IST</text>
+<text x="110" y="370" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9.5" font-weight="400" fill="#5B6478" text-anchor="start" opacity="0.85">record_source: order-api</text>
+<rect x="48" y="398" width="320" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="62" y="418" width="36" height="36" rx="8" fill="rgba(229,72,77,0.12)" stroke="rgba(229,72,77,0.3)" stroke-width="1"/>
+<g transform="translate(71 427) scale(0.7500)" fill="none" stroke="#E5484D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="M9.2 14.6l1.9 1.9 3.7-3.9"/></g>
+<text x="110" y="426" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">D-1003 · REJECT</text>
+<text x="110" y="445" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">COD ₹2,499 · 14:02:12 IST</text>
+<text x="110" y="462" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9.5" font-weight="400" fill="#5B6478" text-anchor="start" opacity="0.85">record_source: order-api</text>
+<rect x="48" y="490" width="320" height="76" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="62" y="510" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(71 519) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5z"/><path d="M14 3v5h5"/><path d="M9.2 14.6l1.9 1.9 3.7-3.9"/></g>
+<text x="110" y="518" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">D-1004 · ACCEPT</text>
+<text x="110" y="537" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">COD ₹649 · 14:02:12 IST</text>
+<text x="110" y="554" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="9.5" font-weight="400" fill="#5B6478" text-anchor="start" opacity="0.85">record_source: order-api</text>
+<path d="M 368 390 L 449.5 390" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="456,390 448,393.4 448,386.6" fill="#5B6478"/>
+<text x="412" y="378" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle">SHA-256</text>
+<rect x="460" y="214" width="200" height="48" rx="6" fill="rgba(43,132,235,0.06)" stroke="rgba(43,132,235,0.25)" stroke-width="1"/>
+<text x="560" y="243" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="600" fill="#1A2233" text-anchor="middle">h(D-1001)</text>
+<rect x="460" y="290" width="200" height="48" rx="6" fill="rgba(43,132,235,0.06)" stroke="rgba(43,132,235,0.25)" stroke-width="1"/>
+<text x="560" y="319" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="600" fill="#1A2233" text-anchor="middle">h(D-1002)</text>
+<rect x="460" y="366" width="200" height="48" rx="6" fill="rgba(43,132,235,0.06)" stroke="rgba(43,132,235,0.25)" stroke-width="1"/>
+<text x="560" y="395" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="600" fill="#1A2233" text-anchor="middle">h(D-1003)</text>
+<rect x="460" y="442" width="200" height="48" rx="6" fill="rgba(43,132,235,0.06)" stroke="rgba(43,132,235,0.25)" stroke-width="1"/>
+<text x="560" y="471" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="600" fill="#1A2233" text-anchor="middle">h(D-1004)</text>
+<rect x="760" y="252" width="170" height="48" rx="6" fill="rgba(43,132,235,0.06)" stroke="rgba(43,132,235,0.25)" stroke-width="1"/>
+<text x="845" y="281" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="600" fill="#1A2233" text-anchor="middle">H(01·02)</text>
+<rect x="760" y="404" width="170" height="48" rx="6" fill="rgba(43,132,235,0.06)" stroke="rgba(43,132,235,0.25)" stroke-width="1"/>
+<text x="845" y="433" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" font-weight="600" fill="#1A2233" text-anchor="middle">H(03·04)</text>
+<rect x="1030" y="324" width="180" height="56" rx="8" fill="rgba(0,184,120,0.1)" stroke="rgba(0,184,120,0.45)" stroke-width="1" filter="url(#ds)"/>
+<text x="1120" y="349" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="700" fill="#02042B" text-anchor="middle">Merkle root</text>
+<text x="1120" y="369" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#5B6478" text-anchor="middle">9f3a…c7e1</text>
+<path d="M 660 238 L 710 238 L 710 276 L 756 276" fill="none" stroke="#B9C2D0" stroke-width="1.2"/>
+<path d="M 660 314 L 710 314 L 710 276 L 756 276" fill="none" stroke="#B9C2D0" stroke-width="1.2"/>
+<path d="M 660 390 L 710 390 L 710 428 L 756 428" fill="none" stroke="#B9C2D0" stroke-width="1.2"/>
+<path d="M 660 466 L 710 466 L 710 428 L 756 428" fill="none" stroke="#B9C2D0" stroke-width="1.2"/>
+<path d="M 930 276 L 980 276 L 980 352 L 1026 352" fill="none" stroke="#B9C2D0" stroke-width="1.2"/>
+<path d="M 930 428 L 980 428 L 980 352 L 1026 352" fill="none" stroke="#B9C2D0" stroke-width="1.2"/>
+<path d="M 1120 380 L 1120 409.5" fill="none" stroke="#00B878" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="1120,416 1116.6,408 1123.4,408" fill="#00B878"/>
+<rect x="1030" y="420" width="180" height="72" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1044" y="438" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(1053 447) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12a8.5 8.5 0 1 0 17 0a8.5 8.5 0 1 0 -17 0"/><path d="M3.5 12h17"/><path d="M12 3.5c-3.2 2.6-3.2 14.4 0 17"/><path d="M12 3.5c3.2 2.6 3.2 14.4 0 17"/></g>
+<text x="1092" y="452" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Anchored daily</text>
+<text x="1092" y="470" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">root is public</text>
+<rect x="460" y="640" width="520" height="190" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="474" y="660" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(483 669) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5L19.5 6.5"/></g>
+<text x="522" y="674" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#00B878" text-anchor="start">Verification — INTACT</text>
+<text x="522" y="700" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">1 · recompute leaf hashes from records</text>
+<text x="522" y="721" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">2 · walk the path up to the root</text>
+<text x="522" y="742" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">3 · compare with the published anchor</text>
+<rect x="522" y="772" width="100.4" height="24" rx="12" fill="rgba(0,184,120,0.1)" stroke="rgba(0,184,120,0.32)" stroke-width="1"/>
+<text x="572.2" y="787.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#00B878" text-anchor="middle" letter-spacing="0.3">200 · INTACT</text>
+<rect x="1010" y="640" width="542" height="190" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1024" y="660" width="36" height="36" rx="8" fill="rgba(229,72,77,0.12)" stroke="rgba(229,72,77,0.3)" stroke-width="1"/>
+<g transform="translate(1033 669) scale(0.7500)" fill="none" stroke="#E5484D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 21.5 20H2.5L12 3.5z"/><path d="M12 10v4.2"/><path d="M12 17.3v.01"/></g>
+<text x="1072" y="674" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#E5484D" text-anchor="start">Tamper test — MISMATCH</text>
+<text x="1072" y="700" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">flip 1 byte in D-1003 → leaf hash changes</text>
+<text x="1072" y="721" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">root ≠ published anchor → chain broken</text>
+<text x="1072" y="742" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">tamper is detected — not just claimed</text>
+<rect x="1072" y="772" width="112.8" height="24" rx="12" fill="rgba(229,72,77,0.1)" stroke="rgba(229,72,77,0.32)" stroke-width="1"/>
+<text x="1128.4" y="787.5" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#E5484D" text-anchor="middle" letter-spacing="0.3">409 · TAMPERED</text>
+<path d="M 1120 492 L 1120 549.5" fill="none" stroke="#98A2B3" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="6 5"/>
+<polygon points="1120,556 1116.6,548 1123.4,548" fill="#98A2B3"/>
+<circle cx="1120" cy="560" r="3.5" fill="#98A2B3"/>
+<path d="M 1120 560 L 727 560 Q 720 560 720 567 L 720 629.5" fill="none" stroke="#98A2B3" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="6 5"/>
+<polygon points="720,636 716.6,628 723.4,628" fill="#98A2B3"/>
+<path d="M 1120 560 L 1273 560 Q 1280 560 1280 567 L 1280 629.5" fill="none" stroke="#98A2B3" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="6 5"/>
+<polygon points="1280,636 1276.6,628 1283.4,628" fill="#98A2B3"/>
+<text x="880" y="548" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#5B6478" text-anchor="middle">re-verify any time · GET /api/audit/verify</text>
+<path d="M 48 958 L 74 958" fill="none" stroke="#5B6478" stroke-width="1.5"/>
+<text x="80" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">solid — hash links</text>
+<path d="M 221.2 958 L 247.2 958" fill="none" stroke="#98A2B3" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="253.2" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">dashed — verification path</text>
+<text x="1552" y="986" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#5B6478" text-anchor="end" opacity="0.65">RTO Trust Layer · generated by design-kit/generate.ts · tokens = fintech-console-v2 · Inter / JetBrains Mono</text>
+</svg>

@@ -1,0 +1,8 @@
+{
+  "name": "RTO Diagram Kit",
+  "id": "00000000-0000-0000-0000-000000000000",
+  "api": "1.0.0",
+  "main": "code.js",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page"
+}

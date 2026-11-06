@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif">
+<!-- RTO Trust Layer diagram kit · tokens: navy #02042B blue #2B84EB mint #00B878 amber #F5A623 red #E5484D bg #F6F8FC border #E3E8F0 -->
+<defs><filter id="ds" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#02042B" flood-opacity="0.08"/></filter></defs>
+<rect width="1600" height="1000" fill="#FFFFFF"/>
+<rect x="48" y="40" width="74" height="26" rx="13" fill="rgba(43,132,235,0.1)" stroke="rgba(43,132,235,0.32)" stroke-width="1"/>
+<text x="85" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#2B84EB" text-anchor="middle" letter-spacing="0.6">FIG 01</text>
+<text x="48" y="102" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="20" font-weight="700" fill="#02042B" text-anchor="start">System Context — a COD order under the microscope</text>
+<text x="48" y="126" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="400" fill="#5B6478" text-anchor="start">Where RTO Trust Layer sits: between the merchant storefront and the courier network. Verdicts return before the courier leaves.</text>
+<rect x="1462.6" y="40" width="89.4" height="26" rx="13" fill="rgba(0,184,120,0.1)" stroke="rgba(0,184,120,0.32)" stroke-width="1"/>
+<text x="1507.3" y="57" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10.5" font-weight="600" fill="#00B878" text-anchor="middle" letter-spacing="0.3">p50 29 ms</text>
+<circle cx="122" cy="338" r="26" fill="#FFFFFF" stroke="#E3E8F0" filter="url(#ds)"/>
+<g transform="translate(111 327) scale(0.9167)" fill="none" stroke="#5B6478" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7.5a3.5 3.5 0 1 0 7 0a3.5 3.5 0 1 0 -7 0"/><path d="M4 20.5c0-4.2 3.6-6.5 8-6.5s8 2.3 8 6.5"/></g>
+<text x="122" y="382" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="middle">Shopper</text>
+<text x="122" y="397" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="middle">COD checkout</text>
+<circle cx="122" cy="770" r="26" fill="#FFFFFF" stroke="#E3E8F0" filter="url(#ds)"/>
+<g transform="translate(111 759) scale(0.9167)" fill="none" stroke="#5B6478" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h10a1 1 0 0 1 1 1v7.5a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1v-7.5a1 1 0 0 1 1 -1z"/><path d="M14 7h4.2l3.3 3.3v3.7H14V7z"/><path d="M4.7 17.5a1.8 1.8 0 1 0 3.6 0a1.8 1.8 0 1 0 -3.6 0"/><path d="M15.7 17.5a1.8 1.8 0 1 0 3.6 0a1.8 1.8 0 1 0 -3.6 0"/></g>
+<text x="122" y="814" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1A2233" text-anchor="middle">Courier</text>
+<text x="122" y="829" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="middle">delivery · RTO</text>
+<rect x="230" y="250" width="330" height="340" rx="12" fill="#F6F8FC" stroke="#E3E8F0" stroke-width="1"/>
+<text x="246" y="276" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">MERCHANT STACK</text>
+<rect x="250" y="296" width="290" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="264" y="320" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(273 329) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9 5.5 4h13L20 9"/><path d="M4.5 9.2V20h15V9.2"/><path d="M9.5 20v-5.5h5V20"/><path d="M4 9.2h16"/></g>
+<text x="312" y="334" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Storefront</text>
+<text x="312" y="352" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">Shopify · WooCommerce</text>
+<rect x="250" y="436" width="290" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="264" y="460" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(273 469) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 3.5h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M4.5 14h15a1.5 1.5 0 0 1 1.5 1.5v3.5a1.5 1.5 0 0 1 -1.5 1.5h-15a1.5 1.5 0 0 1 -1.5 -1.5v-3.5a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M6.2 6.75h.01"/><path d="M6.2 17.25h.01"/></g>
+<text x="312" y="474" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Order API</text>
+<text x="312" y="492" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">creates order · calls risk</text>
+<text x="250" y="572" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start" opacity="0.8">integrations · Shopify · WooCommerce · custom REST</text>
+<rect x="680" y="180" width="540" height="620" rx="12" fill="rgba(43,132,235,0.05)" stroke="rgba(43,132,235,0.45)" stroke-width="1"/>
+<text x="696" y="206" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#2B84EB" text-anchor="start" letter-spacing="0.9">RTO TRUST LAYER</text>
+<text x="1204" y="206" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="500" fill="#5B6478" text-anchor="end" letter-spacing="0.4">SLA &lt; 30 ms</text>
+<rect x="780" y="250" width="360" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="794" y="274" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(803 283) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.5l7.5 3v5c0 4.8-3.2 8.9-7.5 10.7-4.3-1.8-7.5-5.9-7.5-10.7v-5l7.5-3z"/><path d="M9 11.5l2.2 2.2 4-4.4"/></g>
+<text x="842" y="288" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">API Gateway</text>
+<text x="842" y="306" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">scorer auth · 10 req/s cap</text>
+<rect x="780" y="386" width="360" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="794" y="410" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(803 419) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5.5a7 2.8 0 1 0 14 0a7 2.8 0 1 0 -14 0"/><path d="M5 5.5v13a7 2.8 0 0 0 14 0v-13"/><path d="M5 12a7 2.8 0 0 0 14 0"/></g>
+<text x="842" y="424" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Feature Store</text>
+<text x="842" y="442" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">rings · history · device · geo</text>
+<rect x="780" y="522" width="360" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="794" y="546" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(803 555) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 5h11a1.5 1.5 0 0 1 1.5 1.5v11a1.5 1.5 0 0 1 -1.5 1.5h-11a1.5 1.5 0 0 1 -1.5 -1.5v-11a1.5 1.5 0 0 1 1.5 -1.5z"/><path d="M10.5 9.5h3a1 1 0 0 1 1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1z"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></g>
+<text x="842" y="560" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">ONNX Inference</text>
+<text x="842" y="578" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">GBDT · 60 features · 1.6 µs/row</text>
+<rect x="780" y="658" width="360" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="794" y="682" width="36" height="36" rx="8" fill="rgba(43,132,235,0.12)" stroke="rgba(43,132,235,0.3)" stroke-width="1"/>
+<g transform="translate(803 691) scale(0.7500)" fill="none" stroke="#2B84EB" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12H6l3.5-8 4.5 16 3.5-8h4"/></g>
+<text x="842" y="696" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#1A2233" text-anchor="start">Decision Engine</text>
+<text x="842" y="714" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">thresholds · rules DSL</text>
+<path d="M 960 334 L 960 375.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="960,382 956.6,374 963.4,374" fill="#5B6478"/>
+<path d="M 960 470 L 960 511.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="960,518 956.6,510 963.4,510" fill="#5B6478"/>
+<path d="M 960 606 L 960 647.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="960,654 956.6,646 963.4,646" fill="#5B6478"/>
+<rect x="1290" y="180" width="262" height="620" rx="12" fill="#F6F8FC" stroke="#E3E8F0" stroke-width="1"/>
+<text x="1306" y="206" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start" letter-spacing="0.9">VERDICT</text>
+<rect x="1310" y="290" width="222" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1324" y="314" width="36" height="36" rx="8" fill="rgba(0,184,120,0.12)" stroke="rgba(0,184,120,0.3)" stroke-width="1"/>
+<g transform="translate(1333 323) scale(0.7500)" fill="none" stroke="#00B878" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5L19.5 6.5"/></g>
+<text x="1372" y="328" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#00B878" text-anchor="start">ACCEPT</text>
+<text x="1372" y="346" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">auto-approve COD</text>
+<rect x="1310" y="430" width="222" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1324" y="454" width="36" height="36" rx="8" fill="rgba(245,166,35,0.12)" stroke="rgba(245,166,35,0.3)" stroke-width="1"/>
+<g transform="translate(1333 463) scale(0.7500)" fill="none" stroke="#F5A623" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2h5a2.5 2.5 0 0 1 2.5 2.5v15a2.5 2.5 0 0 1 -2.5 2.5h-5a2.5 2.5 0 0 1 -2.5 -2.5v-15a2.5 2.5 0 0 1 2.5 -2.5z"/><path d="M11 18.5h2"/></g>
+<text x="1372" y="468" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#F5A623" text-anchor="start">REVIEW · OTP</text>
+<text x="1372" y="486" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">verify shopper</text>
+<rect x="1310" y="570" width="222" height="84" rx="8" fill="#FFFFFF" stroke="#E3E8F0" stroke-width="1" filter="url(#ds)"/>
+<rect x="1324" y="594" width="36" height="36" rx="8" fill="rgba(229,72,77,0.12)" stroke="rgba(229,72,77,0.3)" stroke-width="1"/>
+<g transform="translate(1333 603) scale(0.7500)" fill="none" stroke="#E5484D" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></g>
+<text x="1372" y="608" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="13" font-weight="600" fill="#E5484D" text-anchor="start">REJECT</text>
+<text x="1372" y="626" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="400" fill="#5B6478" text-anchor="start">block COD · prepaid</text>
+<path d="M 148 338 L 239.5 338" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="246,338 238,341.4 238,334.6" fill="#5B6478"/>
+<text x="198" y="326" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="middle">1 · COD order</text>
+<path d="M 395 380 L 395 425.5" fill="none" stroke="#5B6478" stroke-width="1.25" stroke-linecap="round"/>
+<polygon points="395,432 391.6,424 398.4,424" fill="#5B6478"/>
+<path d="M 540 478 L 618 478 Q 625 478 625 471 L 625 299 Q 625 292 632 292 L 769.5 292" fill="none" stroke="#5B6478" stroke-width="1.5" stroke-linecap="round"/>
+<polygon points="776,292 768,295.4 768,288.6" fill="#5B6478"/>
+<text x="632" y="282" font-family="'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace" font-size="10" font-weight="600" fill="#5B6478" text-anchor="start">2 · POST /api/risk/score</text>
+<path d="M 780 700 L 667 700 Q 660 700 660 693 L 660 517 Q 660 510 653 510 L 550.5 510" fill="none" stroke="#528FF0" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="6 5"/>
+<polygon points="544,510 552,506.6 552,513.4" fill="#528FF0"/>
+<text x="668" y="692" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#528FF0" text-anchor="start">3 · decision JSON · verdict</text>
+<path d="M 1140 672 L 1173 672 Q 1180 672 1180 665 L 1180 339 Q 1180 332 1187 332 L 1299.5 332" fill="none" stroke="#00B878" stroke-width="1.75" stroke-linecap="round"/>
+<polygon points="1306,332 1298,335.4 1298,328.6" fill="#00B878"/>
+<path d="M 1140 700 L 1208 700 Q 1215 700 1215 693 L 1215 479 Q 1215 472 1222 472 L 1299.5 472" fill="none" stroke="#F5A623" stroke-width="1.75" stroke-linecap="round"/>
+<polygon points="1306,472 1298,475.4 1298,468.6" fill="#F5A623"/>
+<path d="M 1140 728 L 1243 728 Q 1250 728 1250 721 L 1250 619 Q 1250 612 1257 612 L 1299.5 612" fill="none" stroke="#E5484D" stroke-width="1.75" stroke-linecap="round"/>
+<polygon points="1306,612 1298,615.4 1298,608.6" fill="#E5484D"/>
+<text x="1188" y="662" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#00B878" text-anchor="start">accept</text>
+<text x="1223" y="690" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#F5A623" text-anchor="start">review</text>
+<text x="1258" y="718" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#E5484D" text-anchor="start">reject</text>
+<path d="M 148 770 L 693 770 Q 700 770 700 763 L 700 435 Q 700 428 707 428 L 769.5 428" fill="none" stroke="#98A2B3" stroke-width="1.25" stroke-linecap="round" stroke-dasharray="6 5"/>
+<polygon points="776,428 768,431.4 768,424.6" fill="#98A2B3"/>
+<text x="260" y="758" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#5B6478" text-anchor="start">4 · delivery outcome · RTO events (async)</text>
+<path d="M 48 958 L 74 958" fill="none" stroke="#5B6478" stroke-width="1.5"/>
+<text x="80" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">solid — sync request</text>
+<path d="M 234 958 L 260 958" fill="none" stroke="#98A2B3" stroke-width="1.5" stroke-dasharray="6 5"/>
+<text x="266" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">dashed — async / feedback</text>
+<path d="M 452 958 L 478 958" fill="none" stroke="#00B878" stroke-width="1.5"/>
+<text x="484" y="961.5" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="10" font-weight="400" fill="#5B6478" text-anchor="start">verdict paths</text>
+<text x="1552" y="986" font-family="Inter, 'Segoe UI', system-ui, -apple-system, sans-serif" font-size="9" font-weight="400" fill="#5B6478" text-anchor="end" opacity="0.65">RTO Trust Layer · generated by design-kit/generate.ts · tokens = fintech-console-v2 · Inter / JetBrains Mono</text>
+</svg>

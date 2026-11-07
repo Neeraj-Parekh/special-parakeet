@@ -68,7 +68,7 @@ champion model answers. You can flip datasets mid-demo to watch the
 | Param | Champion | PR-AUC | Why the lift | Sample request |
 |---|---|---|---|---|
 | `?dataset=amazon` (default) | `rto_kaggle_histgb_20260827` | **0.1027** | Amazon Sale Report has NO `user_id` history — `user_rto_rate` / `merchant_id_rto_rate` are inert. Ceiling ~0.12 for any model on this data. | `curl -X POST localhost:8000/risk/score?dataset=amazon -d '{"order_id":"A-1","amount_inr":12400,"category":"Fashion","customer_id":"C-1"}'` |
-| `?dataset=olist` | `rto_olist_histgb_20260828` | **0.3950** | Olist boleto subset has real `customer_unique_id` / `seller_id` history (494 repeat users). The expanding-window `user_id_rto_rate` / `merchant_id_rto_rate` features actually fire — 3.8× the Amazon champion. | `curl -X POST localhost:8000/risk/score?dataset=olist -d '{"order_id":"O-1","amount_inr":120,"category":"beleza_saude","customer_id":"C-1","merchant_id":"S-1","payment_method":"boleto","pincode":"01310","state":"SP","city":"sao_paulo","created_at":"2018-04-15T10:00:00"}'` |
+| `?dataset=olist` | `rto_olist_histgb_20260828` | **0.3950** | Olist boleto subset has real `customer_unique_id` / `seller_id` history (494 repeat users). The expanding-window `user_id_rto_rate` / `merchant_id_rto_rate` features actually fire — 3.8× the Amazon champion. | `curl -X POST localhost:8000/risk/score?dataset=olist -d '{"order_id":"O-1","amount_inr":120,"category":"beleza_saude","customer_id":"C-1","merchant_id":"S-1","payment_method":"COD","pincode":"01310","state":"SP","city":"sao_paulo","created_at":"2018-04-15T10:00:00"}'` |
 
 The response payload carries `dataset: "amazon"` or `dataset: "olist"` so the
 client can verify which model answered. Both paths share the same downstream

@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280, initial-scale=1">
+<title>03 · Tech Stack — RTO Trust Layer</title>
+<link rel="stylesheet" href="global.css">
+<style>
+  .slide { padding: 46px 48px 44px; }
+  .hd {
+    font-family: var(--font-heading);
+    font-size: 38px; font-weight: 600; line-height: 1.16;
+    letter-spacing: -0.018em; color: var(--ink); margin: 18px 0 0;
+  }
+  .hd .hl { color: var(--primary-deep); }
+  .stack-grid {
+    flex: 1; min-height: 0; margin-top: 26px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+  }
+  .stack-card { display: flex; flex-direction: column; min-height: 0; padding: 20px 24px 12px; }
+  .stack-head { display: flex; align-items: center; justify-content: space-between; }
+  .stack-title { font-family: var(--font-heading); font-size: 18px; font-weight: 600; color: var(--ink); }
+  .tag {
+    font-family: var(--font-num); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 4px 11px; border-radius: 999px; white-space: nowrap;
+  }
+  .tag-live { color: var(--accent-deep); background: rgba(0,184,120,0.12); border: 1px solid rgba(0,134,92,0.32); }
+  .tag-eng { color: var(--primary-deep); background: rgba(43,132,235,0.08); border: 1px solid rgba(43,132,235,0.28); }
+  .stack-list { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 6px; }
+  .stack-row { flex: 1; display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--line); }
+  .stack-row:first-child { border-top: none; }
+  .stack-row p { font-family: var(--font-num); font-size: var(--fs-small); line-height: 1.45; color: var(--ink-soft); }
+  .stack-row b { font-weight: 600; color: var(--ink); }
+  .idx { flex: none; width: 22px; font-family: var(--font-num); font-size: 10px; font-weight: 600; letter-spacing: 0.05em; color: var(--primary-deep); }
+  .ops-card { margin-top: 20px; padding: 18px 24px 20px; }
+  .ops-title { font-family: var(--font-heading); font-size: 18px; font-weight: 600; color: var(--ink); margin-bottom: 12px; }
+  .ops-grid { display: grid; grid-template-columns: 1.06fr 1.14fr 0.80fr; }
+  .ops-grid p { font-family: var(--font-num); font-size: var(--fs-small); line-height: 1.55; color: var(--ink-soft); padding: 0 20px; border-left: 1px solid var(--line); }
+  .ops-grid p:first-child { border-left: none; padding-left: 0; }
+  .ops-grid p:last-child { padding-right: 0; }
+  .ops-grid b { font-weight: 600; color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="slide">
+  <div><span class="chip">03 · TECH STACK</span></div>
+  <h1 class="hd">Two codebases, <span class="hl">one contract</span> —<br>built like a payments company would.</h1>
+
+  <div class="stack-grid">
+    <div class="card stack-card">
+      <div class="stack-head">
+        <div class="stack-title">Merchant surface</div>
+        <span class="tag tag-live">live</span>
+      </div>
+      <div class="stack-list">
+        <div class="stack-row"><span class="idx">01</span><p><b>Next.js 16</b> · App Router · TypeScript</p></div>
+        <div class="stack-row"><span class="idx">02</span><p><b>Tailwind CSS 4</b> + shadcn/ui</p></div>
+        <div class="stack-row"><span class="idx">03</span><p><b>Prisma</b> + SQLite (Neon-ready)</p></div>
+        <div class="stack-row"><span class="idx">04</span><p><b>JWT auth</b> — RFC 6749 rotation, per-route RBAC scopes</p></div>
+        <div class="stack-row"><span class="idx">05</span><p><b>Deployed:</b> Vercel (git auto-deploy)</p></div>
+      </div>
+    </div>
+
+    <div class="card stack-card">
+      <div class="stack-head">
+        <div class="stack-title">Risk engine</div>
+        <span class="tag tag-eng">local / cloud</span>
+      </div>
+      <div class="stack-list">
+        <div class="stack-row"><span class="idx">01</span><p><b>Python 3.12</b> · FastAPI — 5,107 lines, 22 endpoints</p></div>
+        <div class="stack-row"><span class="idx">02</span><p><b>ONNX Runtime</b> inference · scikit-learn pipelines</p></div>
+        <div class="stack-row"><span class="idx">03</span><p><b>SHAP TreeSHAP</b> explainability (cached explainer)</p></div>
+        <div class="stack-row"><span class="idx">04</span><p><b>PostgreSQL</b> + 12 alembic migrations · Redis Streams with Kafka seam</p></div>
+        <div class="stack-row"><span class="idx">05</span><p><b>Prometheus</b> metrics · OpenTelemetry tracing</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card ops-card">
+    <div class="ops-title">Operations &amp; delivery</div>
+    <div class="ops-grid">
+      <p><b>K8s multi-AZ manifests</b> — topologySpread, PDB, Little's-Law-derived HPA (λ=1000 rps, p99 40ms ⇒ L=40)</p>
+      <p><b>Terraform</b> (multi-AZ RDS + MSK + EKS), <b>Docker Compose 9-service stack</b>, <b>7-stage TFX MLOps pipeline</b> with PR-AUC ≥ 0.60 deploy gate</p>
+      <p><b>CI:</b> Semgrep (owasp-top-ten), TruffleHog, Dependabot auto-merge, nightly CVE scan</p>
+    </div>
+  </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,81 @@
+{
+  "design": {
+    "title": "RTO Trust Layer — Paytm Build for India AI Hackathon Pitch",
+    "style_name": "Fintech editorial — light, navy-chrome, decision-semantic accents (matches the live product's design system)",
+    "palette": { "background": "#F7F9FC", "primary": "#2B84EB", "accent": "#00B878" },
+    "typography": { "heading": "Space Grotesk", "body": "Inter", "numeric": "JetBrains Mono" },
+    "reference": "Stripe Sessions / Linear light keynote — generous whitespace, card grids, mono numerals, navy cover"
+  },
+  "global_css_path": "/home/z/my-project/download/slides/global.css",
+  "slides_dir": "/home/z/my-project/download/slides",
+  "language": "en",
+  "speaker_notes": "none",
+  "slides": [
+    {
+      "title": "Cover — RTO Trust Layer",
+      "layout": "cover",
+      "output_path": "/home/z/my-project/download/slides/slide_01.html",
+      "task_brief": "COVER SLIDE on dark navy (.slide-dark). Top-left small mono breadcrumb: 'PAYTM BUILD FOR INDIA AI HACKATHON — PUNE · NOV 15, 2026'. Center-left dominant title in heading font, white: 'RTO Trust Layer' with a thin brand-blue underline accent. Subtitle (2 lines, soft white): 'The merchant's AI risk teammate for Cash-on-Delivery — bounded, explainable, and regulator-ready by construction.' Below subtitle, a row of three decision pills using the product's own vocabulary: .pill-accept 'ACCEPT', .pill-review 'REVIEW · OTP', .pill-reject 'REJECT' (these are the product's three decisions — render them as visual motif). Bottom area split into two columns: LEFT a 'Team' block: 'Team RTO Trust Layer' bold + 'Neeraj Parekh — ENTC (TY), MIT Academy of Engineering, Pune' + mono line 'Track 1 · Merchant Growth AI'. RIGHT a 'Proof-of-life' block in mono, small: 'github.com/Neeraj-Parekh/special-parakeet' and 'rto-trust-layer.vercel.app' and '397 tests passing · 22 endpoints live'. Use a subtle geometric background treatment: 2-3 large very-low-opacity (4-6%) brand-blue/mint circles or arcs anchored to the right edge — pure CSS, no images. No page footer."
+    },
+    {
+      "title": "Problem — COD is unpriced credit",
+      "layout": "stats grid + narrative",
+      "output_path": "/home/z/my-project/download/slides/slide_02.html",
+      "task_brief": "Section chip at top: '01 · PROBLEM STATEMENT'. Headline: 'Cash-on-delivery is India's largest unpriced credit risk.' Lead paragraph (max 2 lines): 'Every COD order extends a stranger a 3–7 day uncollateralized loan. When it comes back, the merchant pays — courier both ways, refund, refund, inventory stuck for weeks.' Then a 5-stat grid (cards, big mono numerals, small caps labels): [1] '₹50,000 Cr' — 'lost to COD returns every year (industry est.)'; [2] '~23%' — 'average RTO across 180M+ shoppers (GoKwik)'; [3] '58%' — 'festive-quarter COD returns vs <15% prepaid'; [4] '₹200–250' — 'net loss on a ₹1,000 RTO order — zero revenue'; [5] '12×' — 'a failed delivery costs vs a verification call'. Bottom band titled 'Why incumbents don't fix it' with three short items in a row: 'Pincode-level flags — block entire neighbourhoods, not risky customers' / 'Black-box scores — merchant can't see WHY an order was flagged' / 'No audit trail — nothing to show a regulator or a CFO'. Source footnote line at the very bottom: 'Sources verified 2026-11-06 · analysis/ECONOMICS_OF_COD_TRUST.md in the repo.'"
+    },
+    {
+      "title": "Problem — why now",
+      "layout": "three-column timing",
+      "output_path": "/home/z/my-project/download/slides/slide_03.html",
+      "task_brief": "Section chip: '01 · PROBLEM STATEMENT — WHY NOW'. Headline: 'Three clocks converged in 18 months.' Three tall cards side by side, each with a mono date badge, bold title, and 2–3 sentence body: CARD 1 badge 'OCT 2025' title 'NPCI OC-201B — UPI Circle' body: 'Delegated payments got hard caps: ₹5,000 per transaction, ₹15,000 per month, 5 devices, 24h cooling. Any AI agent moving money on UPI must live inside these rails — most agent demos ignore them.' CARD 2 badge 'JUN 2026' title 'RBI draft Model Risk Management guidance' body: 'Tamper-evident audit trails, human-in-the-loop overrides, red-teaming, kill switches — mandated for every AI model in Indian finance. Today's black-box RTO shields cannot comply.' CARD 3 badge '2025–26' title 'Zero-MDR economics' body: '>96% of consumer UPI payments are under ₹2,000 — payment margin is ~zero (PCI estimates ₹5,500 Cr/yr subsidy). Platform value moved to merchant services: Paytm's own pivot — 13.7M merchant device subscriptions, merchant lending, agentic AI.' Bottom single-line takeaway in bold: 'The window: whoever builds trust infrastructure for merchant-side AI now sets the standard the regulation will demand.'"
+    },
+    {
+      "title": "Solution — overview",
+      "layout": "key message + 3 pillars",
+      "output_path": "/home/z/my-project/download/slides/slide_04.html",
+      "task_brief": "Section chip: '02 · SOLUTION'. Headline: 'RTO Trust Layer — a merchant risk command center with a bounded AI operator.' Sub-line: 'Not a model. Not a chatbot. A platform where every decision is cost-optimal, explainable, and audit-sealed.' Three pillar cards: PILLAR 1 'Decide' — 'Every order gets a 3-way verdict — ACCEPT / REVIEW / REJECT — with thresholds derived from the merchant's own cost structure (Bahnsen cost-sensitive BMR), never a static pincode blocklist.' Include the three pills again inline. PILLAR 2 'Explain' — 'Inline TreeSHAP ships every decision with ranked, signed reason codes: \"73% risk because: COD + ₹12,400 + new customer + vague address.\" A CFO can read it. A regulator can verify it.' PILLAR 3 'Guard' — 'The AI operator works inside a 7-action allowlist. Refusals are enforced by a deterministic classifier BEFORE any LLM call — \"block order\" can never return anything but refused. Money-moving actions need dual-control HMAC co-signs.' Bottom strip in mono, small: 'Live today: rto-trust-layer.vercel.app · vendor landing + merchant console + /story three-pane demo · GitHub: Neeraj-Parekh/special-parakeet'."
+    },
+    {
+      "title": "Solution — how it works",
+      "layout": "numbered pipeline + guardrail rail",
+      "output_path": "/home/z/my-project/download/slides/slide_05.html",
+      "task_brief": "Section chip: '02 · SOLUTION — HOW IT WORKS'. Headline: 'One request path, six guarantees.' Main area: a horizontal 6-step numbered pipeline rendered as sequential cards (numbers 01–06, no SVG connectors, just numbered cards left-to-right; use a thin arrow character '→' between them or spacing): 01 'Order in' — 'Checkout POSTs the order: amount, category, customer, address, PIN'; 02 'Memory' — '79-dim feature store: per-customer RTO history, recency/frequency/monetary, device + geo graph signals'; 03 'Score' — 'ONNX HistGradientBoosting champion → calibrated P(RTO) in 1.59 µs/row'; 04 'Decide' — 'Cost-optimal BMR over the merchant's FP/FN/OTP costs → ACCEPT / REVIEW / REJECT'; 05 'Check' — 'Rules engine + OC-201B mandate caps (₹5K/txn, ₹15K/mo, 24h cooling) — breach returns 422, proven live'; 06 'Seal' — 'SHA-256 hash-chained + Merkle-sealed audit record with RFC 6962 inclusion proofs'. Below the pipeline, a horizontal 'guardrail rail' — one wide navy card (.slide-dark styling inline or dark background) listing in one line of mono text: 'kill-switch · circuit breaker (never fail-open) · per-IP rate limiting · drift monitors (DDM + ADWIN) · replay-nonce table · RFC 6749 token rotation'."
+    },
+    {
+      "title": "Solution — evidence",
+      "layout": "bento proof grid",
+      "output_path": "/home/z/my-project/download/slides/slide_06.html",
+      "task_brief": "Section chip: '02 · SOLUTION — EVIDENCE'. Headline: 'Validated on real data. Audited line by line.' Bento grid of 5 proof cards (varying spans): CARD A (large, hero) '32× baseline lift' — 'PR-AUC 0.3950 on Olist Brazilian e-commerce (19,784 orders, real repeat-customer history). Baseline 0.0123. The signal is per-customer memory — exactly what incumbents don't have.' CARD B '6.05×' — 'Amazon India champion: PR-AUC 0.1027 vs 0.017 baseline — honest about the ceiling: no user history in that dataset (ceiling ≈0.12).' CARD C '34% of loss prevented' — 'Selective OTP verification: challenge only orders where intervention cost < expected loss (Drummond-Holte optimal sweep over 19 thresholds).' CARD D '397 / 411' — 'pytest suite: 397 passed, 0 failed, 14 skipped (Postgres/Redis paths). Plus AST meta-regression guards against tautology tests.' CARD E '33 real · 0 decorative' — 'Independent 37-feature audit with file:line evidence. Every claim in this deck maps to a file you can open.' Source footnote: 'Metrics: data/olist/artifacts/metrics.json · audit: AUDIT_REPORT.md in repo.'"
+    },
+    {
+      "title": "Tech stack",
+      "layout": "two-column stack map",
+      "output_path": "/home/z/my-project/download/slides/slide_07.html",
+      "task_brief": "Section chip: '03 · TECH STACK'. Headline: 'Two codebases, one contract — built like a payments company would.' LEFT column card 'Merchant surface (live)' mono list: 'Next.js 16 · App Router · TypeScript' / 'Tailwind CSS 4 + shadcn/ui' / 'Prisma + SQLite (Neon-ready)' / 'JWT auth — RFC 6749 rotation, per-route RBAC scopes' / 'Deployed: Vercel (git auto-deploy)'. RIGHT column card 'Risk engine (local/cloud)' mono list: 'Python 3.12 · FastAPI — 5,107 lines, 22 endpoints' / 'ONNX Runtime inference · scikit-learn pipelines' / 'SHAP TreeSHAP explainability (cached explainer)' / 'PostgreSQL + 12 alembic migrations · Redis Streams with Kafka seam' / 'Prometheus metrics · OpenTelemetry tracing'. FULL-WIDTH bottom card 'Operations & delivery' in three mono sub-columns: 'K8s multi-AZ manifests — topologySpread, PDB, Little's-Law-derived HPA (λ=1000 rps, p99 40ms ⇒ L=40)' / 'Terraform (multi-AZ RDS + MSK + EKS), Docker Compose 9-service stack, 7-stage TFX MLOps pipeline with PR-AUC ≥ 0.60 deploy gate' / 'CI: Semgrep (owasp-top-ten), TruffleHog, Dependabot auto-merge, nightly CVE scan'. Keep text sizes at var(--fs-small) for lists so nothing overflows."
+    },
+    {
+      "title": "USP",
+      "layout": "comparison — us vs incumbents",
+      "output_path": "/home/z/my-project/download/slides/slide_08.html",
+      "task_brief": "Section chip: '04 · USP'. Headline: 'Four things nobody else ships together.' Four numbered differentiator rows (each a card with a large mono number 01–04 on the left, bold claim, then 1–2 sentence proof): 01 'Memory beats pincode' — 'Incumbents flag postal codes. We underwrite the customer: 79-dim per-customer history is the feature family that produced the 32× lift. A good repeat customer in a bad PIN ships normally.' 02 'Bounded by construction, not by prompt' — 'The operator console's refusals are enforced by a deterministic classifier that runs BEFORE the LLM. Read src/app/api/copilot/route.ts: there is no code path where \"block order\" returns anything but refused. OC-201B caps are enforced the same way — 422 on breach.' 03 'Regulator-ready by design' — 'Merkle-sealed audit (RFC 6962 proofs), dual-control HMAC overrides, kill-switch, drift monitors, red-team docs — mapped 1:1 to RBI's June 2026 MRM guidance in docs/RBI_MRM_MAPPING.md.' 04 'The merchant owns the economics' — 'Rules DSL (compile-checked, no eval) + live cost-curve sliders. Thresholds come from the merchant's own FP/FN costs — not a black box they can't tune.' Bottom-right small note: 'Incumbent comparison kept honest: incumbents have distribution (millions of merchants); we have the decision infrastructure distribution needs.'"
+    },
+    {
+      "title": "Impact & benefits",
+      "layout": "quadrant grid",
+      "output_path": "/home/z/my-project/download/slides/slide_09.html",
+      "task_brief": "Section chip: '05 · IMPACT & BENEFITS'. Headline: 'Everyone in the COD chain gets paid back.' 2×2 quadrant of cards: QUADRANT 'Merchant' (mint accent icon-emoji 🏪 or Material icon 'storefront') — '₹200–250 saved per prevented ₹1,000 RTO order. Inventory cash unlocked from 60–180 day return cycles. Fewer wrongful rejections = retained revenue. Selective OTP cuts verification spend by challenging only marginal orders.' QUADRANT 'Shopper' (icon 'person') — 'Fewer wrongful COD refusals at checkout. OTP friction only when risk actually justifies it. A memory of good behaviour — repeat customers get instant acceptance.' QUADRANT 'Platform — Paytm' (icon 'hub') — 'Merchant risk services on zero-MDR rails: the monetization surface Paytm's own pivot points at (13.7M device subscriptions, merchant lending). Risk decisions are the highest-frequency, highest-value merchant touchpoint. Agentic-commerce guardrails shipped before regulators mandate them.' QUADRANT 'Regulator & economy' (icon 'account_balance') — 'Tamper-evident audit trails align with RBI MRM guidance before it becomes law. Formalizes ₹50,000 Cr of informal credit. Kill-switch + dual-control = auditability an inspector can verify.' Each quadrant: icon, bold title, 3 short benefit lines. Keep lines terse."
+    },
+    {
+      "title": "Business model",
+      "layout": "pricing + wedge + expansion",
+      "output_path": "/home/z/my-project/download/slides/slide_10.html",
+      "task_brief": "Section chip: '06 · BUSINESS MODEL'. Headline: 'Priced where the value lands: per decision, not per seat.' Three-column layout: COLUMN 1 card 'Pricing' — big mono '₹0.25' 'per scored order (volume tiers ₹0.10–0.50)' + line 'SaaS tier: ₹999/mo per merchant incl. console + audit exports' + offset framing line in bold: 'Pays for itself at 5 prevented RTO orders/month.' COLUMN 2 card 'Wedge — distribution' — 'Paytm merchant base: 13.7M device subscribers already paying monthly for merchant tooling. The risk console slots into the same subscription motion as Paytm's Soundbox — a decision layer on rails merchants already trust.' COLUMN 3 card 'Expansion' — numbered mini-list: '1. Merchant lending risk — RTO history is a repayment signal (underwrite the same memory twice)' / '2. Agentic-commerce guardrails — license the bounded-agent + mandate-cap layer to any agent spending on UPI (OC-201B-native)' / '3. RTO insurance pricing — per-merchant loss curves make return insurance underwritable'. Bottom full-width takeaway bar (light blue tint): 'Zero-MDR made payment margin ~zero. Merchant outcomes are the margin. We price the outcome.'"
+    },
+    {
+      "title": "Closing — the ask",
+      "layout": "closing dark",
+      "output_path": "/home/z/my-project/download/slides/slide_11.html",
+      "task_brief": "CLOSING SLIDE on dark navy (.slide-dark), mirrors the cover. Section chip: '07 · BUILD WITH US'. Big statement in heading font, white, 2 lines: 'Give every merchant an AI teammate\\nthey can trust with money.' Under it, one soft-white line: 'Bounded agents. Explainable decisions. Audit trails regulators can verify. Built for UPI's next decade.' Bottom row of three mono link chips (bordered pills, light text): 'github.com/Neeraj-Parekh/special-parakeet' · 'rto-trust-layer.vercel.app' · 'analysis/ECONOMICS_OF_COD_TRUST.md'. Very bottom, small: 'Team RTO Trust Layer — Neeraj Parekh, ENTC TY, MIT Academy of Engineering · Paytm Build for India AI Hackathon, Pune — Track 1: Merchant Growth AI'. Same subtle low-opacity geometric circles as the cover for visual bookending. No other content — let it breathe."
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280, initial-scale=1">
+<title>04 · USP — RTO Trust Layer</title>
+<link rel="stylesheet" href="global.css">
+<style>
+  .slide { padding: 46px 48px 40px; }
+  .hd {
+    font-family: var(--font-heading);
+    font-size: 40px; font-weight: 600; line-height: 1.1;
+    letter-spacing: -0.018em; color: var(--ink); margin: 16px 0 0;
+  }
+  .rows { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; margin-top: 24px; }
+  .row { flex: 1; min-height: 0; display: flex; align-items: center; gap: 20px; padding: 0 24px; }
+  .num { flex: none; width: 56px; font-family: var(--font-num); font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--primary-deep); }
+  .vr { flex: none; width: 1px; height: 58px; background: var(--line); }
+  .row-body { min-width: 0; }
+  .row-title { font-family: var(--font-heading); font-size: 17px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); margin-bottom: 5px; }
+  .proof { font-size: var(--fs-small); line-height: 1.5; color: var(--ink-soft); }
+  .proof b { font-weight: 600; color: var(--ink); }
+  .proof code {
+    font-family: var(--font-num); font-size: 11.5px; color: var(--primary-deep);
+    background: rgba(43,132,235,0.07); border: 1px solid rgba(43,132,235,0.18);
+    border-radius: 4px; padding: 0 5px; white-space: nowrap;
+  }
+  .foot { margin-top: 14px; }
+  .foot .rule { margin-bottom: 10px; }
+  .note { font-size: 12px; line-height: 1.5; color: var(--ink-soft); text-align: right; }
+  .note b { font-weight: 600; color: var(--ink); }
+</style>
+</head>
+<body>
+<div class="slide">
+  <div><span class="chip">04 · USP</span></div>
+  <h1 class="hd">Four things nobody else ships together.</h1>
+
+  <div class="rows">
+    <div class="card row">
+      <div class="num">01</div>
+      <div class="vr"></div>
+      <div class="row-body">
+        <div class="row-title">Memory beats pincode</div>
+        <p class="proof">Incumbents flag postal codes. We underwrite the customer: <b>79-dim per-customer history</b> is the feature family that produced the <b>32× lift</b>. A good repeat customer in a bad PIN ships normally.</p>
+      </div>
+    </div>
+
+    <div class="card row">
+      <div class="num">02</div>
+      <div class="vr"></div>
+      <div class="row-body">
+        <div class="row-title">Bounded by construction, not by prompt</div>
+        <p class="proof">The operator console's refusals are enforced by a <b>deterministic classifier</b> that runs <b>BEFORE the LLM</b>. Read <code>src/app/api/copilot/route.ts</code>: there is no code path where "block order" returns anything but refused. OC-201B caps are enforced the same way — <b>422 on breach</b>.</p>
+      </div>
+    </div>
+
+    <div class="card row">
+      <div class="num">03</div>
+      <div class="vr"></div>
+      <div class="row-body">
+        <div class="row-title">Regulator-ready by design</div>
+        <p class="proof"><b>Merkle-sealed audit</b> (RFC 6962 proofs), <b>dual-control HMAC overrides</b>, kill-switch, drift monitors, red-team docs — mapped 1:1 to RBI's June 2026 MRM guidance in <code>docs/RBI_MRM_MAPPING.md</code>.</p>
+      </div>
+    </div>
+
+    <div class="card row">
+      <div class="num">04</div>
+      <div class="vr"></div>
+      <div class="row-body">
+        <div class="row-title">The merchant owns the economics</div>
+        <p class="proof"><b>Rules DSL</b> (compile-checked, no eval) + <b>live cost-curve sliders</b>. Thresholds come from the merchant's own FP/FN costs — not a black box they can't tune.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <div class="rule"></div>
+    <p class="note"><b>Incumbent comparison kept honest:</b> incumbents have distribution (millions of merchants); we have the decision infrastructure distribution needs.</p>
+  </div>
+</div>
+</body>
+</html>

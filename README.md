@@ -303,6 +303,7 @@ open http://localhost:8000/dashboard/
 10. **The economics case**: [`analysis/ECONOMICS_OF_COD_TRUST.md`](./analysis/ECONOMICS_OF_COD_TRUST.md) — every market number sourced, every design choice tied to the literature (Kocherlakota, Minsky, Kiyotaki–Moore, Rochet–Tirole, CECL) and to `file:line` in this repo.
 11. **The bounded agent copilot (live LLM)**: in this sandbox — `curl -X POST localhost:3000/api/copilot -d '{"question":"Block order ORD-123"}'` → `mock:false`, `verdict:"refused"`, natural-language refusal citing Track D V3 §7.1. Then try `"What does the audit chain status look like?"` → `verdict:"read"`, grounded in the verify-chain data. The refusal is enforced by the deterministic classifier BEFORE the LLM — read `src/app/api/copilot/route.ts` and see there is no path where "block order" returns anything but `refused`.
 12. **TIER-1 auth (sandbox)**: `curl -X POST localhost:3000/api/v1/auth/login -d '{"handle":"analyst","password":"AnalystPass123"}'` → JWT → `GET /api/v1/cases/metrics` with `Authorization: Bearer …`. On Vercel this needs `JWT_SECRET` set in project env (see partial list).
+13. **The pitch deck**: [`download/RTO_Trust_Layer_Paytm_Pitch.pdf`](./download/RTO_Trust_Layer_Paytm_Pitch.pdf) (795 KB, 11 slides) — the 7-section submission deck (title, problem, solution, tech stack, USP, impact, business model) built from this README + the economics doc. Editable sources: `download/slides/` (HTML) + `download/RTO_Trust_Layer_Paytm_Pitch.pptx`.
 
 ---
 

@@ -27,8 +27,8 @@
   .q-ico .material-icons { font-size: 20px; color: var(--accent-deep); }
   .q-title { font-family: var(--font-heading); font-size: 17.5px; font-weight: 600; letter-spacing: -0.005em; color: var(--ink); }
   .lines { display: flex; flex-direction: column; gap: 7px; }
-  .ln { display: flex; gap: 10px; font-size: var(--fs-small); line-height: 1.5; color: var(--ink-soft); }
-  .ln::before { content: ''; flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-deep); margin-top: 7px; }
+  .ln { position: relative; padding-left: 15px; font-size: var(--fs-small); line-height: 1.5; color: var(--ink-soft); }
+  .ln::before { content: ''; position: absolute; left: 0; top: 7px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent-deep); }
   .ln b { font-weight: 600; color: var(--ink); }
 </style>
 </head>

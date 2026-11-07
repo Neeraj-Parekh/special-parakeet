@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>06 · Solution — Evidence</title>
+<link rel="stylesheet" href="global.css">
+<style>
+  .wrap{height:100%;display:flex;flex-direction:column;padding:56px 64px 40px;}
+  .h1{font-family:var(--font-heading);font-weight:700;font-size:40px;line-height:1.15;letter-spacing:-0.012em;color:var(--ink);margin-top:16px;}
+
+  .bento{flex:1;display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:1fr 1fr;gap:18px;margin-top:24px;}
+  .cell{background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(2,6,43,0.04);padding:24px 26px;display:flex;flex-direction:column;}
+  .value{font-family:var(--font-num);font-weight:700;font-size:31px;letter-spacing:-0.02em;line-height:1.1;color:var(--ink);}
+  .value-sub{font-size:14px;font-weight:600;color:var(--ink);margin-top:5px;}
+  .cell p{font-size:14px;line-height:1.62;color:var(--ink-soft);margin-top:11px;}
+  .cell p b{font-weight:600;color:var(--ink);}
+
+  /* hero cell — navy, spans two columns */
+  .cell-a{grid-column:1 / span 2;background:var(--navy-panel);border-color:var(--navy-panel);flex-direction:row;align-items:center;gap:30px;padding:28px 32px;}
+  .a-num{font-family:var(--font-num);font-weight:700;font-size:64px;line-height:1;letter-spacing:-0.02em;color:var(--accent);}
+  .a-lbl{font-size:14.5px;font-weight:600;color:rgba(242,245,250,0.75);margin-top:10px;}
+  .a-div{width:1px;align-self:stretch;background:rgba(255,255,255,0.16);margin:8px 0;}
+  .a-body{flex:1;font-size:14px;line-height:1.7;color:rgba(242,245,250,0.84);}
+  .a-body b{font-family:var(--font-num);font-weight:600;color:#FFFFFF;}
+
+  .source{color:#59627E;margin-top:14px;}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="wrap">
+    <div><span class="chip">02 · SOLUTION — EVIDENCE</span></div>
+    <h1 class="h1">Validated on real data. Audited line by line.</h1>
+
+    <div class="bento">
+      <div class="cell cell-a">
+        <div>
+          <div class="a-num">32×</div>
+          <div class="a-lbl">baseline lift</div>
+        </div>
+        <div class="a-div" data-decor aria-hidden="true"></div>
+        <p class="a-body"><b>PR-AUC 0.3950</b> on Olist Brazilian e-commerce (19,784 orders, real repeat-customer history). <b>Baseline 0.0123.</b> The signal is per-customer memory — exactly what incumbents don't have.</p>
+      </div>
+      <div class="cell">
+        <div class="value">6.05×</div>
+        <p>Amazon India champion: PR-AUC 0.1027 vs 0.017 baseline — honest about the ceiling: no user history in that dataset (ceiling ≈0.12).</p>
+      </div>
+      <div class="cell">
+        <div class="value">34%</div>
+        <div class="value-sub">of loss prevented</div>
+        <p>Selective OTP verification: challenge only orders where intervention cost &lt; expected loss (Drummond-Holte optimal sweep over 19 thresholds).</p>
+      </div>
+      <div class="cell">
+        <div class="value">397 / 411</div>
+        <p>pytest suite: <b>397 passed, 0 failed, 14 skipped</b> (Postgres/Redis paths). Plus AST meta-regression guards against tautology tests.</p>
+      </div>
+      <div class="cell">
+        <div class="value" style="font-size:21px;line-height:1.4;">33 real · 0 decorative</div>
+        <p>Independent <b>37-feature audit</b> with file:line evidence. Every claim in this deck maps to a file you can open.</p>
+      </div>
+    </div>
+
+    <div class="source">Metrics: data/olist/artifacts/metrics.json · audit: AUDIT_REPORT.md in repo.</div>
+  </div>
+</div>
+</body>
+</html>

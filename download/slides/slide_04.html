@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>04 · Solution — Overview</title>
+<link rel="stylesheet" href="global.css">
+<style>
+  .wrap{height:100%;display:flex;flex-direction:column;padding:54px 64px 42px;}
+  .h1{font-family:var(--font-heading);font-weight:700;font-size:36px;line-height:1.22;letter-spacing:-0.012em;color:var(--ink);max-width:1090px;margin-top:16px;}
+  .h1 .brand{color:var(--primary);}
+  .sub{font-size:16.5px;line-height:1.5;color:var(--ink-soft);margin-top:12px;}
+  .sub b{font-weight:600;color:var(--ink);}
+
+  .pillars{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:24px;}
+  .pillar{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:0 1px 2px rgba(2,6,43,0.04);padding:26px 24px;display:flex;flex-direction:column;}
+  .ghost{position:absolute;top:16px;right:20px;font-family:var(--font-num);font-size:46px;font-weight:700;line-height:1;color:rgba(43,132,235,0.14);}
+  .pillar h2{font-family:var(--font-heading);font-size:25px;font-weight:600;color:var(--ink);margin-top:6px;}
+  .pillar .rule{margin-top:14px;}
+  .pillar p{font-size:14px;line-height:1.66;color:var(--ink-soft);margin-top:14px;}
+  .pillar p b{font-weight:600;color:var(--ink);}
+  .mono{font-family:var(--font-num);}
+
+  .quote{margin-top:12px;background:var(--bg);border:1px solid var(--line);border-left:3px solid var(--primary);border-radius:8px;padding:11px 14px;font-family:var(--font-num);font-size:12.5px;line-height:1.6;color:var(--ink);}
+
+  .p1-pills{display:flex;gap:10px;margin-top:auto;padding-top:16px;}
+  .p1-pills .pill{font-size:12.5px;padding:5px 11px;}
+  /* AA-deepened pill text on the light surface (backgrounds/borders keep the product vocabulary) */
+  .pill-accept{color:#00714E;}
+  .pill-review{color:#8A5500;}
+  .pill-reject{color:#B23337;}
+
+  .strip{margin-top:22px;border-top:1px solid var(--line);padding-top:15px;font-family:var(--font-num);font-size:12.5px;color:var(--ink-soft);}
+  .strip b{color:#00714E;font-weight:700;}
+  .strip .link{color:var(--primary-deep);font-weight:600;}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="wrap">
+    <div><span class="chip">02 · SOLUTION</span></div>
+    <h1 class="h1"><span class="brand">RTO Trust Layer</span> — a merchant risk command center with a bounded AI operator.</h1>
+    <p class="sub">Not a model. Not a chatbot. A platform where every decision is <b>cost-optimal, explainable, and audit-sealed</b>.</p>
+
+    <div class="pillars">
+      <div class="pillar">
+        <div class="ghost" data-decor aria-hidden="true">01</div>
+        <h2>Decide</h2>
+        <div class="rule"></div>
+        <p>Every order gets a 3-way verdict — <b>ACCEPT / REVIEW / REJECT</b> — with thresholds derived from the merchant's own cost structure (Bahnsen cost-sensitive BMR), never a static pincode blocklist.</p>
+        <div class="p1-pills">
+          <span class="pill pill-accept">ACCEPT</span>
+          <span class="pill pill-review">REVIEW · OTP</span>
+          <span class="pill pill-reject">REJECT</span>
+        </div>
+      </div>
+      <div class="pillar">
+        <div class="ghost" data-decor aria-hidden="true">02</div>
+        <h2>Explain</h2>
+        <div class="rule"></div>
+        <p>Inline TreeSHAP ships every decision with ranked, signed reason codes:</p>
+        <div class="quote">"73% risk because: COD + ₹12,400 + new customer + vague address."</div>
+        <p>A CFO can read it. A regulator can verify it.</p>
+      </div>
+      <div class="pillar">
+        <div class="ghost" data-decor aria-hidden="true">03</div>
+        <h2>Guard</h2>
+        <div class="rule"></div>
+        <p>The AI operator works inside a <b>7-action allowlist</b>. Refusals are enforced by a deterministic classifier <b>BEFORE</b> any LLM call — <span class="mono">"block order"</span> can never return anything but refused. Money-moving actions need dual-control HMAC co-signs.</p>
+      </div>
+    </div>
+
+    <div class="strip"><b>Live today:</b> <span class="link">rto-trust-layer.vercel.app</span> · vendor landing + merchant console + /story three-pane demo · GitHub: <span class="link">Neeraj-Parekh/special-parakeet</span></div>
+  </div>
+</div>
+</body>
+</html>

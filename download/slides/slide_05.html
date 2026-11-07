@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>05 · Solution — How it works</title>
+<link rel="stylesheet" href="global.css">
+<style>
+  .wrap{height:100%;display:flex;flex-direction:column;padding:56px 48px 46px;}
+  .h1{font-family:var(--font-heading);font-weight:700;font-size:58px;line-height:1.1;letter-spacing:-0.015em;color:var(--ink);margin-top:18px;}
+  .h1 em{font-style:normal;color:var(--primary-deep);}
+
+  .pipe{flex:1;display:flex;align-items:stretch;margin-top:48px;}
+  .step{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(2,6,43,0.04);padding:20px 16px 18px;display:flex;flex-direction:column;}
+  .s-num{font-family:var(--font-num);font-size:42px;font-weight:700;line-height:1;letter-spacing:-0.02em;color:var(--primary-deep);}
+  .step h2{font-family:var(--font-heading);font-size:19px;font-weight:600;color:var(--ink);margin-top:13px;}
+  .step .rule{margin-top:11px;}
+  .step p{font-size:13px;line-height:1.58;color:var(--ink-soft);margin-top:11px;}
+  .ok{color:#00714E;font-weight:700;}
+  .rv{color:#8A5500;font-weight:700;}
+  .rj{color:#B23337;font-weight:700;}
+  .arrow{flex:0 0 22px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:19px;}
+
+  .rail{margin-top:48px;background:var(--navy-panel);border-radius:14px;padding:26px 28px;}
+  .rail-label{display:flex;align-items:center;gap:10px;font-family:var(--font-num);font-size:11px;font-weight:700;letter-spacing:0.18em;color:#7DE8BE;}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);}
+  .rail-list{margin-top:13px;font-family:var(--font-num);font-size:12.5px;font-weight:500;color:#E8EDF5;white-space:nowrap;letter-spacing:0;}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="wrap">
+    <div><span class="chip">02 · SOLUTION — HOW IT WORKS</span></div>
+    <h1 class="h1">One request path, <em>six guarantees</em>.</h1>
+
+    <div class="pipe">
+      <div class="step">
+        <div class="s-num">01</div>
+        <h2>Order in</h2>
+        <div class="rule"></div>
+        <p>Checkout POSTs the order: amount, category, customer, address, PIN</p>
+      </div>
+      <div class="arrow" data-decor aria-hidden="true">→</div>
+      <div class="step">
+        <div class="s-num">02</div>
+        <h2>Memory</h2>
+        <div class="rule"></div>
+        <p>79-dim feature store: per-customer RTO history, recency/frequency/monetary, device + geo graph signals</p>
+      </div>
+      <div class="arrow" data-decor aria-hidden="true">→</div>
+      <div class="step">
+        <div class="s-num">03</div>
+        <h2>Score</h2>
+        <div class="rule"></div>
+        <p>ONNX HistGradientBoosting champion → calibrated P(RTO) in 1.59 µs/row</p>
+      </div>
+      <div class="arrow" data-decor aria-hidden="true">→</div>
+      <div class="step">
+        <div class="s-num">04</div>
+        <h2>Decide</h2>
+        <div class="rule"></div>
+        <p>Cost-optimal BMR over the merchant's FP/FN/OTP costs → <span class="ok">ACCEPT</span> / <span class="rv">REVIEW</span> / <span class="rj">REJECT</span></p>
+      </div>
+      <div class="arrow" data-decor aria-hidden="true">→</div>
+      <div class="step">
+        <div class="s-num">05</div>
+        <h2>Check</h2>
+        <div class="rule"></div>
+        <p>Rules engine + OC-201B mandate caps (₹5K/txn, ₹15K/mo, 24h cooling) — breach returns 422, proven live</p>
+      </div>
+      <div class="arrow" data-decor aria-hidden="true">→</div>
+      <div class="step">
+        <div class="s-num">06</div>
+        <h2>Seal</h2>
+        <div class="rule"></div>
+        <p>SHA-256 hash-chained + Merkle-sealed audit record with RFC 6962 inclusion proofs</p>
+      </div>
+    </div>
+
+    <div class="rail">
+      <div class="rail-label"><span class="dot" data-decor aria-hidden="true"></span>GUARDRAIL RAIL</div>
+      <div class="rail-list">kill-switch · circuit breaker (never fail-open) · per-IP rate limiting · drift monitors (DDM + ADWIN) · replay-nonce table · RFC 6749 token rotation</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

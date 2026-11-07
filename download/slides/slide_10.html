@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1280, initial-scale=1">
+<title>06 · Business Model — RTO Trust Layer</title>
+<link rel="stylesheet" href="global.css">
+<style>
+  .slide { padding: 46px 48px 44px; }
+  .hd {
+    font-family: var(--font-heading);
+    font-size: 36px; font-weight: 600; line-height: 1.12;
+    letter-spacing: -0.018em; color: var(--ink); margin: 16px 0 0;
+  }
+  .cols { flex: 1; min-height: 0; margin-top: 24px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; }
+  .col { padding: 22px 24px; display: flex; flex-direction: column; min-height: 0; }
+  .kick { font-family: var(--font-num); font-size: var(--fs-micro); font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); }
+  .price { font-family: var(--font-num); font-size: 54px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.05; color: var(--ink); margin-top: 16px; }
+  .cap { font-size: var(--fs-small); line-height: 1.5; color: var(--ink-soft); margin-top: 8px; }
+  .col .rule { margin: 16px 0; }
+  .body13 { font-size: var(--fs-small); line-height: 1.55; color: var(--ink-soft); }
+  .body13 b { font-weight: 600; color: var(--ink); }
+  .payback {
+    margin-top: auto; background: rgba(0,184,120,0.10); border-left: 3px solid var(--accent);
+    border-radius: 6px; padding: 11px 14px;
+    font-size: var(--fs-small); font-weight: 600; line-height: 1.45; color: var(--ink);
+  }
+  .big13 { font-family: var(--font-num); font-size: 46px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.05; color: var(--ink); margin-top: 10px; }
+  .items { display: flex; flex-direction: column; gap: 14px; margin-top: 16px; }
+  .it { display: flex; gap: 11px; }
+  .n {
+    flex: none; width: 22px; height: 22px; border-radius: 50%; margin-top: 1px;
+    background: rgba(43,132,235,0.10); border: 1px solid rgba(43,132,235,0.30);
+    color: var(--primary-deep); font-family: var(--font-num); font-size: 11.5px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .it p { font-size: var(--fs-small); line-height: 1.5; color: var(--ink-soft); }
+  .it b { font-weight: 600; color: var(--ink); }
+  .takeaway {
+    margin-top: 20px; border-radius: 12px; background: rgba(43,132,235,0.08);
+    border: 1px solid rgba(43,132,235,0.28); padding: 17px 26px; text-align: center;
+    font-family: var(--font-heading); font-size: 17px; font-weight: 600;
+    letter-spacing: -0.005em; color: var(--ink);
+  }
+  .takeaway span { color: var(--primary-deep); }
+</style>
+</head>
+<body>
+<div class="slide">
+  <div><span class="chip">06 · BUSINESS MODEL</span></div>
+  <h1 class="hd">Priced where the value lands: per decision, not per seat.</h1>
+
+  <div class="cols">
+    <div class="card col">
+      <div class="kick">Pricing</div>
+      <div class="price">₹0.25</div>
+      <p class="cap">per scored order (volume tiers ₹0.10–0.50)</p>
+      <div class="rule"></div>
+      <p class="body13"><b>SaaS tier:</b> ₹999/mo per merchant incl. console + audit exports</p>
+      <div class="payback">Pays for itself at 5 prevented RTO orders/month.</div>
+    </div>
+
+    <div class="card col">
+      <div class="kick">Wedge — distribution</div>
+      <p class="cap" style="margin-top: 16px;">Paytm merchant base:</p>
+      <div class="big13">13.7M</div>
+      <p class="cap">device subscribers already paying monthly for merchant tooling</p>
+      <div class="rule"></div>
+      <p class="body13">The risk console slots into the same subscription motion as <b>Paytm's Soundbox</b> — a decision layer on rails merchants already trust.</p>
+    </div>
+
+    <div class="card col">
+      <div class="kick">Expansion</div>
+      <div class="items">
+        <div class="it"><span class="n">1</span><p><b>Merchant lending risk</b> — RTO history is a repayment signal (underwrite the same memory twice)</p></div>
+        <div class="it"><span class="n">2</span><p><b>Agentic-commerce guardrails</b> — license the bounded-agent + mandate-cap layer to any agent spending on UPI (OC-201B-native)</p></div>
+        <div class="it"><span class="n">3</span><p><b>RTO insurance pricing</b> — per-merchant loss curves make return insurance underwritable</p></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="takeaway">Zero-MDR made payment margin ~zero. Merchant outcomes are the margin. <span>We price the outcome.</span></div>
+</div>
+</body>
+</html>

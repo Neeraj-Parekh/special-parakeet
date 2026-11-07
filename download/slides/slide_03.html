@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>03 · Problem — Why now</title>
+<link rel="stylesheet" href="global.css">
+<style>
+  .wrap{height:100%;display:flex;flex-direction:column;padding:58px 64px 46px;}
+  .h1{font-family:var(--font-heading);font-weight:700;font-size:42px;line-height:1.15;letter-spacing:-0.012em;color:var(--ink);margin-top:18px;}
+  .h1 em{font-style:normal;color:var(--primary-deep);}
+
+  .clocks{flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:28px;}
+  .clock{background:var(--surface);border:1px solid var(--line);border-top:3px solid var(--primary);border-radius:14px;box-shadow:0 1px 2px rgba(2,6,43,0.04);padding:26px 26px 24px;display:flex;flex-direction:column;}
+  .badge{align-self:flex-start;font-family:var(--font-num);font-size:11px;font-weight:700;letter-spacing:0.14em;color:#FFFFFF;background:var(--navy-panel);border-radius:6px;padding:5px 12px;}
+  .clock h2{font-family:var(--font-heading);font-size:20px;font-weight:600;line-height:1.28;color:var(--ink);margin-top:16px;min-height:52px;}
+  .clock .rule{margin-top:4px;}
+  .clock p{font-size:14px;line-height:1.68;color:var(--ink-soft);margin-top:14px;}
+  .clock p b{font-weight:600;color:var(--ink);}
+
+  .takeaway{margin-top:26px;background:rgba(43,132,235,0.07);border:1px solid rgba(43,132,235,0.20);border-left:4px solid var(--primary);border-radius:10px;padding:18px 24px;font-size:17px;font-weight:700;color:var(--ink);line-height:1.4;}
+  .takeaway b{color:var(--primary-deep);}
+</style>
+</head>
+<body>
+<div class="slide">
+  <div class="wrap">
+    <div><span class="chip">01 · PROBLEM STATEMENT — WHY NOW</span></div>
+    <h1 class="h1">Three clocks converged in <em>18 months</em>.</h1>
+
+    <div class="clocks">
+      <div class="clock">
+        <span class="badge">OCT 2025</span>
+        <h2>NPCI OC-201B — UPI Circle</h2>
+        <div class="rule"></div>
+        <p>Delegated payments got hard caps: <b>₹5,000</b> per transaction, <b>₹15,000</b> per month, 5 devices, 24h cooling. Any AI agent moving money on UPI must live inside these rails — most agent demos ignore them.</p>
+      </div>
+      <div class="clock">
+        <span class="badge">JUN 2026</span>
+        <h2>RBI draft Model Risk Management guidance</h2>
+        <div class="rule"></div>
+        <p>Tamper-evident audit trails, human-in-the-loop overrides, red-teaming, kill switches — mandated for every AI model in Indian finance. Today's black-box RTO shields cannot comply.</p>
+      </div>
+      <div class="clock">
+        <span class="badge">2025–26</span>
+        <h2>Zero-MDR economics</h2>
+        <div class="rule"></div>
+        <p><b>&gt;96%</b> of consumer UPI payments are under ₹2,000 — payment margin is ~zero (PCI estimates ₹5,500 Cr/yr subsidy). Platform value moved to merchant services: Paytm's own pivot — <b>13.7M</b> merchant device subscriptions, merchant lending, agentic AI.</p>
+      </div>
+    </div>
+
+    <div class="takeaway"><b>The window:</b> whoever builds trust infrastructure for merchant-side AI now sets the standard the regulation will demand.</div>
+  </div>
+</div>
+</body>
+</html>

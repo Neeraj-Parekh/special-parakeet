@@ -4247,3 +4247,23 @@ Work Log:
 Stage Summary:
 - Ready for submission push: repo reconciled (fast-forward), collisions fixed, design system restored, economics research grounded + documented, README improved without removals.
 - Post-push: rto-trust-layer.vercel.app should auto-redeploy (git-connected); verify /api/v1/webhooks/paytm returns 400-not-404 to confirm the Paytm-era build is live.
+
+---
+Task ID: final-submission-1
+Agent: main (Z.ai Code)
+
+Task: Final submission preparation — verify push state, README enhancement, pitch deck, final verification.
+
+Work Log:
+- Push-state archaeology: the last session's push DID land (remote main @ 515e018, PAT valid). The LOCAL trees were stale (39 src/ files behind — Razorpay-era); sandbox resynced to canonical main via git reset --hard (all local "uncommitted" work verified byte-identical to remote first — nothing lost).
+- Discovered the README honest-audit section was STALE: commit dd34ffa (Aug 29) had closed all 6 wiring gaps + 3 decorative verdicts + the kill-switch, but the README still listed them open — underselling the project to judges. Verified every promotion in code + live before editing: /api/copilot real LLM (mock:false, natural refusal prose, sandbox), agent-console.tsx POSTs to it, CostCurveSlider fetches /api/v1/policy/cost-curves (dev.log 200), kill-switch + transform_cached + AsyncAuditLogger in routes.py, rules-toggle POSTs to /api/v1/rules, explain/shap OHE transform at routes.py:4096.
+- README updated: counts 25/9/4/3/5 → 33/5/4/0/4, "Promoted to REAL" section with per-item evidence, TIER 1/2/3 additions paragraph, remediation table rows 3,4,5,6,7,9,10 → DONE, judge checklist +3 items (copilot live-test, TIER-1 auth, pitch deck), Vercel row updated (Paytm-era 400 confirmed; login 500 until JWT_SECRET set — SEC-3 refuse-to-start working as designed), 2026-11-07 standing reminder.
+- Sub-README: Olist sample fixed payment_method:"boleto"→"COD" (schema is ^(COD|Prepaid)$; boleto ≈ pay-after-delivery ≈ COD).
+- Pitch deck (the missing submission deliverable): 11 slides / 7 required sections (title, problem ×2, solution ×3, tech stack, USP, impact, business model, closing), brand-matched to the product design system (navy #02042B, blue #2B84EB, mint #00B878; Space Grotesk/Inter/JetBrains Mono). Pipeline: HTML slides (2 ppt-expert subagents) → batch_html2pptx (392KB .pptx) → Playwright print-to-PDF → ghostscript /prepress → 795KB PDF (≤2MB ✓). VLM-audited page by page; fixed 2 real defects found by the audit (slide 5 guardrail mono line overflow → font 12.5→11.5px; slide 9 .ln flex-container fragmenting inline <b> into gapped flex items → absolute-positioned bullet dot). Final: 11/11 CLEAN (slide 9 gap flag disproven at 150dpi pixel zoom).
+- Agent-browser golden path on the sandbox: landing (Paytm-era) → /score → Score order → REVIEW 64% + case opened + audit link + reason codes; copilot "Block order ORD-123" → REFUSED with real-LLM prose citing Track D V3 §7.1; "List active rules" → READ verdict with the 3 rules. Zero page errors, zero console errors. dev.log all 200s.
+- Vercel post-push: home 200, /api/v1/webhooks/paytm 400 (Paytm-era build), copilot refuses with mock:true fallback (no SDK creds on Vercel — honest badge).
+- Infrastructure: this sandbox kills all command-spawned processes at command end (only boot-rooted processes survive). Dev server kept alive via .zscripts/keeper.sh + cron fixed_rate 420s agentTurn keeper (verified working: cycles hold port 3000 ~6-9 min with brief transition gaps).
+
+Stage Summary:
+- Remote main @ 1ec2a3a: README audit-refresh + pitch deck (PDF 795KB + PPTX 392KB + HTML sources in download/slides/) + sub-README fix. All pushed and verified.
+- Remaining USER actions for submission day: (1) set JWT_SECRET (≥32 chars) in Vercel project env → redeploy → live TIER-1 login works; (2) upload download/RTO_Trust_Layer_Paytm_Pitch.pdf as the PPT deliverable (≤2MB ✓); (3) rotate the GitHub PAT (leaked in chat); (4) optionally Neon Postgres DATABASE_URL to fix Merkle file-mode intact:false.

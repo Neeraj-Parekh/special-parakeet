@@ -4267,3 +4267,21 @@ Work Log:
 Stage Summary:
 - Remote main @ 1ec2a3a: README audit-refresh + pitch deck (PDF 795KB + PPTX 392KB + HTML sources in download/slides/) + sub-README fix. All pushed and verified.
 - Remaining USER actions for submission day: (1) set JWT_SECRET (≥32 chars) in Vercel project env → redeploy → live TIER-1 login works; (2) upload download/RTO_Trust_Layer_Paytm_Pitch.pdf as the PPT deliverable (≤2MB ✓); (3) rotate the GitHub PAT (leaked in chat); (4) optionally Neon Postgres DATABASE_URL to fix Merkle file-mode intact:false.
+
+---
+Task ID: figma-deck-1
+Agent: main (Z.ai Code)
+
+Task: Adapt the user's Figma deck (from previous competition) into the Paytm submission deck.
+
+Work Log:
+- User supplied `upload/RTO Trust Layer — Block 1 Hook.zip` (Figma export, Blocks 1–8, 12 slides @1920×1080) + confirmed rto-trust-layer.vercel.app is live (HTTP 200).
+- VLM-audited all 12 slides. 7-section mapping: hooks+TODAY-vs-TARGET=problem, TRUST CORE=solution/USP, ARCHITECTURE+OPS=tech stack, RESULTS=impact — but BUSINESS MODEL was MISSING (required section 7), and `Razorpay` appeared on 2 slides (architecture gateways line, ops payment-partners card).
+- Razorpay→Paytm pixel patch: identified the deck's UI font as Roboto Medium 13px (measured Refunds/Verifications/Cashfree/UPI ink boxes vs Roboto/Inter/Liberation candidates — Roboto 500 @13 matched all widths+stem height). Patched slide 6 line as `Paytm • Cashfree • UPI` (full-line redraw, 4× supersampled, gray 4×4 bullets replicated) and slide 9 partner list `Paytm` (word replace). VLM double-blind check: PASS, "visually indistinguishable".
+- NEW Business Model slide (slide 12) matching the deck's light-slide design system (cream #FAFAF8, white cards #E0E2E4 borders, blue #0038B0 / green #1B7A34 / amber section headers, dark-green #1B5E20 stat numerals — all sampled from the RESULTS slide): 3 columns = Pricing (₹0.25/decision hero + ₹999/mo SaaS + volume tiers ₹0.10–0.50 + ₹200–250/RTO unit economics), Wedge (13.7M Paytm merchant subscribers + 40–60% COD share + Soundbox motion flow), Expansion (lending risk / OC-201B agentic guardrails / RTO insurance + ₹50,000 Cr ceiling) + takeaway bar. Built as bm_slide.html → Playwright 2× supersample → 1920×1080. VLM QC iterated 3× (fixed numeral line-wraps, dead zones, baseline alignment) → 8.5/10.
+- Close slide: added centered credit line `Team RTO Trust Layer · Neeraj Parekh · Paytm Build for India AI Hackathon — Track 1: Merchant Growth AI` (Roboto Regular 20px, link-gray) — verified centered at x=960, OCR-confirmed.
+- Assembled 13-slide PDF via img2pdf (lossless JPEG embed, adaptive quality 74–82): 1,949,008 bytes ≤ 2MB ✓. Page-by-page VLM verify: Paytm line ✓, business model ✓, credit ✓. PPTX twin 1.7MB via python-pptx.
+- Sources committed: download/figma-deck/ (13 slide PNGs incl. patched + new, bm_slide.html w/ Google Fonts, README with edit log).
+
+Stage Summary:
+- download/RTO_Trust_Layer_Paytm_Pitch_Figma.pdf (1.9MB, 13 slides, Figma design) is now the PRIMARY submission deck; the earlier HTML-designed 795KB deck kept as alternate. Numbers consistent with README (32× Olist headline).

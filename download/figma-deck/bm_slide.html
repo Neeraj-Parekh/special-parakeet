@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  /* Fonts: Roboto 400/500/700 via Google Fonts (was rendered locally with Roboto-Regular/Medium/Bold.ttf at 2x supersampling) */
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1920px; height: 1080px; }
+  body {
+    font-family: 'Roboto', sans-serif;
+    background: #FAFAF8;
+    color: #1A1A1A;
+    -webkit-font-smoothing: antialiased;
+  }
+  .slide { width: 1920px; height: 1080px; padding: 42px 44px 40px; display: flex; flex-direction: column; }
+
+  /* ---------- title block ---------- */
+  .title { font-weight: 700; font-size: 47px; letter-spacing: 0.01em; color: #111111; text-transform: uppercase; }
+  .subtitle { font-size: 19px; color: #666B70; margin-top: 10px; font-weight: 400; }
+  .subtitle b { font-weight: 500; color: #444; }
+
+  /* ---------- card grid ---------- */
+  .grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 22px; margin-top: 30px; }
+  .card { background: #FFFFFF; border: 1.5px solid #E0E2E4; border-radius: 12px; padding: 24px 26px 22px; display: flex; flex-direction: column; min-height: 0; }
+
+  .card-hd { display: flex; align-items: center; gap: 10px; }
+  .icon-sq { width: 34px; height: 34px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex: none; }
+  .icon-sq svg { width: 20px; height: 20px; }
+  .card-hd .t { font-weight: 700; font-size: 15.5px; letter-spacing: 0.05em; text-transform: uppercase; }
+
+  .c-blue  .icon-sq { background: #E8EEFB; } .c-blue  .t { color: #0038B0; } .c-blue  .icon-sq svg  { stroke: #0038B0; }
+  .c-green .icon-sq { background: #E7F2E7; } .c-green .t { color: #1B7A34; } .c-green .icon-sq svg { stroke: #1B7A34; }
+  .c-orange .icon-sq { background: #FBEEDC; } .c-orange .t { color: #B25E00; } .c-orange .icon-sq svg { stroke: #B25E00; }
+
+  .big { font-weight: 700; font-size: 104px; letter-spacing: -0.02em; color: #1B5E20; line-height: 1; margin-top: 26px; height: 116px; display: flex; align-items: flex-end; }
+  .big .cur { font-size: 66px; margin-right: 4px; padding-bottom: 8px; }
+  .big-cap { font-size: 17px; color: #55595E; margin-top: 12px; line-height: 1.5; min-height: 52px; }
+  .big-cap b { font-weight: 500; color: #2A2D30; }
+
+  .inner { border: 1.5px solid #E0E2E4; border-radius: 8px; padding: 17px 18px; margin-top: 20px; }
+  .inner .lbl { font-weight: 700; font-size: 12px; letter-spacing: 0.14em; color: #0038B0; text-transform: uppercase; }
+  .inner .val { font-weight: 700; font-size: 27px; color: #17181A; margin-top: 6px; }
+  .inner .sub { font-size: 13.5px; color: #666B70; margin-top: 4px; line-height: 1.45; }
+  .inner + .inner { margin-top: 16px; }
+  .inner .row { display: flex; align-items: baseline; gap: 12px; margin-top: 7px; }
+  .inner .row .v { font-weight: 700; font-size: 25px; color: #17181A; white-space: nowrap; flex: none; }
+  .inner .row .k { font-size: 13.5px; color: #666B70; line-height: 1.45; }
+
+  .callout { margin-top: auto; background: #E8F3E8; border-left: 4px solid #1B7A34; border-radius: 6px; padding: 13px 16px; font-size: 14px; font-weight: 500; color: #14471F; line-height: 1.55; }
+  .callout b { font-weight: 700; }
+
+  .tiers { display: flex; gap: 9px; margin-top: 9px; }
+  .tier { flex: 1; text-align: center; border: 1.5px solid #E0E2E4; border-radius: 7px; padding: 10px 4px 9px; background: #FCFCFC; }
+  .tier .tv { font-weight: 700; font-size: 19px; color: #17181A; display: block; }
+  .tier .tk { font-size: 11px; color: #8A8E92; letter-spacing: 0.02em; margin-top: 3px; display: block; }
+
+  /* mini flow in card 2 */
+  .flow { display: flex; align-items: stretch; gap: 8px; margin-top: 18px; }
+  .fnode { flex: 1; border: 1.5px dashed #9DBB9E; border-radius: 7px; padding: 12px 6px; text-align: center; font-weight: 700; font-size: 11px; letter-spacing: 0.06em; color: #1B5E20; text-transform: uppercase; background: #F3F8F3; line-height: 1.4; display: flex; align-items: center; justify-content: center; }
+  .farr { flex: none; display: flex; align-items: center; }
+  .farr svg { width: 16px; height: 16px; stroke: #7FA081; }
+  .body-txt { font-size: 15px; color: #4A4E52; line-height: 1.65; margin-top: 16px; }
+  .body-txt b { font-weight: 500; color: #1F2123; }
+
+  /* numbered expansion items */
+  .items { display: flex; flex-direction: column; gap: 26px; margin-top: 30px; }
+  .it { display: flex; gap: 13px; align-items: flex-start; }
+  .n { flex: none; width: 29px; height: 29px; border-radius: 50%; background: #FBEEDC; border: 1.5px solid #E3B375; color: #B25E00; font-weight: 700; font-size: 14px; display: flex; align-items: center; justify-content: center; margin-top: 1px; }
+  .it .tx { font-size: 15.5px; color: #4A4E52; line-height: 1.6; }
+  .it .tx b { font-weight: 700; color: #17181A; display: block; margin-bottom: 3px; font-size: 16px; }
+  .callout.amber { background: #FBEEDC; border-left-color: #B25E00; color: #5C3A00; }
+  .callout.amber b { color: #7A4E00; }
+
+  /* takeaway bar */
+  .takeaway { margin-top: 24px; background: #E8EEFB; border: 1.5px solid #B9CCEF; border-radius: 10px; padding: 16px 30px; display: flex; align-items: center; justify-content: center; gap: 14px; }
+  .takeaway .mark { flex: none; width: 27px; height: 27px; border-radius: 50%; background: #0038B0; color: #fff; font-weight: 700; font-size: 16px; display: flex; align-items: center; justify-content: center; }
+  .takeaway .txt { font-weight: 500; font-size: 20px; color: #14243F; letter-spacing: 0.005em; }
+  .takeaway .txt b { font-weight: 700; color: #0038B0; }
+</style>
+</head>
+<body>
+<div class="slide">
+  <div>
+    <div class="title">BUSINESS MODEL <span class="dash">—</span> WE PRICE THE OUTCOME, NOT THE SEAT</div>
+    <div class="subtitle">Zero-MDR compressed payment margins. <b>Merchant outcomes are the margin</b> — and every outcome here is measured in prevented RTO loss.</div>
+  </div>
+
+  <div class="grid">
+    <!-- 1) PRICING -->
+    <div class="card c-blue">
+      <div class="card-hd">
+        <div class="icon-sq"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg></div>
+        <div class="t">1) Pricing — per decision</div>
+      </div>
+      <div class="big"><span class="cur">&#8377;</span>0.25</div>
+      <div class="big-cap">per scored order <b>· volume tiers &#8377;0.10–&#8377;0.50</b></div>
+      <div class="inner">
+        <div class="lbl">SaaS tier</div>
+        <div class="val">&#8377;999 / mo per merchant</div>
+        <div class="sub">risk console, rule engine &amp; audit exports included</div>
+      </div>
+      <div class="inner">
+        <div class="lbl">Unit economics</div>
+        <div class="row"><span class="v">&#8377;200–250</span><span class="k">saved per prevented RTO — the &#8377;0.25 decision is a <b>roughly 1,000&times; payoff</b> on every saved parcel</span></div>
+      </div>
+      <div class="inner">
+        <div class="lbl">Volume tiers</div>
+        <div class="tiers">
+          <div class="tier"><span class="tv">&#8377;0.50</span><span class="tk">&lt; 10K orders/mo</span></div>
+          <div class="tier"><span class="tv">&#8377;0.25</span><span class="tk">10K – 100K</span></div>
+          <div class="tier"><span class="tv">&#8377;0.10</span><span class="tk">100K +</span></div>
+        </div>
+      </div>
+      <div class="callout"><b>Pays for itself at 5 prevented RTOs / month.</b></div>
+    </div>
+
+    <!-- 2) WEDGE -->
+    <div class="card c-green">
+      <div class="card-hd">
+        <div class="icon-sq"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1-5h16l1 5"/><path d="M4 9v11a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V9"/><path d="M9 21v-6h6v6"/></svg></div>
+        <div class="t">2) Wedge — distribution</div>
+      </div>
+      <div class="big">13.7M</div>
+      <div class="big-cap">Paytm merchant device subscribers <b>already paying monthly</b> for merchant tooling</div>
+      <div class="inner" style="margin-top:16px;">
+        <div class="lbl" style="color:#1B7A34;">Market pull</div>
+        <div class="row"><span class="v">40–60%</span><span class="k">of Indian e-commerce orders are still COD — every one of them needs a risk decision before pickup</span></div>
+      </div>
+      <div class="flow">
+        <div class="fnode">Paytm<br>merchant app</div>
+        <div class="farr"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg></div>
+        <div class="fnode">Risk<br>console</div>
+        <div class="farr"><svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg></div>
+        <div class="fnode">Decision<br>API</div>
+      </div>
+      <div class="body-txt">The risk console slots into the <b>same subscription motion as Paytm&rsquo;s Soundbox</b>. It&rsquo;s a decision layer on rails merchants already trust, billed on the statement they already pay.</div>
+      <div class="callout"><b>Same merchant, same bill, new line item:</b> decisions, not hardware.</div>
+    </div>
+
+    <!-- 3) EXPANSION -->
+    <div class="card c-orange">
+      <div class="card-hd">
+        <div class="icon-sq"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg></div>
+        <div class="t">3) Expansion — compounding</div>
+      </div>
+      <div class="items">
+        <div class="it"><span class="n">1</span><div class="tx"><b>Merchant lending risk</b>RTO history doubles as a repayment signal — one data asset, two underwriting products.</div></div>
+        <div class="it"><span class="n">2</span><div class="tx"><b>Agentic-commerce guardrails</b>License the bounded-agent + OC-201B cap layer to any agent spending on UPI.</div></div>
+        <div class="it"><span class="n">3</span><div class="tx"><b>RTO insurance pricing</b>Per-merchant loss curves make return insurance underwritable.</div></div>
+      </div>
+      <div class="inner" style="margin-top:auto;">
+        <div class="lbl" style="color:#B25E00;">The ceiling</div>
+        <div class="row"><span class="v">&#8377;50,000 Cr</span><span class="k">annual COD RTO loss in India (est.) — every rupee prevented is a rupee of the outcome we price</span></div>
+      </div>
+      <div class="callout amber" style="margin-top:16px;"><b>Where this goes:</b> the audit trail that makes decisions contestable today becomes the underwriting data that prices credit and insurance tomorrow.</div>
+    </div>
+  </div>
+
+  <div class="takeaway">
+    <div class="mark">&#8377;</div>
+    <div class="txt">Zero-MDR made payment margin near-zero. <b>We price the outcome</b> — a share of prevented loss, not a share of trust.</div>
+  </div>
+</div>
+</body>
+</html>
